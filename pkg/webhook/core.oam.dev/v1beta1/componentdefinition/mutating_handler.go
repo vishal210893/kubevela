@@ -49,49 +49,67 @@ var _ admission.Handler = &MutatingHandler{}
 
 // Handle handles admission requests.
 func (h *MutatingHandler) Handle(_ context.Context, req admission.Request) admission.Response {
+	klog.InfoS("Starting mutation for ComponentDefinition",
+		"resource", req.Resource.Resource, "namespace", req.Namespace, "name", req.Name, "operation", req.Operation, "uid", req.UID)
 	obj := &v1beta1.ComponentDefinition{}
 
 	err := h.Decoder.Decode(req, obj)
 	if err != nil {
+		klog.ErrorS(err, "Failed to decode ComponentDefinition from request", "uid", req.UID)
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 	// mutate the object
 	if err := h.Mutate(obj); err != nil {
-		klog.ErrorS(err, "failed to mutate the componentDefinition", "name", obj.Name)
+		klog.ErrorS(err, "Failed to mutate the componentDefinition", "namespace", obj.Namespace, "name", obj.Name, "uid", req.UID)
 		return admission.Errored(http.StatusBadRequest, err)
 	}
+	klog.InfoS("Successfully mutated ComponentDefinition", "namespace", obj.Namespace, "name", obj.Name, "uid", req.UID)
 
 	marshalled, err := json.Marshal(obj)
 	if err != nil {
+		klog.ErrorS(err, "Failed to marshal mutated ComponentDefinition", "namespace", obj.Namespace, "name", obj.Name, "uid", req.UID)
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
 	resp := admission.PatchResponseFromRaw(req.AdmissionRequest.Object.Raw, marshalled)
 	if len(resp.Patches) > 0 {
-		klog.InfoS("admit ComponentDefinition",
-			"namespace", obj.Namespace, "name", obj.Name, "patches", util.JSONMarshal(resp.Patches))
+		klog.InfoS("Admitting ComponentDefinition with patches",
+			"namespace", obj.Namespace, "name", obj.Name, "uid", req.UID, "patches", util.JSONMarshal(resp.Patches))
+	} else {
+		klog.InfoS("Admitting ComponentDefinition without patches", "namespace", obj.Namespace, "name", obj.Name, "uid", req.UID)
 	}
 	return resp
 }
 
 // Mutate sets all the default value for the ComponentDefinition
 func (h *MutatingHandler) Mutate(obj *v1beta1.ComponentDefinition) error {
-	klog.InfoS("mutate", "name", obj.Name)
+	klog.InfoS("Mutating ComponentDefinition spec", "namespace", obj.Namespace, "name", obj.Name)
 
 	// If the Type field is not empty, it means that ComponentDefinition refers to an existing WorkloadDefinition
 	if obj.Spec.Workload.Type != types.AutoDetectWorkloadDefinition && (obj.Spec.Workload.Type != "" && obj.Spec.Workload.Definition == (common.WorkloadGVK{})) {
+		klog.V(1).InfoS("ComponentDefinition references an existing WorkloadDefinition by type", "namespace", obj.Namespace, "name", obj.Name, "workloadType", obj.Spec.Workload.Type)
 		workloadDef := new(v1beta1.WorkloadDefinition)
-		return h.Client.Get(context.TODO(), client.ObjectKey{Name: obj.Spec.Workload.Type, Namespace: obj.Namespace}, workloadDef)
+		err := h.Client.Get(context.TODO(), client.ObjectKey{Name: obj.Spec.Workload.Type, Namespace: obj.Namespace}, workloadDef)
+		if err != nil {
+			klog.ErrorS(err, "Failed to get referenced WorkloadDefinition by type", "namespace", obj.Namespace, "name", obj.Name, "workloadType", obj.Spec.Workload.Type)
+			return err
+		}
+		klog.V(1).InfoS("Successfully fetched referenced WorkloadDefinition by type", "namespace", obj.Namespace, "name", obj.Name, "workloadType", obj.Spec.Workload.Type)
+		return nil
 	}
 
 	if obj.Spec.Workload.Definition != (common.WorkloadGVK{}) {
+		klog.V(1).InfoS("ComponentDefinition has workload definition specified", "namespace", obj.Namespace, "name", obj.Name, "workloadDefinitionGVK", obj.Spec.Workload.Definition)
 		// If only Definition field exists, fill Type field according to Definition.
 		defRef, err := util.ConvertWorkloadGVK2Definition(h.Client.RESTMapper(), obj.Spec.Workload.Definition)
 		if err != nil {
+			klog.ErrorS(err, "Failed to convert workload GVK to definition reference", "namespace", obj.Namespace, "name", obj.Name, "workloadDefinitionGVK", obj.Spec.Workload.Definition)
 			return err
 		}
+		klog.V(1).InfoS("Successfully converted workload GVK to definition reference", "namespace", obj.Namespace, "name", obj.Name, "defRefName", defRef.Name)
 
 		if obj.Spec.Workload.Type == "" {
+			klog.V(1).InfoS("Workload type is empty, setting from definition reference", "namespace", obj.Namespace, "name", obj.Name, "defRefName", defRef.Name)
 			obj.Spec.Workload.Type = defRef.Name
 		}
 
@@ -99,29 +117,42 @@ func (h *MutatingHandler) Mutate(obj *v1beta1.ComponentDefinition) error {
 		err = h.Client.Get(context.TODO(), client.ObjectKey{Name: defRef.Name, Namespace: obj.Namespace}, workloadDef)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
+				klog.InfoS("Referenced WorkloadDefinition not found", "namespace", obj.Namespace, "name", obj.Name, "workloadDefName", defRef.Name)
 				// Create workloadDefinition which componentDefinition refers to
 				if h.AutoGenWorkloadDef {
+					klog.InfoS("AutoGenWorkloadDef is enabled, creating WorkloadDefinition", "namespace", obj.Namespace, "name", obj.Name, "workloadDefName", defRef.Name)
 					workloadDef.SetName(defRef.Name)
 					workloadDef.SetNamespace(obj.Namespace)
 					workloadDef.Spec.Reference = defRef
-					return h.Client.Create(context.TODO(), workloadDef)
+					createErr := h.Client.Create(context.TODO(), workloadDef)
+					if createErr != nil {
+						klog.ErrorS(createErr, "Failed to auto-generate WorkloadDefinition", "namespace", obj.Namespace, "name", obj.Name, "workloadDefName", defRef.Name)
+						return createErr
+					}
+					klog.InfoS("Successfully auto-generated WorkloadDefinition", "namespace", obj.Namespace, "name", obj.Name, "workloadDefName", defRef.Name)
+					return nil
 				}
-
+				klog.InfoS("AutoGenWorkloadDef is disabled, WorkloadDefinition must exist", "namespace", obj.Namespace, "name", obj.Name, "workloadDefName", defRef.Name)
 				return fmt.Errorf("workloadDefinition %s referenced by componentDefinition is not found, please create the workloadDefinition first", defRef.Name)
 			}
+			klog.ErrorS(err, "Failed to get referenced WorkloadDefinition by definition reference", "namespace", obj.Namespace, "name", obj.Name, "workloadDefName", defRef.Name)
 			return err
 		}
+		klog.V(1).InfoS("Successfully fetched referenced WorkloadDefinition by definition reference", "namespace", obj.Namespace, "name", obj.Name, "workloadDefName", defRef.Name)
 		return nil
 	}
 
 	if obj.Spec.Workload.Type == "" {
+		klog.V(1).InfoS("Workload type is empty and no definition specified, setting type to AutoDetectWorkloadDefinition", "namespace", obj.Namespace, "name", obj.Name)
 		obj.Spec.Workload.Type = types.AutoDetectWorkloadDefinition
 	}
+	klog.InfoS("Finished mutating ComponentDefinition spec", "namespace", obj.Namespace, "name", obj.Name)
 	return nil
 }
 
 // RegisterMutatingHandler will register component mutation handler to the webhook
 func RegisterMutatingHandler(mgr manager.Manager, args controller.Args) {
+	klog.InfoS("Registering ComponentDefinition mutating webhook handler", "path", "/mutating-core-oam-dev-v1beta1-componentdefinitions", "autoGenWorkloadDef", args.AutoGenWorkloadDefinition)
 	server := mgr.GetWebhookServer()
 	server.Register("/mutating-core-oam-dev-v1beta1-componentdefinitions", &webhook.Admission{
 		Handler: &MutatingHandler{
@@ -130,4 +161,5 @@ func RegisterMutatingHandler(mgr manager.Manager, args controller.Args) {
 			AutoGenWorkloadDef: args.AutoGenWorkloadDefinition,
 		},
 	})
+	klog.InfoS("ComponentDefinition mutating webhook handler registered successfully")
 }
