@@ -130,7 +130,9 @@ func (comp *Component) EvalHealth(templateContext map[string]interface{}) (bool,
 // Trait is ComponentTrait
 type Trait struct {
 	// The Name is name of TraitDefinition, actually it's a type of the trait instance
-	Name               string
+	Name string
+	// Type is the original type name specified in the application, it can contain revision information
+	Type               string
 	CapabilityCategory types.CapabilityCategory
 	Params             map[string]interface{}
 
@@ -576,7 +578,11 @@ func makeWorkloadWithContext(pCtx process.Context, comp *Component, ns, appName 
 		}
 	}
 	commonLabels := definition.GetCommonLabels(definition.GetBaseContextLabels(pCtx))
-	util.AddLabels(workload, util.MergeMapOverrideWithDst(commonLabels, map[string]string{oam.WorkloadTypeLabel: comp.Type}))
+	labelType := comp.Type
+	if sanitized, err := util.ConvertDefinitionRevName(comp.Type); err == nil {
+		labelType = sanitized
+	}
+	util.AddLabels(workload, util.MergeMapOverrideWithDst(commonLabels, map[string]string{oam.WorkloadTypeLabel: labelType}))
 	return workload, nil
 }
 
@@ -597,7 +603,11 @@ func evalWorkloadWithContext(pCtx process.Context, comp *Component, ns, appName 
 		if err != nil {
 			return nil, errors.Wrapf(err, "evaluate trait=%s template for component=%s app=%s", assist.Name, comp.Name, appName)
 		}
-		labels := util.MergeMapOverrideWithDst(commonLabels, map[string]string{oam.TraitTypeLabel: assist.Type})
+		traitLabel := assist.Type
+		if sanitized, err := util.ConvertDefinitionRevName(assist.Type); err == nil {
+			traitLabel = sanitized
+		}
+		labels := util.MergeMapOverrideWithDst(commonLabels, map[string]string{oam.TraitTypeLabel: traitLabel})
 		if assist.Name != "" {
 			labels[oam.TraitResource] = assist.Name
 		}
