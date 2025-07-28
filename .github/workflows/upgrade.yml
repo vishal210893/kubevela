@@ -68,10 +68,16 @@ jobs:
         run: |
           go install sigs.k8s.io/kind@v0.24.0
           kind delete cluster || true
-          kind create cluster --name upgrade --image=kindest/node:${{ matrix.k8s-version }}
+          kind create cluster --image=kindest/node:${{ matrix.k8s-version }}
+
+      - name: Get Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.14.0
 
       - name: Build vela CLI
         run: make vela-cli
+
+      - name: Install kustomize
+        run: make kustomize
 
       - name: Install KubeVela v1.10.3
         run: |
