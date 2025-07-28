@@ -84,17 +84,6 @@ jobs:
           ./bin/vela version
           kubectl get crd applications.core.oam.dev
 
-      - name: Upgrade Kubernetes to v1.31.1
-        run: |
-          kind delete cluster --name upgrade
-          kind create cluster --name upgrade --image=kindest/node:v1.31.1
-
-      - name: Reinstall KubeVela v1.10.3 after k8s upgrade
-        run: |
-          helm repo add kubevela https://kubevela.github.io/charts
-          helm repo update
-          helm install --create-namespace -n vela-system kubevela kubevela/vela-core --version 1.10.3 --wait
-
       - name: Build and load new image
         run: |
           mkdir -p $HOME/tmp/
