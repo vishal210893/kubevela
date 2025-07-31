@@ -1,0 +1,137 @@
+name: Upgrade Scenario Test
+
+# Triggers the workflow on push or PR to master or release branches, and manual dispatch
+on:
+  push:
+    branches:
+      - master
+      - release-*
+  pull_request:
+    branches:
+      - master
+      - release-*
+  workflow_dispatch: {}
+
+# Restrict permissions to read-only by default
+permissions:
+  contents: read
+
+# Global environment variables
+env:
+  GO_VERSION: '1.23.8'
+
+jobs:
+  # Detect if changes are no-op (e.g., docs or image files) to skip unnecessary runs
+  detect-noop:
+    permissions:
+      actions: write
+    runs-on: ubuntu-22.04
+    outputs:
+      noop: ${{ steps.noop.outputs.should_skip }}
+    steps:
+      - name: Detect No-op Changes
+        id: noop
+        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          paths_ignore: '["**.md", "**.mdx", "**.png", "**.jpg"]'
+          do_not_skip: '["workflow_dispatch", "schedule", "push"]'
+        continue-on-error: true
+
+  # Main upgrade test job
+  upgrade-tests:
+    needs: [detect-noop]
+    if: needs.detect-noop.outputs.noop != 'true'
+    runs-on: ubuntu-22.04
+
+    strategy:
+      matrix:
+        k8s-version: ['v1.29.8'] # Can be expanded to test against multiple versions
+
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.k8s-version }}
+      cancel-in-progress: true # Cancel previous runs of same ref
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install Required Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install make gcc jq ca-certificates curl gnupg -y
+          sudo snap install kubectl --classic
+          sudo snap install helm --classic
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download Go Dependencies
+        run: |
+          go get -v -t -d ./...
+
+      - name: Set up KinD with Kubernetes ${{ matrix.k8s-version }}
+        run: |
+          go install sigs.k8s.io/kind@v0.24.0
+          kind delete cluster || true
+          kind create cluster --image=kindest/node:${{ matrix.k8s-version }}
+
+      - name: Install Ginkgo Testing Framework
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.14.0
+
+      - name: Get latest KubeVela release tag (no 'v' prefix)
+        id: get_latest_tag
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/kubevela/kubevela/releases/latest | \
+             jq -r ".tag_name" | awk '{sub(/^v/, ""); print}')
+          echo "LATEST_TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Add KubeVela Helm repo
+        run: |
+          helm repo add kubevela https://kubevela.github.io/charts
+          helm repo update
+
+      - name: Install KubeVela ${{ env.LATEST_TAG }}
+        run: |
+          helm install --create-namespace -n vela-system kubevela kubevela/vela-core \
+            --version ${{ env.LATEST_TAG }} \
+            --timeout 10m \
+            --wait
+
+      - name: Verify Post-install Status
+        run: |
+          kubectl get pods -n vela-system
+          kubectl rollout status deployment/kubevela-vela-core -n vela-system --timeout=300s
+          kubectl get crd applications.core.oam.dev
+
+      - name: Build and Load Docker Image into KinD
+        run: |
+          mkdir -p $HOME/tmp/
+          TMPDIR=$HOME/tmp/ make image-load
+
+      - name: Get Current Commit Hash
+        id: commit_hash
+        run: |
+          echo "COMMIT_HASH=git-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Upgrade KubeVela to Local Docker Image
+        run: |
+          helm upgrade kubevela ./charts/vela-core \
+            --namespace vela-system \
+            --set image.repository=vela-core-test \
+            --set image.tag=${{ env.COMMIT_HASH }} \
+            --set image.pullPolicy=IfNotPresent \
+            --timeout 10m \
+            --wait \
+            --debug
+
+      - name: Verify Post-upgrade Status
+        run: |
+          ./bin/vela version
+          kubectl get pods -n vela-system
+          kubectl rollout status deployment/kubevela-vela-core -n vela-system --timeout=300s
+
+      - name: Run Unit Tests
+        run: make test
