@@ -46,7 +46,7 @@ jobs:
 
     strategy:
       matrix:
-        k8s-version: ['v1.29.8'] # Can be expanded to test against multiple versions
+        k8s-version: ['v1.31.10'] # Can be expanded to test against multiple versions
 
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.k8s-version }}
