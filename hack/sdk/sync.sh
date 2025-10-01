@@ -36,11 +36,9 @@ config() {
 cloneAndClearCoreAPI() {
   echo "git clone"
 
-  if [[ -n "$SSH_DEPLOY_KEY" ]]; then
-    git clone --single-branch --depth 1 git@github.com:$VELA_GO_SDK.git kubevela-go-sdk
-  else
-    git clone --single-branch --depth 1 https://github.com/$VELA_GO_SDK.git kubevela-go-sdk
-  fi
+
+  git clone --single-branch --depth 1 https://github.com/$VELA_GO_SDK.git kubevela-go-sdk
+
 
   echo "Clear kubevela-go-sdk pkg/apis/common, pkg/apis/component, pkg/apis/policy, pkg/apis/trait, pkg/apis/workflow-step, pkg/apis/utils, pkg/apis/types.go "
   rm -rf kubevela-go-sdk/pkg/apis/common
