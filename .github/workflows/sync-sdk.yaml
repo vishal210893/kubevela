@@ -11,6 +11,7 @@ on:
     branches:
       - master
       - release-*
+      - sync-sdk-test
 permissions:
   contents: read
 
