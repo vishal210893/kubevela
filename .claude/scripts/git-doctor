@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# git-doctor -- verify git commit identity is configured and host-config
+# includes are wired.
+#
+# A real incident: ccbridge's install ran `gh auth setup-git`, which created an
+# unmarked global ~/.gitconfig; the git capability's config-sanitize step then
+# refused to overwrite it (assumed user-managed) and never wired the
+# `[include] path = ~/.gitconfig-host` directive -- so the host-provided
+# user.name / user.email silently never reached the container. Commits then get
+# attributed to a bogus or empty identity, which is invisible until a commit
+# lands with the wrong author. This doctor checks the symptom directly:
+#
+#   1. git resolves a non-empty user.email AND user.name (commits are attributed).
+#   2. If a ~/.gitconfig-host (the host-forwarded config) exists, the active
+#      git config actually includes it (so an unmarked-clobber regression is
+#      caught before it mis-attributes a commit).
+#
+# Read-only. Identity values (name/email) are NOT secrets, but the doctor keeps
+# output minimal and prints a fix rather than mutating config.
+#
+# Usage:   git-doctor [--format text|json]
+# Exit:    0 = identity + includes ok, 1 = a problem, 2 = usage error.
+#
+# Test hooks: standard git env (HOME, GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM)
+# isolate the config the doctor reads; GIT_DOCTOR_BIN overrides the git binary.
+#
+# Doctor contract (shared with mcp-github-doctor, ccbridge-doctor,
+# zshenv-secrets-doctor): a *-doctor script in ~/.claude/scripts/ that exits
+# 0/1/2 and prints findings as WARNING/impact/fix triplets; the profile-doctor
+# aggregator runs all of them.
+
+set -uo pipefail
+
+SECTION=git
+FORMAT=text
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --format) FORMAT="${2:-text}"; shift; [ $# -gt 0 ] && shift ;;
+        --format=*) FORMAT="${1#*=}"; shift ;;
+        -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Unknown argument: $1 (try --help)" >&2; exit 2 ;;
+    esac
+done
+case "$FORMAT" in text|json) ;; *) echo "Invalid --format: $FORMAT" >&2; exit 2 ;; esac
+
+GIT_BIN="${GIT_DOCTOR_BIN:-git}"
+HOST_CFG="$HOME/.gitconfig-host"
+
+PROBLEMS=0
+JSON_ROWS=""
+note() { # <status: ok|warn|problem> <key> <single-line message...>
+    local s="$1" k="$2"; shift 2
+    local msg="$*" em
+    [ "$s" = problem ] && PROBLEMS=$((PROBLEMS + 1))
+    em="${msg//\\/\\\\}"; em="${em//\"/\\\"}"
+    JSON_ROWS="${JSON_ROWS:+$JSON_ROWS,}{\"section\":\"$SECTION\",\"status\":\"$s\",\"key\":\"$k\",\"message\":\"$em\"}"
+}
+say() { [ "$FORMAT" = text ] && printf '%s\n' "$*" >&2 || true; }
+guide() { # <what> <impact> <fix>
+    [ "$FORMAT" = text ] || return 0
+    printf '  WARNING: %s\n' "$1" >&2
+    printf '           impact: %s\n' "$2" >&2
+    printf '           fix:    %s\n' "$3" >&2
+}
+
+say "git doctor -- is commit identity configured and host-config wired?"
+
+if ! command -v "$GIT_BIN" >/dev/null 2>&1; then
+    note problem git_missing "git not found on PATH."
+    guide "git is not installed." "No version control works." "Rebuild the container."
+else
+    # --- 1. commit identity -----------------------------------------------------
+    name="$("$GIT_BIN" config --get user.name 2>/dev/null || true)"
+    email="$("$GIT_BIN" config --get user.email 2>/dev/null || true)"
+    if [ -n "$name" ] && [ -n "$email" ]; then
+        note ok identity_ok "git commit identity resolves (user.name + user.email set)."
+        # Masking guard: the check above reads the EFFECTIVE config, so a
+        # repo-local user.* can hide an empty GLOBAL identity (exactly what made
+        # this pass on a clobbered ~/.gitconfig). Check the global scope too --
+        # if it is empty, commits work here only by virtue of this repo's local
+        # config and a fresh clone elsewhere would have no author.
+        gname="$("$GIT_BIN" config --global --includes --get user.name 2>/dev/null || true)"
+        gemail="$("$GIT_BIN" config --global --includes --get user.email 2>/dev/null || true)"
+        if [ -z "$gname" ] || [ -z "$gemail" ]; then
+            note warn identity_local_only "global git identity is unset -- effective identity is coming only from a repo-local config."
+            guide "Your GLOBAL git identity (user.name/user.email) is empty; identity resolves here only because this repo has a local override." \
+                  "A freshly cloned repo (no local config yet) would commit with no author -- git refuses, or attributes to a bogus identity. This is how a clobbered ~/.gitconfig hides in an existing repo." \
+                  "Set a global identity: if ~/.gitconfig-host exists, ensure ~/.gitconfig includes it ('[include] path = ~/.gitconfig-host'); otherwise: git config --global user.name '<You>'; git config --global user.email '<you@guidewire.com>'."
+        fi
+    else
+        miss=""
+        [ -z "$name" ] && miss="user.name"
+        [ -z "$email" ] && miss="${miss:+$miss + }user.email"
+        note problem identity_missing "git $miss is unset -- commits will be mis-attributed or refused."
+        guide "git $miss is not configured (no value from any config scope)." \
+              "Commits are attributed to an empty/bogus author, or git refuses to commit; the host identity did not reach the container (a known ccbridge ~/.gitconfig-clobber symptom)." \
+              "If ~/.gitconfig-host exists, ensure ~/.gitconfig has '[include] path = ~/.gitconfig-host'; otherwise set it directly: git config --global user.name '<You>'; git config --global user.email '<you@guidewire.com>'."
+    fi
+
+    # --- 2. host-config include wiring -----------------------------------------
+    if [ -f "$HOST_CFG" ]; then
+        included=0
+        while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            rp="$p"
+            case "$rp" in "~/"*) rp="$HOME/${rp#\~/}" ;; esac
+            # resolve to compare against $HOME/.gitconfig-host
+            if [ "$rp" = "$HOST_CFG" ] || [ "$(basename "$rp")" = ".gitconfig-host" ]; then
+                included=1; break
+            fi
+        done <<EOF_INC
+$("$GIT_BIN" config --get-all include.path 2>/dev/null || true)
+EOF_INC
+        if [ "$included" = 1 ]; then
+            note ok host_include_wired "~/.gitconfig-host exists and is included by the active git config."
+        else
+            note problem host_include_missing "~/.gitconfig-host exists but is NOT included by ~/.gitconfig (clobbered config)."
+            guide "~/.gitconfig-host is present but no active 'include.path' references it -- ~/.gitconfig was likely overwritten by an unmarked tool (e.g. 'gh auth setup-git')." \
+                  "Host-forwarded git settings (identity, aliases, signing) silently do not apply." \
+                  "Add to ~/.gitconfig:  [include]\\n      path = ~/.gitconfig-host   -- or rebuild the container (mount-bind's git-config-sanitize regenerates the wrapper that includes it)."
+        fi
+    fi
+fi
+
+if [ "$FORMAT" = json ]; then
+    ok=true; [ "$PROBLEMS" -gt 0 ] && ok=false
+    printf '{"schema_version":1,"doctor":"%s","problems":%s,"ok":%s,"checks":[%s]}\n' \
+        "$SECTION" "$PROBLEMS" "$ok" "$JSON_ROWS"
+else
+    if [ "$PROBLEMS" -eq 0 ]; then
+        say "[OK] git identity configured$( [ -f "$HOST_CFG" ] && printf ' and host-config included' )."
+    else
+        say "[PROBLEM] git has $PROBLEMS issue(s) above -- commits may be mis-attributed until fixed."
+    fi
+fi
+
+[ "$PROBLEMS" -eq 0 ] || exit 1
+exit 0

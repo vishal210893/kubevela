@@ -1,0 +1,258 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml"]
+#
+# [tool.claude]
+# description = "Analyze the dev2 repo and update the ## dev2 section of steering/memory.md"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/memory-code *)"]
+#
+# [tool.claude.output]
+# prompt = """Use the JSON inventory to update the ## dev2 section of steering/memory.md:
+#
+# 0. Boilerplate check:
+#    - Read the file at `memory_file`. If it does not start with `# Steering Memory`,
+#      prepend this exact boilerplate before all sections:
+#
+#      # Steering Memory
+#      <!-- Always injected at session start. Scan sections to find context to load. -->
+#      <!-- Auto-updated: ## Contexts and ## Specs by memory-spec; ## dev2 by memory-code. -->
+#
+#      **Load ctx:** `@<spec_root>/ctx/<name>/<file>.md`
+#      **Load spec:** `<spec_root>/specs/<name>/`
+#      **Associate ctx with branch:** `/spec:ctx` | `~/.dev/dev.yaml → spec.<repo>.branches.<branch>.ctx`
+#
+#      ---
+#
+# 1. Format the ## dev2 section using structured tables and terse lists (no prose):
+#    - First line inside section: `<!-- Updated by memory-code workflow. Do not edit manually. -->`
+#    - Header: **snapshot**: <ISO-8601-date> | <branch>@<sha7> | <N> source files
+#    - ### directories table: path | purpose | notes (only dirs that exist)
+#    - ### capabilities: system (<N>): <names> / namespaces: <ns>: <N> caps | ...
+#    - ### profiles: system (<N>): <names> / namespaces: <ns>: <N> profiles | ...
+#    - ### workflows: comma-separated filenames
+#    - ### key files: bulleted list with one-line descriptions
+#    - ### entry points: node dev.js commands
+#    - ### conventions (enforced): NEVER edit bld/ or .claude/, PEP 723 hooks, etc.
+#
+# 2. Apply section-isolation protocol:
+#    - Read the file at `memory_file` path (create if missing)
+#    - Find ## dev2 heading; find next ## heading (or EOF)
+#    - Replace only that range with the new section
+#    - If ## dev2 absent, append at end
+#    - Write back; do NOT touch any other section
+#
+# 3. Report:
+#    [OK] Updated ## dev2 in <path>
+#      snapshot: <date> | <branch>@<sha7> | <N> source files
+#      capabilities: <N> system + <N> namespace
+#      profiles: <N> system + <N> namespace
+#      workflows: <N>"""
+# examples = [
+#   "[OK] Updated ## dev2 in /workspaces/src/specs/dev/steering/memory.md\n  snapshot: 2026-04-03 | harness@9767087 | 1842 source files\n  capabilities: 3 system + 12 namespace\n  profiles: 8 system + 18 namespace\n  workflows: 9"
+# ]
+# ///
+"""
+memory-code - Collect repository inventory as JSON.
+
+Scans the dev2 repository structure and emits a JSON inventory:
+directory tree with file counts, capability/profile names,
+workflow names, key files. Claude formats this into the agent-optimized
+## dev2 section of steering/memory.md.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def get_wsroot():
+    """Detect workspace root from WSROOT env or git."""
+    wsroot = os.environ.get('WSROOT')
+    if wsroot:
+        return Path(wsroot)
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--show-toplevel'],
+            capture_output=True, text=True, check=True
+        )
+        return Path(result.stdout.strip())
+    except subprocess.CalledProcessError:
+        print('Error: not in a git repository', file=sys.stderr)
+        sys.exit(1)
+
+
+def get_spec_root():
+    """Resolve spec root from ~/.dev/dev.yaml."""
+    import yaml
+
+    config_path = Path.home() / '.dev' / 'dev.yaml'
+    spec_repo_dir = '$WSROOT/specs'
+    project = None
+
+    if config_path.exists():
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+        spec_section = config.get('spec', {})
+        for repo_name, repo_config in spec_section.items():
+            if isinstance(repo_config, dict):
+                spec_repo_dir = repo_config.get('spec-repo-directory', spec_repo_dir)
+                project = repo_config.get('project')
+                break
+
+    wsroot = get_wsroot()
+    spec_repo_dir = spec_repo_dir.replace('$WSROOT', str(wsroot))
+
+    if not project:
+        project = wsroot.name
+
+    return Path(spec_repo_dir) / project
+
+
+def get_git_info(repo_path):
+    """Get branch and short SHA."""
+    try:
+        branch = subprocess.run(
+            ['git', '-C', str(repo_path), 'rev-parse', '--abbrev-ref', 'HEAD'],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+        sha7 = subprocess.run(
+            ['git', '-C', str(repo_path), 'rev-parse', '--short=7', 'HEAD'],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+        return branch, sha7
+    except subprocess.CalledProcessError:
+        return 'unknown', 'unknown'
+
+
+def count_source_files(repo_path):
+    """Count tracked source files."""
+    try:
+        result = subprocess.run(
+            ['git', '-C', str(repo_path), 'ls-files'],
+            capture_output=True, text=True, check=True
+        )
+        return len(result.stdout.strip().splitlines())
+    except subprocess.CalledProcessError:
+        return 0
+
+
+def scan_directories(repo_path):
+    """Scan top-level directories with file counts."""
+    dirs = []
+    for entry in sorted(repo_path.iterdir()):
+        if not entry.is_dir():
+            continue
+        name = entry.name
+        if name.startswith('.'):
+            continue
+        file_count = sum(1 for _ in entry.rglob('*') if _.is_file())
+        dirs.append({'name': name, 'file_count': file_count})
+    return dirs
+
+
+def list_capabilities(repo_path):
+    """List system and namespace capabilities."""
+    caps = []
+    caps_dir = repo_path / 'capabilities'
+    if caps_dir.is_dir():
+        for d in sorted(caps_dir.iterdir()):
+            if d.is_dir() and (d / 'capability.yaml').exists():
+                caps.append(d.name)
+
+    ns_caps = {}
+    ns_dir = repo_path / 'ns'
+    if ns_dir.is_dir():
+        for ns in sorted(ns_dir.iterdir()):
+            if not ns.is_dir():
+                continue
+            ns_cap_dir = ns / 'capabilities'
+            if ns_cap_dir.is_dir():
+                ns_names = []
+                for d in sorted(ns_cap_dir.iterdir()):
+                    if d.is_dir() and (d / 'capability.yaml').exists():
+                        ns_names.append(d.name)
+                if ns_names:
+                    ns_caps[ns.name] = ns_names
+
+    return caps, ns_caps
+
+
+def list_profiles(repo_path):
+    """List system and namespace profiles."""
+    profiles = []
+    profiles_dir = repo_path / 'profiles'
+    if profiles_dir.is_dir():
+        for d in sorted(profiles_dir.iterdir()):
+            if d.is_dir() and (d / 'profile.yaml').exists():
+                profiles.append(d.name)
+
+    ns_profiles = {}
+    ns_dir = repo_path / 'ns'
+    if ns_dir.is_dir():
+        for ns in sorted(ns_dir.iterdir()):
+            if not ns.is_dir():
+                continue
+            ns_prof_dir = ns / 'profiles'
+            if ns_prof_dir.is_dir():
+                ns_names = []
+                for d in sorted(ns_prof_dir.iterdir()):
+                    if d.is_dir() and (d / 'profile.yaml').exists():
+                        ns_names.append(d.name)
+                if ns_names:
+                    ns_profiles[ns.name] = ns_names
+
+    return profiles, ns_profiles
+
+
+def list_workflows(repo_path):
+    """List GitHub Actions workflow files."""
+    wf_dir = repo_path / '.github' / 'workflows'
+    if not wf_dir.is_dir():
+        return []
+    return sorted(f.name for f in wf_dir.iterdir() if f.suffix in ('.yaml', '.yml'))
+
+
+def list_key_files(repo_path):
+    """List key files that exist at repo root."""
+    candidates = [
+        'dev.js', 'package.json', '.harness.yaml', 'CLAUDE.md',
+        'CLAUDE.local.md', 'biome.json', 'CODEOWNERS',
+    ]
+    return [f for f in candidates if (repo_path / f).exists()]
+
+
+def main():
+    repo_path = get_wsroot()
+    spec_root = get_spec_root()
+    branch, sha7 = get_git_info(repo_path)
+    source_files = count_source_files(repo_path)
+
+    inventory = {
+        'repo_name': repo_path.name,
+        'branch': branch,
+        'sha7': sha7,
+        'source_file_count': source_files,
+        'spec_root': str(spec_root),
+        'memory_file': str(spec_root / 'steering' / 'memory.md'),
+        'directories': scan_directories(repo_path),
+        'capabilities': {
+            'system': list_capabilities(repo_path)[0],
+            'namespaces': list_capabilities(repo_path)[1],
+        },
+        'profiles': {
+            'system': list_profiles(repo_path)[0],
+            'namespaces': list_profiles(repo_path)[1],
+        },
+        'workflows': list_workflows(repo_path),
+        'key_files': list_key_files(repo_path),
+    }
+
+    json.dump(inventory, sys.stdout, indent=2)
+    print()
+
+
+if __name__ == '__main__':
+    main()

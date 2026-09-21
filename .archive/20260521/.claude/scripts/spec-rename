@@ -1,0 +1,130 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Rename spec directory"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-rename:*)"]
+#
+# [[tool.claude.argument]]
+# name = "new-name"
+# type = "required-passthrough"
+# hint = "<new-name>"
+# description = "New name for the spec"
+#
+# [tool.claude.output]
+# prompt = "Confirm the rename operation. Show old and new paths. Note that branch/worktree names are NOT changed."
+# examples = [
+#   "[OK] Renamed spec 'old-name' -> 'new-name'\n\nUpdated:\n  .dev/specs/old-name/ -> .dev/specs/new-name/\n\nNote: Branch and worktree names unchanged"
+# ]
+# ///
+
+"""
+Rename spec directory.
+
+Renames the spec directory and updates dev.yaml association.
+Does NOT rename branches or worktrees.
+
+Always operates on current branch's spec.
+"""
+
+import sys
+import os
+import json
+import re
+import shutil
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import get_current_branch, get_associated_spec, associate_spec, spec_path
+
+
+def extract_number(name):
+    """Extract leading number from spec name if present."""
+    match = re.match(r'^(\d+)-', name)
+    return match.group(1) if match else None
+
+
+def main():
+    """Main entry point."""
+    if len(sys.argv) < 2:
+        print("Error: New name required", file=sys.stderr)
+        print("Usage: spec-rename <new-name>", file=sys.stderr)
+        sys.exit(1)
+
+    new_name = sys.argv[1]
+    branch = get_current_branch()
+
+    # Always get old name from current branch association
+    old_name = get_associated_spec(branch)
+    if not old_name:
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': 'No spec associated with current branch', 'branch': branch}))
+        else:
+            print(f"Error: No spec associated with branch '{branch}'", file=sys.stderr)
+        sys.exit(1)
+
+    old_path = spec_path(old_name)
+    new_path = spec_path(new_name)
+
+    # Validate old spec exists
+    if not old_path.exists():
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': f"Spec '{old_name}' not found"}))
+        else:
+            print(f"Error: Spec '{old_name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate new name doesn't exist
+    if new_path.exists():
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': f"Spec '{new_name}' already exists"}))
+        else:
+            print(f"Error: Spec '{new_name}' already exists", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate number prefix consistency
+    old_num = extract_number(old_name)
+    new_num = extract_number(new_name)
+    if old_num and new_num and old_num != new_num:
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': f"Number prefix must remain the same ({old_num})"}))
+        else:
+            print(f"Error: Number prefix must remain the same ({old_num})", file=sys.stderr)
+        sys.exit(1)
+
+    # Rename directory
+    shutil.move(str(old_path), str(new_path))
+
+    # Update dev.yaml association if branch has one
+    if branch:
+        current_assoc = get_associated_spec(branch)
+        if current_assoc == old_name:
+            associate_spec(new_name, branch)
+
+    data = {
+        'old_name': old_name,
+        'new_name': new_name,
+        'old_path': str(old_path),
+        'new_path': str(new_path),
+        'branch': branch
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"[OK] Renamed spec '{old_name}' -> '{new_name}'")
+        print()
+        print("Updated:")
+        print(f"  {old_path}/ -> {new_path}/")
+        if branch:
+            print(f"  dev.yaml association = {new_name}")
+        print()
+        print("Note: Branch and worktree names unchanged")
+
+
+if __name__ == "__main__":
+    main()

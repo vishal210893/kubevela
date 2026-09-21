@@ -18,8 +18,10 @@ package component
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 
@@ -140,6 +142,12 @@ func (h *gitHelper) source() string {
 
 // readRepo will read relative path (relative to Meta.Path)
 func (h *gitHelper) readRepo(relativePath string) (*github.RepositoryContent, []*github.RepositoryContent, error) {
+	return h.readRepoCtx(context.Background(), relativePath)
+}
+
+// readRepoCtx is readRepo for a caller that has a context to honour. readRepo
+// itself is reached through AsyncReader, whose methods take none.
+func (h *gitHelper) readRepoCtx(ctx context.Context, relativePath string) (*github.RepositoryContent, []*github.RepositoryContent, error) {
 	key := h.source()
 	// Asking a source that has already said it is rate limited spends a
 	// request to be told the same thing, and spending it is what keeps the
@@ -151,7 +159,7 @@ func (h *gitHelper) readRepo(relativePath string) (*github.RepositoryContent, []
 	if ref := h.ref(); ref != "" {
 		opts = &github.RepositoryContentGetOptions{Ref: ref}
 	}
-	file, items, _, err := h.Client.Repositories.GetContents(context.Background(), h.Meta.GithubContent.Owner, h.Meta.GithubContent.Repo, path.Join(h.Meta.GithubContent.Path, relativePath), opts)
+	file, items, _, err := h.Client.Repositories.GetContents(ctx, h.Meta.GithubContent.Owner, h.Meta.GithubContent.Repo, path.Join(h.Meta.GithubContent.Path, relativePath), opts)
 	if err != nil {
 		return nil, nil, holdRateLimit(key, err)
 	}
@@ -207,6 +215,93 @@ func (g *gitReader) Revision(ctx context.Context, lastKnown string) (string, err
 		return "", holdRateLimit(key, err)
 	}
 	return strings.TrimSpace(sha), nil
+}
+
+// PackageContentRevisions is every package in the registry mapped to the git
+// tree SHA of its directory.
+//
+// One listing of the registry's configured path answers for all of them: a
+// directory entry's SHA is the tree object it points at, so it moves when
+// anything inside that package changes and stays put when a sibling package
+// changes. That is the precision Revision cannot offer, for the price Revision
+// costs.
+//
+// The tree SHA is not a commit and must not be handed to AtRevision; the
+// contents API resolves a ref as a commit, branch or tag and would not find
+// it. It is only ever compared for equality.
+func (g *gitReader) PackageContentRevisions(ctx context.Context, lastKnown ContentRevisionSet) (ContentRevisionSet, error) {
+	items, etag, err := g.h.listRegistryPath(ctx, lastKnown.Token)
+	if err != nil {
+		if goerrors.Is(err, errNotModified) {
+			return lastKnown, nil
+		}
+		return ContentRevisionSet{}, err
+	}
+	revisions := make(map[string]string, len(items))
+	for _, item := range items {
+		// A package is a directory. A loose file at the registry root is not
+		// one, and ListAddonMetaFor already refuses to read it as one.
+		if item.GetType() != DirType {
+			continue
+		}
+		sha := item.GetSHA()
+		if sha == "" {
+			continue
+		}
+		revisions[path.Base(item.GetPath())] = sha
+	}
+	return ContentRevisionSet{Token: etag, Revisions: revisions}, nil
+}
+
+// errNotModified means the source answered that what the caller already holds
+// is still current, so there is nothing to parse.
+var errNotModified = goerrors.New("not modified")
+
+// listRegistryPath lists the registry's configured path, conditionally when
+// the caller has an ETag from a previous listing, and returns the entries with
+// the ETag to reuse next time.
+//
+// go-github's GetContents sends no If-None-Match, so the request is built by
+// hand. It is worth the few lines: this runs on every reconcile of every
+// Application naming a package, and GitHub does not charge a 304 against the
+// rate limit, so an unchanged registry costs nothing to confirm no matter how
+// many Applications ask.
+//
+// Only the directory form is handled. The registry path holding a file rather
+// than packages is a misconfiguration that ListAddonMetaFor already reports
+// per package; here it surfaces as a decode error naming the path.
+func (h *gitHelper) listRegistryPath(ctx context.Context, etag string) ([]*github.RepositoryContent, string, error) {
+	key := h.source()
+	if err := sourceRateLimit.blocked(key); err != nil {
+		return nil, "", err
+	}
+
+	contentPath := (&url.URL{Path: h.Meta.GithubContent.Path}).String()
+	endpoint := fmt.Sprintf("repos/%v/%v/contents/%v",
+		h.Meta.GithubContent.Owner, h.Meta.GithubContent.Repo, contentPath)
+	if ref := h.ref(); ref != "" {
+		endpoint += "?ref=" + url.QueryEscape(ref)
+	}
+
+	req, err := h.Client.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+
+	var items []*github.RepositoryContent
+	resp, err := h.Client.Do(ctx, req, &items)
+	if err != nil {
+		// A conditional request answered "unchanged" is not a failure, but 304
+		// is not a 2xx either, so go-github reports it as an error.
+		if resp != nil && resp.StatusCode == http.StatusNotModified {
+			return nil, etag, errNotModified
+		}
+		return nil, "", holdRateLimit(key, err)
+	}
+	return items, resp.Header.Get("ETag"), nil
 }
 
 // ListAddonMetaFor lists one package's files, reading only its directory

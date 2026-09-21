@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# teamcity-doctor -- verify the TeamCity CLI is installed and authenticated.
+#
+# The teamcity capability assumes the CLI is pre-installed in the image and runs
+# `teamcity auth login` at container start using the forwarded TEAMCITY_TOKEN. If
+# the token is unset on the host, or has expired, login silently no-ops and every
+# later `teamcity ...` call fails with an auth error mid-workflow -- exactly when
+# you are trying to watch a build. This doctor checks the CLI is on PATH and that
+# `teamcity auth status` reports authenticated, and on failure prints a
+# WARNING / impact / fix guide. It is the capability's own documented
+# verification (`teamcity auth status`) wrapped as an aggregator-discoverable
+# doctor.
+#
+# It NEVER prints the token value. Read-only (no --fix): re-auth is a host-side
+# credential change the user must make, so we guide rather than act.
+#
+# Usage:   teamcity-doctor [--format text|json]
+# Exit:    0 = TeamCity CLI authenticated, 1 = problems, 2 = usage error.
+#
+# Test hook: TEAMCITY_DOCTOR_BIN overrides the CLI binary (default `teamcity`).
+#
+# Doctor contract (shared with mcp-github-doctor, ccbridge-doctor,
+# zshenv-secrets-doctor): a *-doctor script in ~/.claude/scripts/ that exits
+# 0/1/2 and prints findings as WARNING/impact/fix triplets; the profile-doctor
+# aggregator runs all of them.
+
+set -uo pipefail
+
+SECTION=teamcity
+FORMAT=text
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --format) FORMAT="${2:-text}"; shift; [ $# -gt 0 ] && shift ;;
+        --format=*) FORMAT="${1#*=}"; shift ;;
+        -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Unknown argument: $1 (try --help)" >&2; exit 2 ;;
+    esac
+done
+case "$FORMAT" in text|json) ;; *) echo "Invalid --format: $FORMAT" >&2; exit 2 ;; esac
+
+SECRETS="$HOME/.zshenv.secrets"
+TC_BIN="${TEAMCITY_DOCTOR_BIN:-teamcity}"
+
+PROBLEMS=0
+JSON_ROWS=""
+note() { # <status: ok|warn|problem> <key> <single-line message...>
+    local s="$1" k="$2"; shift 2
+    local msg="$*" em
+    [ "$s" = problem ] && PROBLEMS=$((PROBLEMS + 1))
+    em="${msg//\\/\\\\}"; em="${em//\"/\\\"}"
+    JSON_ROWS="${JSON_ROWS:+$JSON_ROWS,}{\"section\":\"$SECTION\",\"status\":\"$s\",\"key\":\"$k\",\"message\":\"$em\"}"
+}
+say() { [ "$FORMAT" = text ] && printf '%s\n' "$*" >&2 || true; }
+guide() { # <what> <impact> <fix>
+    [ "$FORMAT" = text ] || return 0
+    printf '  WARNING: %s\n' "$1" >&2
+    printf '           impact: %s\n' "$2" >&2
+    printf '           fix:    %s\n' "$3" >&2
+}
+
+say "teamcity doctor -- is the TeamCity CLI installed and authenticated?"
+
+# Is TEAMCITY_TOKEN visible to this process? (env, or the secrets file the
+# shell loader sources.) Advisory only -- the source of truth is `auth status`,
+# since the CLI persists credentials at login. We never echo the token.
+token_present=0
+[ -n "${TEAMCITY_TOKEN:-}" ] && token_present=1
+if [ "$token_present" = 0 ] && [ -f "$SECRETS" ]; then
+    # shellcheck disable=SC1090
+    . "$SECRETS" 2>/dev/null || true
+    [ -n "${TEAMCITY_TOKEN:-}" ] && token_present=1
+fi
+
+if ! command -v "$TC_BIN" >/dev/null 2>&1; then
+    note problem cli_missing "teamcity CLI not found on PATH."
+    guide "The teamcity CLI is not installed (the capability assumes it is baked into the container image)." \
+          "No TeamCity build/queue/test commands work." \
+          "Rebuild the container so the image provisions the CLI; if it persists, check the teamcity capability's image setup."
+else
+    if command -v timeout >/dev/null 2>&1; then
+        out="$(timeout 15 "$TC_BIN" auth status 2>&1)"; rc=$?
+    else
+        out="$("$TC_BIN" auth status 2>&1)"; rc=$?
+    fi
+    if [ "$rc" -eq 0 ]; then
+        note ok auth_ok "teamcity auth status reports authenticated."
+    elif [ "$rc" -eq 124 ]; then
+        note problem auth_timeout "teamcity auth status timed out (server unreachable)."
+        guide "Could not reach the TeamCity server within 15s." \
+              "TeamCity commands will hang or fail until connectivity is restored." \
+              "Check VPN / network and that TEAMCITY_URL is correct (default the GW production instance)."
+    else
+        note problem auth_failed "teamcity auth status reports NOT authenticated (rc=$rc)."
+        if [ "$token_present" = 1 ]; then
+            guide "TeamCity CLI is not authenticated though TEAMCITY_TOKEN is set (token likely expired or invalid)." \
+                  "Every teamcity command fails with an auth error mid-workflow." \
+                  "Regenerate the token in TeamCity (profile -> Access Tokens), update TEAMCITY_TOKEN in ~/.zshenv.secrets, restart the container (the post-start hook re-runs 'teamcity auth login')."
+        else
+            guide "TeamCity CLI is not authenticated and TEAMCITY_TOKEN is unset." \
+                  "Every teamcity command fails with an auth error." \
+                  "Set TEAMCITY_TOKEN in ~/.zshenv.secrets (export TEAMCITY_TOKEN=...), restart the container; or run 'teamcity auth login' interactively."
+        fi
+    fi
+fi
+
+if [ "$FORMAT" = json ]; then
+    ok=true; [ "$PROBLEMS" -gt 0 ] && ok=false
+    printf '{"schema_version":1,"doctor":"%s","problems":%s,"ok":%s,"checks":[%s]}\n' \
+        "$SECTION" "$PROBLEMS" "$ok" "$JSON_ROWS"
+else
+    if [ "$PROBLEMS" -eq 0 ]; then
+        say "[OK] TeamCity CLI is installed and authenticated."
+    else
+        say "[PROBLEM] TeamCity has $PROBLEMS issue(s) above -- CI commands will fail until fixed."
+    fi
+fi
+
+[ "$PROBLEMS" -eq 0 ] || exit 1
+exit 0

@@ -1,0 +1,197 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Generate architecture diagrams and deploy to spec steering"
+# model = "opus"
+# allowed-tools = ["Bash", "Skill(diagrams)", "Skill(spec:steering)", "Read", "Write", "Glob", "Grep"]
+#
+# [tool.claude.output]
+# prompt = """Based on the script output, orchestrate the workflow below.
+#
+# ## Phase 0: Ensure Steering Documents Exist (prerequisite)
+#
+# Check the needs_steering field in the script output.
+# If needs_steering is true, the steering directory has no .md files (product.md, tech.md,
+# structure.md). The SpecBrowser requires these files to properly display the project.
+#
+# Run the spec:steering skill first to generate them:
+#
+# ```
+# Skill("spec:steering")
+# ```
+#
+# If needs_steering is false, skip this phase.
+#
+# ## Phase 1: Generate Architecture Diagrams
+#
+# Invoke the diagrams skill to analyze the codebase and generate PlantUML diagrams.
+# Use the Skill tool:
+#
+# ```
+# Skill("diagrams")
+# ```
+#
+# Follow the skill's instructions to generate diagrams under docs/architecture/.
+# If docs/architecture/ already has diagrams (listed in existing_diagrams), the skill will
+# refine or update them rather than regenerating from scratch.
+#
+# ## Phase 2: Build Portable Diagrams
+#
+# After diagrams are generated, run the build script to create self-contained .puml files
+# with inlined includes:
+#
+# ```bash
+# chmod +x docs/architecture/build.sh && docs/architecture/build.sh
+# ```
+#
+# This creates portable versions in docs/architecture/.build/ that render in online tools
+# and CI without needing the theme file.
+#
+# ## Phase 3: Deploy to Spec Steering
+#
+# Copy the built diagrams from docs/architecture/.build/ to the steering architecture
+# directory shown in steering_architecture_dir. This makes them visible in the SpecBrowser.
+#
+# ```bash
+# mkdir -p <steering_architecture_dir>
+# ```
+#
+# Copy ALL .puml files from .build/, preserving the subdirectory structure:
+#
+# ```bash
+# cd docs/architecture/.build && find . -name '*.puml' | while read f; do
+#   mkdir -p "<steering_architecture_dir>/$(dirname "$f")"
+#   cp "$f" "<steering_architecture_dir>/$f"
+# done
+# ```
+#
+# Also copy the manifest.yaml if it exists:
+#
+# ```bash
+# [ -f docs/architecture/manifest.yaml ] && cp docs/architecture/manifest.yaml <steering_architecture_dir>/manifest.yaml
+# ```
+#
+# Replace <steering_architecture_dir> with the actual path from the script output.
+#
+# ## Output
+#
+# After all phases complete, report:
+# - Number of diagrams generated
+# - Number of files deployed to steering
+# - The steering architecture directory path
+# - Remind user to restart SpecBrowser (dev sb) to see the diagrams"""
+# examples = [
+#   "[OK] Architecture diagrams generated and deployed\n\n  Phase 1: Generated 7 diagrams in docs/architecture/\n  Phase 2: Built 7 portable .puml files\n  Phase 3: Deployed to /path/to/steering/architecture/\n\nRestart SpecBrowser to view: dev sb"
+# ]
+# ///
+
+"""
+Gather context for architecture diagram generation and deployment to spec steering.
+
+Checks for existing docs/architecture/ content, resolves the steering directory,
+and outputs JSON for Claude to orchestrate the full workflow.
+"""
+
+import sys
+import os
+import json
+import subprocess
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import get_git_root, steering_path, in_git_repo
+
+
+def find_puml_files(directory):
+    """List .puml files under a directory, returning relative paths."""
+    results = []
+    base = Path(directory)
+    if not base.is_dir():
+        return results
+    for f in sorted(base.rglob('*.puml')):
+        rel = str(f.relative_to(base))
+        # Skip theme files and build output
+        if rel == 'guidewire-theme.puml' or rel.startswith('.build/'):
+            continue
+        results.append(rel)
+    return results
+
+
+def main():
+    if not in_git_repo():
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': 'Not in a git repository'}))
+        else:
+            print('Error: Not in a git repository', file=sys.stderr)
+        sys.exit(1)
+
+    git_root = get_git_root()
+    arch_dir = git_root / 'docs' / 'architecture'
+    build_dir = arch_dir / '.build'
+
+    # Resolve steering directory
+    try:
+        steer_dir = steering_path()
+    except SystemExit:
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': 'Could not resolve doc root. Run /spec:setup first.'}))
+        else:
+            print('Error: Could not resolve doc root. Run /spec:setup first.', file=sys.stderr)
+        sys.exit(1)
+
+    steering_arch_dir = steer_dir / 'architecture'
+
+    # Check existing state
+    has_arch_dir = arch_dir.is_dir()
+    has_build_sh = (arch_dir / 'build.sh').is_file()
+    has_manifest = (arch_dir / 'manifest.yaml').is_file()
+    existing_diagrams = find_puml_files(arch_dir) if has_arch_dir else []
+    steering_diagrams = find_puml_files(steering_arch_dir) if steering_arch_dir.is_dir() else []
+
+    # Check if steering has .md files (needed by SpecBrowser to display the project)
+    steering_md_files = []
+    if steer_dir.is_dir():
+        steering_md_files = [f.name for f in sorted(steer_dir.iterdir()) if f.suffix == '.md']
+    needs_steering = len(steering_md_files) == 0
+
+    data = {
+        'git_root': str(git_root),
+        'architecture_dir': str(arch_dir),
+        'build_dir': str(build_dir),
+        'steering_architecture_dir': str(steering_arch_dir),
+        'has_architecture_dir': has_arch_dir,
+        'has_build_sh': has_build_sh,
+        'has_manifest': has_manifest,
+        'existing_diagrams': existing_diagrams,
+        'steering_diagrams': steering_diagrams,
+        'needs_steering': needs_steering,
+        'steering_md_files': steering_md_files,
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f'Architecture dir:  {arch_dir} {"(exists)" if has_arch_dir else "(not yet created)"}')
+        print(f'Steering arch dir: {steering_arch_dir}')
+        print(f'Build script:      {"found" if has_build_sh else "not found (will be created by skill)"}')
+        if needs_steering:
+            print(f'Steering docs:     MISSING (run /spec:steering first)')
+        else:
+            print(f'Steering docs:     {", ".join(steering_md_files)}')
+        if existing_diagrams:
+            print(f'Existing diagrams: {len(existing_diagrams)}')
+            for d in existing_diagrams:
+                print(f'  - {d}')
+        else:
+            print('No existing diagrams (full analysis mode)')
+        if steering_diagrams:
+            print(f'Steering diagrams: {len(steering_diagrams)}')
+        print('\nRun with CC=1 to get JSON output for Claude')
+
+
+if __name__ == '__main__':
+    main()

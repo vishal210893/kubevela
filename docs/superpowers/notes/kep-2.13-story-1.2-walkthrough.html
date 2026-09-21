@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Addon Controller — Implementation Walkthrough (Story 1.2)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" integrity="sha384-wFjoQjtV1y5jVHbt0p35Ui8aV8GVpEZkyF99OXWqP/eNJDU93D3Ugxkoyh6Y2I4A" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<style>
+  /* ---------- Design tokens (Exaggerated Minimalism) ---------- */
+  :root[data-theme="dark"] {
+    --bg: #0F172A;
+    --bg-elevated: #131C2E;
+    --surface: #1B2538;
+    --surface-2: #272F42;
+    --fg: #F8FAFC;
+    --fg-muted: #94A3B8;
+    --fg-faint: #64748B;
+    --border: #2A3650;
+    --border-strong: #475569;
+    --accent: #22C55E;
+    --accent-soft: rgba(34, 197, 94, 0.12);
+    --danger: #EF4444;
+    --warn: #F59E0B;
+    --info: #38BDF8;
+    --primary: #E2E8F0;
+    --code-bg: #0B1220;
+    --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 10px 30px -10px rgba(0,0,0,0.5);
+    --glass: rgba(27, 37, 56, 0.6);
+    --glass-border: rgba(148, 163, 184, 0.12);
+  }
+  :root[data-theme="light"] {
+    --bg: #FFFFFF;
+    --bg-elevated: #F8FAFC;
+    --surface: #F1F5F9;
+    --surface-2: #E2E8F0;
+    --fg: #0F172A;
+    --fg-muted: #475569;
+    --fg-faint: #94A3B8;
+    --border: #E2E8F0;
+    --border-strong: #CBD5E1;
+    --accent: #16A34A;
+    --accent-soft: rgba(22, 163, 74, 0.10);
+    --danger: #DC2626;
+    --warn: #D97706;
+    --info: #0284C7;
+    --primary: #1E293B;
+    --code-bg: #0F172A;
+    --shadow: 0 1px 3px rgba(15,23,42,0.08), 0 10px 30px -10px rgba(15,23,42,0.12);
+    --glass: rgba(248, 250, 252, 0.7);
+    --glass-border: rgba(148, 163, 184, 0.25);
+  }
+
+  /* ---------- Base ---------- */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 90px; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    transition: background 200ms ease, color 200ms ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+  }
+
+  /* ---------- Typography ---------- */
+  h1, h2, h3, h4 { font-family: 'JetBrains Mono', monospace; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; color: var(--fg); }
+  h1 { font-size: clamp(2.5rem, 6vw, 4.5rem); margin: 0; }
+  h2 { font-size: clamp(1.75rem, 3vw, 2.5rem); margin: 4rem 0 1.25rem; letter-spacing: -0.03em; }
+  h3 { font-size: 1.25rem; margin: 2rem 0 .75rem; color: var(--fg); }
+  h4 { font-size: 1rem; margin: 1.5rem 0 .5rem; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.08em; font-size: .85rem; }
+  p { margin: 0 0 1rem; color: var(--fg); }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent); padding-bottom: 1px; transition: color 150ms ease, border-color 150ms ease; }
+  a:hover { color: var(--fg); border-bottom-style: solid; }
+
+  /* Inline code (outside <pre>) — chip styling */
+  :not(pre) > code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .88em;
+    background: var(--surface);
+    color: var(--fg);
+    padding: .12rem .42rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  /* Code inside <pre> — no chip styling, inherits pre's dark background */
+  pre code {
+    font-family: 'JetBrains Mono', monospace;
+    background: transparent !important;
+    color: inherit;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    font-size: 1em;
+    white-space: pre;
+    display: block;
+  }
+
+  /* ---------- Layout ---------- */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    background: var(--glass); border-bottom: 1px solid var(--glass-border);
+  }
+  .topbar-inner {
+    max-width: 1400px; margin: 0 auto; padding: 1rem 1.5rem;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  }
+  .topbar-title { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: .85rem; color: var(--fg-muted); }
+  .topbar-title .pill { background: var(--accent-soft); color: var(--accent); padding: .15rem .55rem; border-radius: 999px; margin-right: .5rem; font-size: .75rem; font-weight: 700; }
+  .topbar-actions { display: flex; gap: .5rem; align-items: center; }
+  .icon-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--fg-muted);
+    width: 38px; height: 38px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 150ms ease;
+  }
+  .icon-btn:hover { color: var(--fg); border-color: var(--border-strong); background: var(--surface); }
+  .icon-btn svg { width: 18px; height: 18px; }
+
+  .hero {
+    max-width: 1400px; margin: 0 auto; padding: 6rem 1.5rem 4rem;
+  }
+  .hero-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .85rem; color: var(--fg-muted);
+    text-transform: uppercase; letter-spacing: .15em;
+    margin-bottom: 1.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;
+  }
+  .hero-meta .dot { width: 4px; height: 4px; background: var(--accent); border-radius: 50%; display: inline-block; }
+  .hero-subtitle {
+    font-family: 'IBM Plex Sans', sans-serif; font-weight: 400;
+    font-size: clamp(1rem, 1.5vw, 1.25rem); color: var(--fg-muted);
+    margin-top: 2rem; max-width: 760px; line-height: 1.6;
+  }
+  .hero-tags { margin-top: 2.5rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+  .tag {
+    font-family: 'JetBrains Mono', monospace; font-size: .8rem;
+    padding: .35rem .8rem; border: 1px solid var(--border-strong);
+    border-radius: 999px; color: var(--fg-muted);
+    display: inline-flex; align-items: center; gap: .4rem;
+  }
+  .tag-accent { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+  .layout {
+    max-width: 1400px; margin: 0 auto; padding: 0 1.5rem 6rem;
+    display: grid; grid-template-columns: 240px 1fr; gap: 4rem;
+  }
+  @media (max-width: 1024px) {
+    .layout { grid-template-columns: 1fr; gap: 2rem; }
+    .toc { display: none; }
+  }
+
+  /* ---------- TOC sidebar ---------- */
+  .toc {
+    position: sticky; top: 96px; align-self: start; max-height: calc(100vh - 120px); overflow-y: auto;
+    padding-right: 1rem; font-size: .85rem;
+  }
+  .toc-title {
+    font-family: 'JetBrains Mono', monospace; font-size: .7rem; color: var(--fg-faint);
+    text-transform: uppercase; letter-spacing: .2em; margin-bottom: .75rem;
+  }
+  .toc ul { list-style: none; padding: 0; margin: 0; border-left: 1px solid var(--border); }
+  .toc li a {
+    display: block; padding: .45rem .85rem; color: var(--fg-muted); border-bottom: none;
+    transition: color 150ms ease, background 150ms ease;
+    position: relative;
+  }
+  .toc li a::before {
+    content: ''; position: absolute; left: -1px; top: 0; bottom: 0; width: 2px;
+    background: transparent; transition: background 150ms ease;
+  }
+  .toc li a:hover { color: var(--fg); }
+  .toc li a.active { color: var(--accent); font-weight: 600; }
+  .toc li a.active::before { background: var(--accent); }
+
+  /* ---------- Content ---------- */
+  .content { min-width: 0; }
+  .content > section { margin-bottom: 0; }
+  .content section:first-of-type h2 { margin-top: 0; }
+
+  /* Callout */
+  .callout {
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border-radius: 16px;
+    padding: 1.5rem 1.75rem; margin: 1.5rem 0;
+    display: grid; grid-template-columns: auto 1fr; gap: 1rem;
+    box-shadow: var(--shadow);
+  }
+  .callout-icon {
+    width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+    border-radius: 10px; background: var(--accent-soft); color: var(--accent);
+  }
+  .callout-icon svg { width: 20px; height: 20px; }
+  .callout-body p { margin: 0; color: var(--fg); }
+  .callout-body strong { color: var(--fg); }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; margin: 1rem 0 1.5rem; border: 1px solid var(--border); border-radius: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  thead th {
+    text-align: left; padding: .85rem 1rem; background: var(--surface);
+    font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: .8rem;
+    text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  tbody td {
+    padding: .85rem 1rem; border-bottom: 1px solid var(--border);
+    vertical-align: top; color: var(--fg);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--surface); }
+
+  /* Code blocks — apply to <pre> regardless of whether Prism added a language class yet */
+  pre,
+  pre[class*="language-"] {
+    background: var(--code-bg) !important;
+    color: #e2e8f0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem !important;
+    font-size: .85rem !important;
+    line-height: 1.6;
+    margin: 1rem 0 1.5rem;
+    overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+
+  /* Cards (Q&A) */
+  .q-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+  .q-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 1.25rem 1.5rem; transition: border-color 150ms ease, transform 150ms ease;
+  }
+  .q-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .q-label {
+    font-family: 'JetBrains Mono', monospace; font-size: .75rem; color: var(--accent);
+    font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin-bottom: .5rem;
+  }
+  .q-text { color: var(--fg); font-style: italic; margin: 0 0 .8rem; font-size: .95rem; }
+  .q-link { font-size: .85rem; color: var(--fg-muted); border: none; padding: 0; }
+  .q-link::after { content: ' →'; color: var(--accent); }
+
+  /* Step header */
+  .step-header {
+    display: flex; align-items: center; gap: 1rem; margin: 4rem 0 1.25rem;
+    padding-bottom: 1rem; border-bottom: 1px solid var(--border);
+  }
+  .step-num {
+    font-family: 'JetBrains Mono', monospace; font-weight: 700;
+    font-size: 2.5rem; color: var(--fg-faint); line-height: 1;
+    min-width: 4rem;
+  }
+  .step-title-block h2 { margin: 0; font-size: 1.75rem; letter-spacing: -0.02em; }
+  .step-title-block .kicker {
+    font-family: 'JetBrains Mono', monospace; font-size: .75rem;
+    color: var(--accent); text-transform: uppercase; letter-spacing: .2em;
+    display: block; margin-bottom: .35rem;
+  }
+
+  /* Detail toggle */
+  details {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    margin: 1rem 0; padding: 1rem 1.25rem;
+  }
+  details[open] { border-color: var(--border-strong); }
+  details summary {
+    cursor: pointer; font-weight: 600; color: var(--fg);
+    list-style: none; outline: none;
+    padding: .25rem 0; user-select: none;
+    display: flex; align-items: center; gap: .5rem;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before {
+    content: '+'; font-family: 'JetBrains Mono', monospace; font-weight: 700;
+    color: var(--accent); width: 1.25rem; display: inline-block;
+    transition: transform 200ms ease;
+  }
+  details[open] summary::before { content: '−'; }
+  details > *:not(summary) { margin-top: 1rem; }
+
+  /* Footer */
+  .footer {
+    max-width: 1400px; margin: 0 auto; padding: 3rem 1.5rem 5rem;
+    border-top: 1px solid var(--border); font-size: .85rem; color: var(--fg-muted);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem;
+  }
+
+  /* Section anchor highlight on hover */
+  .anchor-link {
+    color: var(--fg-faint); margin-left: .5rem; opacity: 0;
+    transition: opacity 150ms ease; border: none; font-weight: 400;
+  }
+  h2:hover .anchor-link, h3:hover .anchor-link { opacity: 1; }
+
+  /* Mobile */
+  @media (max-width: 640px) {
+    .hero { padding: 4rem 1.25rem 3rem; }
+    .layout { padding: 0 1.25rem 4rem; }
+    .step-header { flex-direction: column; align-items: flex-start; gap: .5rem; }
+    .step-num { font-size: 1.5rem; min-width: auto; }
+    .callout { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="topbar-title">
+      <span class="pill">Story 1.2</span>
+      KEP-2.13 · Addon Controller
+    </div>
+    <div class="topbar-actions">
+      <a href="https://www.notion.so/373857335f2781cc8202eb19501b61f2" class="icon-btn" title="View on Notion" aria-label="View on Notion" style="border-bottom: 1px solid var(--border);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7"/><path d="M10 14L21 3"/><path d="M21 14v7h-7"/><path d="M14 10L3 21"/><path d="M3 10V3h7"/></svg>
+      </a>
+      <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">
+        <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="hero-meta">
+    <span>GWCP-101808</span>
+    <span class="dot"></span>
+    <span>Parent Epic GWCP-100436</span>
+    <span class="dot"></span>
+    <span>Verified 2026-06-02</span>
+  </div>
+  <h1>Addon Controller<br/>Implementation Walkthrough</h1>
+  <p class="hero-subtitle">
+    Pair-programming session for <em>"Complete AddonStatus structure with conditions, inventory, and source-digest fields"</em> under KEP-2.13. Builds on story 1.1. Eight implementation steps, all verified.
+  </p>
+  <div class="hero-tags">
+    <span class="tag tag-accent">10 new fields</span>
+    <span class="tag tag-accent">5 new types</span>
+    <span class="tag tag-accent">6 condition constants</span>
+    <span class="tag">Go</span>
+    <span class="tag">controller-runtime</span>
+    <span class="tag">kubebuilder</span>
+  </div>
+</section>
+
+<main class="layout">
+
+  <aside class="toc">
+    <div class="toc-title">Contents</div>
+    <ul>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#questions">Questions you asked</a></li>
+      <li><a href="#step-1">Step 1 — Scalar fields</a></li>
+      <li><a href="#step-2">Step 2 — Source digest</a></li>
+      <li><a href="#step-3">Step 3 — Conditions</a></li>
+      <li><a href="#step-4">Step 4 — Inventory types</a></li>
+      <li><a href="#step-5">Step 5 — AddonInclude</a></li>
+      <li><a href="#step-6">Step 6 — Module status</a></li>
+      <li><a href="#step-7">Step 7 — go generate</a></li>
+      <li><a href="#step-8">Step 8 — Build &amp; vet</a></li>
+      <li><a href="#final">Final state</a></li>
+      <li><a href="#sources">Sources</a></li>
+    </ul>
+  </aside>
+
+  <article class="content">
+
+    <section id="tldr">
+      <h2>TL;DR</h2>
+      <div class="callout">
+        <div class="callout-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </div>
+        <div class="callout-body">
+          <p><strong>Fills in everything missing from <code>AddonStatus</code></strong> so downstream reconciler / drift correction / source resolve / finalizer stories have a stable contract. 10 new fields, 5 new types, 6 condition string constants. Stacks on top of story 1.1's commit on the same branch.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Step</th><th>What it covers</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Six scalar <code>AddonStatus</code> fields (timestamps, version info, app pointer, healthy flag)</td></tr>
+            <tr><td>2</td><td><code>resolvedSourceDigest</code> + OCI manifest digest concept</td></tr>
+            <tr><td>3</td><td><code>conditions []metav1.Condition</code> + six condition type string constants</td></tr>
+            <tr><td>4</td><td><code>AddonResourceRef</code> + <code>AddonInstalledResources</code> (staleness diff inventory)</td></tr>
+            <tr><td>5</td><td><code>AddonInclude</code> (per-category install knobs)</td></tr>
+            <tr><td>6</td><td><code>AddonModuleStatus</code> + <code>AddonModuleLineStatus</code> (KEP-2.20 forward-compat)</td></tr>
+            <tr><td>7</td><td>Run <code>go generate</code>, verify deterministic output</td></tr>
+            <tr><td>8</td><td><code>go build</code> + <code>go vet</code> verification</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="questions">
+      <h2>Questions you asked during the session</h2>
+      <p style="color: var(--fg-muted); margin-bottom: 1.5rem;">Verbatim, with pointers to where each is answered.</p>
+      <div class="q-grid">
+        <div class="q-card">
+          <div class="q-label">Q1</div>
+          <p class="q-text">"status.installedResources can you give the structure of this and how comparing take. a rough idea may be"</p>
+          <a href="#step-4" class="q-link">Step 4 — structure &amp; diff walkthrough</a>
+        </div>
+        <div class="q-card">
+          <div class="q-label">Q2</div>
+          <p class="q-text">"explain this: The inventory is always one cycle behind. A resource applied in reconcile N appears in the snapshot used by reconcile N+1…"</p>
+          <a href="#step-4" class="q-link">Step 4 — one cycle behind toggle</a>
+        </div>
+        <div class="q-card">
+          <div class="q-label">Q3</div>
+          <p class="q-text">"AddonInstalledResources is the addon-wide inventory… will it contain data of every resource which addon create? Give an example of pre-filled YAML data."</p>
+          <a href="#step-4" class="q-link">Step 4 — coverage table + YAML</a>
+        </div>
+        <div class="q-card">
+          <div class="q-label">Q4</div>
+          <p class="q-text">"not able to understand this part: Why an array of conditions instead of separate boolean fields"</p>
+          <a href="#step-3" class="q-link">Step 3 — array vs booleans</a>
+        </div>
+        <div class="q-card">
+          <div class="q-label">Q5</div>
+          <p class="q-text">"explain this with example using humanizer skill. AddonInclude controls which addon asset categories…"</p>
+          <a href="#step-5" class="q-link">Step 5 — four concrete examples</a>
+        </div>
+        <div class="q-card">
+          <div class="q-label">Q6</div>
+          <p class="q-text">"okay now can you explain step 6 and 7 in similay way"</p>
+          <a href="#step-6" class="q-link">Steps 6 &amp; 7 — module status + go generate</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="step-1">
+      <div class="step-header">
+        <div class="step-num">01</div>
+        <div class="step-title-block">
+          <span class="kicker">Step 1</span>
+          <h2>Scalar AddonStatus fields</h2>
+        </div>
+      </div>
+      <p>Six simple-typed fields added to <code>AddonStatus</code>. No new types needed; just <code>string</code>, <code>*metav1.Time</code>, and <code>bool</code>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Field</th><th>Type</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>LastReconciledAt</code></td><td><code>*metav1.Time</code></td><td>Wall-clock timestamp of last reconcile — "is the controller stuck?" diagnostics.</td></tr>
+            <tr><td><code>InstalledVersion</code></td><td><code>string</code></td><td>Addon version actually running. Compared with <code>spec.version</code> to detect drift / upgrade triggers.</td></tr>
+            <tr><td><code>InstalledRegistry</code></td><td><code>string</code></td><td>The registry that provided the installed version.</td></tr>
+            <tr><td><code>AvailableUpgrade</code></td><td><code>string</code></td><td>Set in tracking + Manual mode when a newer version is found. Cleared on apply.</td></tr>
+            <tr><td><code>ApplicationName</code></td><td><code>string</code></td><td>Name of the owned Application in <code>vela-system</code>.</td></tr>
+            <tr><td><code>ApplicationHealthy</code></td><td><code>bool</code></td><td>Quick boolean indicator; transition time / reason live on the <code>ApplicationHealthy</code> condition.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        <div class="callout-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </div>
+        <div class="callout-body">
+          <p><strong>Pointer vs value for timestamps.</strong> <code>LastReconciledAt</code> is <code>*metav1.Time</code>, not a value type. Reason: the zero value of <code>metav1.Time</code> marshals to <code>null</code> in JSON. Nil + <code>omitempty</code> cleanly omits the field. Standard Kubernetes convention (see <code>Pod.Status.StartTime *metav1.Time</code>).</p>
+        </div>
+      </div>
+      <h3>Populated example (fluxcd running healthy)</h3>
+<pre><code class="language-yaml">status:
+  phase: running
+  observedGeneration: 3
+  lastReconciledAt: "2026-06-02T13:45:12Z"
+  installedVersion: v1.2.0
+  installedRegistry: KubeVela
+  applicationName: addon-fluxcd
+  applicationHealthy: true
+  # availableUpgrade absent because spec.version is pinned (exact tag)</code></pre>
+      <h3>Populated example (tracking mode with an upgrade waiting)</h3>
+<pre><code class="language-yaml">status:
+  phase: running
+  observedGeneration: 5
+  lastReconciledAt: "2026-06-02T14:00:00Z"
+  installedVersion: v1.2.0
+  installedRegistry: KubeVela
+  availableUpgrade: v1.4.0       # constraint resolved to a newer version
+  applicationName: addon-fluxcd
+  applicationHealthy: true</code></pre>
+      <p>The second example shows what <em>Manual</em> tracking mode looks like: a newer version exists, the controller has noted it, but <code>installedVersion</code> is still the old one. Operator decides when to bump <code>spec.version</code>.</p>
+    </section>
+
+    <section id="step-2">
+      <div class="step-header">
+        <div class="step-num">02</div>
+        <div class="step-title-block">
+          <span class="kicker">Step 2</span>
+          <h2>resolvedSourceDigest + the digest concept</h2>
+        </div>
+      </div>
+      <p>One <code>string</code> field, but worth the teaching moment.</p>
+      <h3>OCI manifest digest — what it actually is</h3>
+      <p>When the controller fetches an addon from an OCI registry (Harbor, ECR, GHCR, etc.), it doesn't fetch raw files. It fetches an <strong>OCI artifact</strong>: a manifest plus layers. The registry hashes the manifest JSON with SHA-256 and serves the result as the artifact's identity: <code>sha256:abc123def456...</code>. That's the manifest digest.</p>
+      <p>Two important properties:</p>
+      <ul>
+        <li><strong>Content-addressable.</strong> Computed <em>from</em> the content. Same content → same digest, byte-for-byte, anywhere.</li>
+        <li><strong>Tamper-evident.</strong> Change one bit in the manifest or any referenced layer, the digest changes. No way to keep it stable while modifying the artifact.</li>
+      </ul>
+      <p>That's what makes the field useful: the controller asks the registry "has <code>aws-s3:v1.2.0</code> changed?". A different digest means the artifact actually changed (someone moved a tag, force-pushed a layer). Same digest means nothing changed — skip the full download and re-render from the local cache.</p>
+      <h3>Git sources</h3>
+      <p>A Git commit SHA is also content-addressable (SHA hashing the tree + parent + message). Same role, different backend. For Git-sourced addons the field stores the full commit SHA.</p>
+      <h3>Populated example (OCI source)</h3>
+<pre><code class="language-yaml">status:
+  phase: running
+  installedVersion: v1.2.0
+  installedRegistry: KubeVela
+  resolvedSourceDigest: "sha256:9ba8c7f29d1e6a4f5b3c2e8d7a6b9f0e1c2d3a4b5c6d7e8f90a1b2c3d4e5f6a7"</code></pre>
+      <h3>Populated example (Git source)</h3>
+<pre><code class="language-yaml">status:
+  phase: running
+  installedVersion: v1.2.0
+  resolvedSourceDigest: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"</code></pre>
+    </section>
+
+    <section id="step-3">
+      <div class="step-header">
+        <div class="step-num">03</div>
+        <div class="step-title-block">
+          <span class="kicker">Step 3</span>
+          <h2>Conditions field + six type constants</h2>
+        </div>
+      </div>
+      <h3>What metav1.Condition is</h3>
+<pre><code class="language-go">type Condition struct {
+    Type               string             // e.g. "Ready", "SourceResolved"
+    Status             ConditionStatus    // "True", "False", "Unknown"
+    LastTransitionTime metav1.Time
+    Reason             string             // short CamelCase code
+    Message            string             // human-readable description
+    ObservedGeneration int64
+}</code></pre>
+      <p>Standard apimachinery struct. Every modern Kubernetes type uses it for multi-faceted status reporting.</p>
+      <h3>The six condition types declared</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>True when…</th><th>Status of writes in 1.2 slice</th></tr></thead>
+          <tbody>
+            <tr><td><code>Ready</code></td><td>All modules synced, all enabled lines have aux ready + definitions applied</td><td><strong style="color:var(--accent)">Active</strong></td></tr>
+            <tr><td><code>SourceResolved</code></td><td>Source artifact fetched, digest resolved. False = registry unreachable.</td><td><strong style="color:var(--accent)">Active</strong></td></tr>
+            <tr><td><code>ApplicationHealthy</code></td><td>Owned Application reached <code>Ready=True</code></td><td><strong style="color:var(--accent)">Active</strong></td></tr>
+            <tr><td><code>AuxiliaryReady</code></td><td>All enabled API line aux resources reported <code>Ready</code> via kstatus</td><td>Reserved</td></tr>
+            <tr><td><code>ModulesSynced</code></td><td>All modules evaluated, definitions applied without error this cycle</td><td>Reserved</td></tr>
+            <tr><td><code>DefinitionConflict</code></td><td>Definitions exist on cluster under a different owner</td><td>Reserved</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Why declare all six even though only three get written? <strong>Forward-compatibility.</strong> When auxiliary-readiness logic lands in a follow-up epic, it just starts writing to the existing constant. No string-mismatch errors, no rename churn.</p>
+
+      <details>
+        <summary>Q4 — Why an array of conditions instead of separate boolean fields?</summary>
+        <p><strong>Old way — separate boolean fields:</strong></p>
+<pre><code class="language-yaml">status:
+  phase: running
+  ready: true
+  sourceResolved: true
+  applicationHealthy: true
+  auxiliaryReady: false</code></pre>
+        <p><strong>Modern way — array of conditions:</strong></p>
+<pre><code class="language-yaml">status:
+  phase: running
+  conditions:
+    - type: SourceResolved
+      status: "True"
+      lastTransitionTime: "2026-06-02T10:00:00Z"
+      reason: ResolveSucceeded
+      message: "fetched digest sha256:abc... from registry KubeVela"
+    - type: AuxiliaryReady
+      status: "False"
+      lastTransitionTime: "2026-06-02T10:02:30Z"
+      reason: WaitingForXRDs
+      message: "XRD bucket.aws-s3.crossplane.io still in NotEstablished"</code></pre>
+        <p>Three benefits drive the choice:</p>
+        <p><strong>1. Extensibility.</strong> Adding <code>AuxiliaryReady</code> later means defining a new string constant; the Go struct does not change. Old clients ignore unknown entries. With booleans, every new aspect is a new field and a schema bump.</p>
+        <p><strong>2. Transition tracking.</strong> A bool <code>ready: false</code> tells you nothing about <em>when</em> or <em>why</em>. A condition carries <code>lastTransitionTime</code>, <code>reason</code>, and <code>message</code>. Debugging from <code>kubectl get</code> alone becomes possible.</p>
+        <p><strong>3. Tooling.</strong> <code>kubectl wait --for=condition=Ready</code> works across every Kubernetes type with conditions. ArgoCD / Flux health checks understand them natively. With booleans you'd hand-roll all of that per CRD.</p>
+      </details>
+      <h3>Why string constants and not a typed enum</h3>
+      <p><code>metav1.Condition.Type</code> is just <code>string</code>. A typed wrapper would convert at every call site. Plus standard Kubernetes practice is plain string constants (<code>corev1.PodReady</code>, <code>appsv1.DeploymentAvailable</code>). We follow the convention.</p>
+    </section>
+
+    <section id="step-4">
+      <div class="step-header">
+        <div class="step-num">04</div>
+        <div class="step-title-block">
+          <span class="kicker">Step 4</span>
+          <h2>AddonResourceRef + AddonInstalledResources</h2>
+        </div>
+      </div>
+      <h3>The two types</h3>
+<pre><code class="language-go">type AddonInstalledResources struct {
+    Definitions     []AddonResourceRef
+    VelaQLViews     []AddonResourceRef
+    ConfigTemplates []AddonResourceRef
+    Schemas         []AddonResourceRef
+    Packages        []AddonResourceRef
+}
+
+type AddonResourceRef struct {
+    Name         string
+    Kind         string
+    Deprecated   bool   // KEP-2.20 lifecycle marker
+    DeprecatedAt string // RFC3339 timestamp
+}</code></pre>
+      <p>Five lists, one per metadata category. Each entry is a 4-tuple but the last two are usually empty unless the deprecation lifecycle has marked the resource.</p>
+
+      <h3>Three subtle design choices</h3>
+      <p><strong>Why <code>name + kind</code> (no GVK, no UID).</strong> The inventory only needs to identify a resource <em>within the addon's scope</em>. Group is implied by the category bucket; namespace is implied (metadata resources live in <code>vela-system</code>; definitions are cluster-scoped).</p>
+      <p><strong>Why deprecation markers on the ref.</strong> KEP-2.20 marks individual resources as deprecated. Carrying the marker on the ref keeps the inventory self-contained.</p>
+      <p><strong>Why no top-level <code>Auxiliary</code> bucket.</strong> Auxiliary resources are per-API-line, not addon-wide. They live in <code>AddonModuleLineStatus.AuxiliaryResources</code> (step 6).</p>
+
+      <details>
+        <summary>Q1 — Show the structure and how the comparison (staleness diff) works</summary>
+        <p><strong>Populated YAML example</strong> (fluxcd after install):</p>
+<pre><code class="language-yaml">status:
+  installedResources:
+    definitions:
+      - name: helm-release
+        kind: ComponentDefinition
+      - name: git-source
+        kind: ComponentDefinition
+      - name: notification
+        kind: TraitDefinition
+    velaQLViews:
+      - name: flux-status
+        kind: View
+    configTemplates:
+      - name: git-credentials
+        kind: ConfigTemplate
+    schemas:
+      - name: helm-release-schema
+        kind: ConfigMap
+    packages: []</code></pre>
+        <p><strong>The diff per reconcile:</strong></p>
+<pre><code class="language-none">Snapshot A = status.installedResources (last reconcile's record)
+Snapshot B = freshly rendered set from addon source
+
+for each category:
+    stale = items in A but not in B
+    new   = items in B but not in A
+    same  = items in both
+
+    if category is Views/ConfigTemplates/Schemas:
+        hard-delete stale items   # metadata, safe to remove
+
+    if category is Definitions/Auxiliary:
+        skip delete                # runtime deps; deprecation lifecycle handles removal
+
+    apply (SSA) new + same items   # idempotent
+
+status.installedResources = B</code></pre>
+        <p><strong>Walkthrough.</strong> v1.0.0 ships with <code>flux-status</code> View and <code>git-credentials</code> ConfigTemplate. v1.1.0 renames the View to <code>flux-overview</code> and removes <code>git-credentials</code>.</p>
+        <p>Diff in the cycle that first renders v1.1.0:</p>
+        <ul>
+          <li><code>flux-status</code> View → stale → hard-delete.</li>
+          <li><code>git-credentials</code> ConfigTemplate → stale → hard-delete.</li>
+          <li><code>flux-overview</code> View → new → SSA apply.</li>
+        </ul>
+      </details>
+
+      <details>
+        <summary>Q2 — "The inventory is always one cycle behind" — what does that mean?</summary>
+        <p>It is about the <strong>snapshot basis</strong>, not about a delay in detecting changes.</p>
+        <p>The diff uses a stored snapshot (<code>status.installedResources</code>), not a live cluster query. The snapshot was written at the <em>end</em> of the previous reconcile.</p>
+        <p><strong>Trace of a rename:</strong></p>
+<pre><code class="language-none">Cycle N (last cycle on old source):
+  previous = [oldView]    # from N-1's snapshot
+  current  = [oldView]    # source unchanged
+  diff: nothing stale
+  status.installedResources = [oldView]
+
+[ source rename committed; spec.version bumped; reconcile fires ]
+
+Cycle N+1 (first cycle on new source):
+  previous = [oldView]    # from N's snapshot
+  current  = [newView]    # rendered from new source
+  diff: oldView stale, newView new
+  apply newView (SSA), hard-delete oldView   # cleanup happens HERE
+  status.installedResources = [newView]</code></pre>
+        <p>Cleanup is <strong>immediate</strong> — in the cycle that first renders the change. The "one cycle behind" framing refers to the fact that the diff basis was <em>recorded</em> one reconcile ago.</p>
+        <p><strong>Practical implication.</strong> Reading <code>status.installedResources</code> externally always shows the previous reconcile's end state. Same as any Kubernetes status field.</p>
+      </details>
+
+      <details>
+        <summary>Q3 — Will installedResources contain every resource the addon creates?</summary>
+        <p>No. Curated subset — addon-wide <em>metadata</em> resources only.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Resource type</th><th>In <code>installedResources</code>?</th><th>Tracked elsewhere</th></tr></thead>
+            <tbody>
+              <tr><td>Definitions (Component/Trait/etc.)</td><td><strong style="color:var(--accent)">Yes</strong> — <code>definitions</code> bucket</td><td>—</td></tr>
+              <tr><td>VelaQL Views</td><td><strong style="color:var(--accent)">Yes</strong></td><td>—</td></tr>
+              <tr><td>ConfigTemplates</td><td><strong style="color:var(--accent)">Yes</strong></td><td>—</td></tr>
+              <tr><td>UI Schemas</td><td><strong style="color:var(--accent)">Yes</strong></td><td>—</td></tr>
+              <tr><td>CUE packages (future)</td><td><strong style="color:var(--accent)">Yes</strong></td><td>—</td></tr>
+              <tr><td>The owned Application itself</td><td><strong style="color:var(--danger)">No</strong></td><td><code>status.applicationName</code></td></tr>
+              <tr><td>Operator Deployment / RBAC / CRDs (from <code>resources/</code>)</td><td><strong style="color:var(--danger)">No</strong></td><td>The Application's ResourceTracker GC</td></tr>
+              <tr><td>Auxiliary (Crossplane XRDs / Compositions)</td><td><strong style="color:var(--danger)">No</strong></td><td><code>status.modules[].lines[].auxiliaryResources</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Mental model: <code>installedResources</code> is the <strong>staleness-diff inventory for metadata only</strong>. The Application controller handles its own children via ResourceTracker; auxiliary lives per API line.</p>
+      </details>
+    </section>
+
+    <section id="step-5">
+      <div class="step-header">
+        <div class="step-num">05</div>
+        <div class="step-title-block">
+          <span class="kicker">Step 5</span>
+          <h2>AddonInclude</h2>
+        </div>
+      </div>
+      <p>Seven optional <code>*bool</code> knobs for cherry-picking which asset categories install when an addon is consumed via the <code>addon</code> component type (addon-of-addons composition).</p>
+      <h3>Default-include semantics</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Value in YAML</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>Field absent / <code>null</code></td><td>Use default (include the category)</td></tr>
+            <tr><td><code>true</code></td><td>Explicit include (same effect as absent)</td></tr>
+            <tr><td><code>false</code></td><td>Skip this category</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Only write the categories you want to skip. Everything else gets installed.</p>
+      <h3>Why <code>*bool</code> (not <code>bool</code>)</h3>
+      <p>A plain <code>bool</code>'s zero value is <code>false</code>. Go's JSON decoder fills missing fields with zero values, so <code>include: { resources: false }</code> would leave the controller seeing <em>every</em> category as <code>false</code> — every category opted out.</p>
+      <p>With <code>*bool</code>, zero value is <code>nil</code>. Now "unset" and "explicit false" are distinguishable: <code>nil = use default (include)</code>, <code>*false = explicit skip</code>. Standard Kubernetes pattern.</p>
+
+      <h3>Concrete examples</h3>
+      <h4>Default behavior (no include block)</h4>
+<pre><code class="language-yaml">spec:
+  components:
+    - name: aws-s3
+      type: addon
+      properties:
+        version: v1.3.0</code></pre>
+      <p>Everything ships.</p>
+
+      <h4>Skip the operator (Crossplane already installed elsewhere)</h4>
+<pre><code class="language-yaml">spec:
+  components:
+    - name: postgres
+      type: addon
+      properties:
+        version: v2.1.4
+        include:
+          resources: false   # skip operator install</code></pre>
+      <p>Definitions + Compositions still ship; the owned Application for the operator is not created.</p>
+
+      <h4>Definitions-only (catalogue mode)</h4>
+<pre><code class="language-yaml">spec:
+  components:
+    - name: aws-s3
+      type: addon
+      properties:
+        version: v1.3.0
+        include:
+          resources: false
+          auxiliary: false
+          views: false
+          schemas: false
+          configTemplates: false</code></pre>
+      <p>Only the ComponentDefinitions / TraitDefinitions land. Use case: a curated API surface with infrastructure provisioned separately.</p>
+
+      <h4>Explicit <code>true</code> (rare, intent-documenting)</h4>
+<pre><code class="language-yaml">spec:
+  components:
+    - name: observability
+      type: addon
+      properties:
+        version: v3.0.1
+        include:
+          definitions: true       # explicit, same as omitting (still installed)
+          schemas: false          # the only category we are actually opting out of</code></pre>
+      <p>Functionally identical to writing just <code>schemas: false</code>. You'd add the <code>true</code> lines only when you want the YAML to <em>document intent</em>. Mostly stylistic.</p>
+    </section>
+
+    <section id="step-6">
+      <div class="step-header">
+        <div class="step-num">06</div>
+        <div class="step-title-block">
+          <span class="kicker">Step 6</span>
+          <h2>AddonModuleStatus + AddonModuleLineStatus</h2>
+        </div>
+      </div>
+      <h3>The nesting</h3>
+<pre><code class="language-none">AddonStatus
+   └─ Modules: []AddonModuleStatus       # one per module directory
+         └─ Lines: []AddonModuleLineStatus  # one per API line subdirectory</code></pre>
+      <p>A module like <code>modules/aws-s3/</code> with <code>v1/</code> and <code>v2/</code> lines produces one <code>AddonModuleStatus{Name: "aws-s3"}</code> carrying two <code>AddonModuleLineStatus</code> entries.</p>
+
+      <h3>Per-line fields</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Field</th><th>What it carries</th></tr></thead>
+          <tbody>
+            <tr><td><code>APIVersion</code></td><td>Line tag (<code>v1</code>, <code>v2</code>, ...)</td></tr>
+            <tr><td><code>Enabled</code></td><td>Whether <code>_version.cue</code> <code>enabled:</code> expression resolved to true against cluster context</td></tr>
+            <tr><td><code>Deprecated</code></td><td>KEP-2.20 deprecation lifecycle flag</td></tr>
+            <tr><td><code>DeprecationReason</code></td><td>Free-form explanation</td></tr>
+            <tr><td><code>AuxiliaryResources</code></td><td>The list of auxiliary resources applied for this line</td></tr>
+            <tr><td><code>ResolvedSourceVersion</code></td><td>For lines that <code>source</code> an external module, which version was pulled</td></tr>
+            <tr><td><code>Message</code></td><td>Free-form info text</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Auxiliary lives per line, not at the addon-wide level</strong> — which is why <code>AddonInstalledResources</code> has no <code>auxiliary</code> bucket at the top.</p>
+
+      <h3>Concrete YAML example</h3>
+<pre><code class="language-yaml">status:
+  modules:
+    - name: aws-s3
+      lines:
+        - apiVersion: v1
+          enabled: true
+          deprecated: false
+          resolvedSourceVersion: v1.4.0
+          auxiliaryResources:
+            - name: xbuckets.aws-s3.crossplane.io
+              kind: CompositeResourceDefinition
+            - name: bucket-composition-v1
+              kind: Composition
+        - apiVersion: v2
+          enabled: true
+          deprecated: false
+          resolvedSourceVersion: v2.0.0-beta.1
+          auxiliaryResources:
+            - name: xbuckets.aws-s3.crossplane.io
+              kind: CompositeResourceDefinition
+            - name: bucket-composition-v2
+              kind: Composition
+
+    - name: aws-rds
+      lines:
+        - apiVersion: v1
+          enabled: false
+          deprecated: false
+          message: "Crossplane AWS provider not installed; line skipped per _version.cue"</code></pre>
+      <p>Readable at a glance: <code>aws-s3</code> has two coexisting API lines; <code>aws-rds</code> is disabled because the AWS provider isn't on this cluster (context-aware behaviour surfaced via the <code>Message</code> field).</p>
+
+      <h3>Why declare these now</h3>
+      <p>Forward compatibility. The story 1.2 reconciler does not write to <code>modules</code>. When KEP-2.20 work lands and the controller starts populating per-module state, downstream consumers (CLI status, VelaUX, dashboards) already have the data shape. Future writes are purely additive — no consumer breaks.</p>
+      <p>For addons that use only the <code>definitions/</code> directory, <code>status.modules</code> stays empty. <code>omitempty</code> keeps it out of the JSON entirely.</p>
+    </section>
+
+    <section id="step-7">
+      <div class="step-header">
+        <div class="step-num">07</div>
+        <div class="step-title-block">
+          <span class="kicker">Step 7</span>
+          <h2>Run go generate</h2>
+        </div>
+      </div>
+      <h3>What ran</h3>
+<pre><code class="language-bash">(cd /workspaces/Open_Source/kubevela/apis && go generate ./...)</code></pre>
+      <p>Triggers the <code>//go:generate</code> directive in <code>apis/generate.go</code>:</p>
+<pre><code class="language-go">//go:generate go run -tags generate sigs.k8s.io/controller-tools/cmd/controller-gen \
+    object:headerFile=../hack/boilerplate.go.txt \
+    paths=./... \
+    crd:crdVersions=v1,generateEmbeddedObjectMeta=true \
+    output:artifacts:config=../config/crd/base</code></pre>
+      <p>Three outputs from one invocation:</p>
+      <ol>
+        <li><code>object:...</code> — writes DeepCopy methods into <code>zz_generated.deepcopy.go</code>.</li>
+        <li><code>crd:...</code> — emits CRD YAML manifests with the full OpenAPI schema.</li>
+        <li><code>output:artifacts:config=...</code> — puts CRD YAML into <code>config/crd/base/</code> (intermediate; story 1.3 dispatches to Helm).</li>
+      </ol>
+
+      <h3>What got generated for our types</h3>
+      <p>Example — <code>AddonInstalledResources</code>:</p>
+<pre><code class="language-go">func (in *AddonInstalledResources) DeepCopyInto(out *AddonInstalledResources) {
+    *out = *in
+    if in.Definitions != nil {
+        in, out := &amp;in.Definitions, &amp;out.Definitions
+        *out = make([]AddonResourceRef, len(*in))
+        copy(*out, *in)
+    }
+    // ... identical block for VelaQLViews, ConfigTemplates, Schemas, Packages
+}
+
+func (in *AddonInstalledResources) DeepCopy() *AddonInstalledResources {
+    if in == nil { return nil }
+    out := new(AddonInstalledResources)
+    in.DeepCopyInto(out)
+    return out
+}</code></pre>
+      <p>The per-slice <code>make + copy</code> dance enforces the "no shared pointers" guarantee.</p>
+
+      <h3>Idempotency verification</h3>
+<pre><code class="language-none">5624f5083d34565eef4a87d5a6febf7c  zz_generated.deepcopy.go   ← first run
+5624f5083d34565eef4a87d5a6febf7c  zz_generated.deepcopy.go   ← second run</code></pre>
+      <p>Identical → deterministic generator → AC6 satisfied ("subsequent runs produce no diff").</p>
+
+      <h3>Noise in unrelated packages</h3>
+      <p>Each run also touched three other packages with tiny import-formatting differences. These are pre-existing artifacts from a <code>controller-gen</code> version mismatch in the repo. Reverted each time:</p>
+<pre><code class="language-bash">git restore apis/core.oam.dev/common/zz_generated.deepcopy.go \
+            apis/core.oam.dev/condition/zz_generated.deepcopy.go \
+            apis/core.oam.dev/v1alpha1/zz_generated.deepcopy.go</code></pre>
+    </section>
+
+    <section id="step-8">
+      <div class="step-header">
+        <div class="step-num">08</div>
+        <div class="step-title-block">
+          <span class="kicker">Step 8</span>
+          <h2>Build + vet</h2>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Check</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td><code>go build ./apis/core.oam.dev/v1beta1/...</code></td><td><strong style="color:var(--accent)">OK</strong></td></tr>
+            <tr><td><code>go build ./pkg/oam/... ./pkg/addon/...</code></td><td><strong style="color:var(--accent)">OK</strong> (downstream consumers compile)</td></tr>
+            <tr><td><code>go vet ./apis/core.oam.dev/v1beta1/...</code></td><td><strong style="color:var(--accent)">OK</strong></td></tr>
+            <tr><td><code>make lint</code> (user's environment)</td><td><strong style="color:var(--accent)">OK</strong> (38 linters, 0 issues after exclusions)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="final">
+      <h2>Final state on disk</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>File</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td><code>apis/core.oam.dev/v1beta1/addon_types.go</code></td><td>Modified — +10 status fields, +5 new types, +6 condition string constants</td></tr>
+            <tr><td><code>apis/core.oam.dev/v1beta1/zz_generated.deepcopy.go</code></td><td>Modified — generated DeepCopy methods for all new types</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>No other files touched. Branch: <code>feat/kep-2.13-addon-types</code> (story 1.2 stacks on top of story 1.1's commit on the same branch).</p>
+
+      <h2>Open items at handoff</h2>
+      <ul>
+        <li>Duet commit (Vishal author, Vaibhav committer).</li>
+        <li>Update Jira GWCP-101808 AC7 to drop the dedicated test-file requirement (same call as story 1.1).</li>
+        <li>Push branch.</li>
+        <li>Open upstream PR against <code>kubevela/kubevela:master</code>.</li>
+      </ul>
+    </section>
+
+    <section id="sources">
+      <h2>Sources verified against</h2>
+      <ul>
+        <li><a href="https://guidewirejira.atlassian.net/browse/GWCP-101808" target="_blank" rel="noopener">GWCP-101808</a> — Complete AddonStatus structure with conditions, inventory, and source-digest fields</li>
+        <li><a href="https://guidewirejira.atlassian.net/browse/GWCP-100436" target="_blank" rel="noopener">GWCP-100436</a> — KEP-2.13 Declarative Addon Lifecycle (parent epic)</li>
+        <li><a href="https://guidewirejira.atlassian.net/browse/GWCP-101806" target="_blank" rel="noopener">GWCP-101806</a> — Story 1.1 reference</li>
+        <li>KEP-2.13: <code>design/vela-core/keps/2.13-addons/README.md</code> (commit <code>021a233</code>)</li>
+        <li><code>controller-runtime</code>: <code>sigs.k8s.io/controller-runtime</code></li>
+        <li><code>apimachinery</code>: <code>k8s.io/apimachinery/pkg/apis/meta/v1</code> (<code>Condition</code>, <code>Time</code>)</li>
+        <li>KubeVela repo: <code>github.com/kubevela/kubevela</code> — <code>apis/core.oam.dev/v1beta1/addon_types.go</code></li>
+      </ul>
+      <p style="color: var(--fg-muted);">Last verified: <strong>2026-06-02</strong></p>
+    </section>
+
+  </article>
+</main>
+
+<footer class="footer">
+  <div>
+    <strong>Addon Controller — Story 1.2 Walkthrough</strong><br/>
+    KEP-2.13 · KubeVela · 2026-06-02
+  </div>
+  <div>
+    <a href="https://www.notion.so/373857335f2781cc8202eb19501b61f2" target="_blank" rel="noopener">Notion mirror</a> ·
+    <a href="./kep-2.13-story-1.2-walkthrough.md">Markdown source</a>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js" integrity="sha384-MXybTpajaBV0AkcBaCPT4KIvo0FzoCiWXgcihYsw4FUkEz0Pv3JGV6tk2G8vJtDc" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js" integrity="sha384-Uq05+JLko69eOiPr39ta9bh7kld5PKZoU+fF7g0EXTAriEollhZ+DrN8Q/Oi8J2Q" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+  // Theme toggle (persists via localStorage)
+  const html = document.documentElement;
+  const stored = localStorage.getItem('theme');
+  if (stored) html.setAttribute('data-theme', stored);
+  const toggle = document.getElementById('theme-toggle');
+  const moon = document.getElementById('icon-moon');
+  const sun = document.getElementById('icon-sun');
+  function syncIcons() {
+    const dark = html.getAttribute('data-theme') === 'dark';
+    moon.style.display = dark ? '' : 'none';
+    sun.style.display = dark ? 'none' : '';
+  }
+  syncIcons();
+  toggle.addEventListener('click', () => {
+    const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    syncIcons();
+  });
+
+  // TOC scroll-spy
+  const tocLinks = document.querySelectorAll('.toc a');
+  const sections = Array.from(tocLinks).map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const id = entry.target.getAttribute('id');
+        tocLinks.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#' + id));
+      }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  sections.forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>

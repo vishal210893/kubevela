@@ -1,0 +1,22 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: pol-shared
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-shared-fixed
+spec:
+  components:
+    - name: shared-web
+      type: webservice
+      properties:
+        image: nginx:1.21
+  policies:
+    - name: share-cm
+      type: shared-resource
+      properties:
+        rules:
+          - selector:
+              resourceTypes:
+                - ConfigMap
+                - Secret

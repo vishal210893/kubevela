@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-kubevela-io
+  namespace: vela-system
+spec:
+  components:
+    - name: kubevela-io
+      type: addon
+      properties:
+        skipVersionValidation: true

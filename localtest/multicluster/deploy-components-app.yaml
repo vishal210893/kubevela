@@ -1,0 +1,54 @@
+# Test app for the "deploy-components" workflow step
+# (vela-templates/definitions/internal/workflowstep/deploy-components.cue).
+#
+# Prerequisites:
+#   1. bash localtest/multicluster/setup-k3d-multicluster.sh
+#      (creates "master" + "slave" k3d clusters, joins slave as "k3d-slave")
+#   2. export KUBECONFIG=~/.kube/master.yaml
+#   3. make def-install   (renders + applies vela-templates/definitions, including
+#      the new deploy-components WorkflowStepDefinition, onto the master cluster)
+#
+# Apply:
+#   kubectl apply -f localtest/multicluster/deploy-components-app.yaml
+#
+# Verify component -> cluster placement (setup-k3d-multicluster.sh writes separate
+# kubeconfig files per cluster, not merged contexts):
+#   vela status deploy-components-test
+#   KUBECONFIG=~/.kube/master.yaml kubectl get deploy web-on-local        # should exist
+#   KUBECONFIG=~/.kube/master.yaml kubectl get deploy web-on-slave 2>&1   # should NOT exist (wrong cluster)
+#   KUBECONFIG=~/.kube/slave.yaml  kubectl get deploy web-on-slave        # should exist
+#   KUBECONFIG=~/.kube/slave.yaml  kubectl get deploy web-on-local 2>&1   # should NOT exist (wrong cluster)
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: deploy-components-test
+  namespace: default
+spec:
+  components:
+    - name: web-on-local
+      type: webservice
+      properties:
+        image: nginx:stable
+    - name: web-on-slave
+      type: webservice
+      properties:
+        image: nginx:stable
+  policies:
+    - name: topology-local
+      type: topology
+      properties:
+        clusters: ["local"]
+    - name: topology-slave
+      type: topology
+      properties:
+        clusters: ["k3d-slave"]
+  workflow:
+    steps:
+      - name: deploy-components
+        type: deploy-components
+        properties:
+          components:
+            - name: web-on-local
+              policies: ["topology-local"]
+            - name: web-on-slave
+              policies: ["topology-slave"]

@@ -1,0 +1,2304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KubeVela ResourceTracker Pattern &mdash; Deep Dive</title>
+    <style>
+        :root {
+            --bg: #ffffff;
+            --surface: #f8f9fa;
+            --surface-alt: #f1f3f5;
+            --border: #e1e4e8;
+            --text: #24292f;
+            --text-muted: #656d76;
+            --heading: #1b1f24;
+            --accent: #0969da;
+            --accent-dim: #0550ae;
+            --green: #1a7f37;
+            --green-dim: #1a7f37;
+            --red: #cf222e;
+            --red-dim: #cf222e;
+            --orange: #9a6700;
+            --purple: #8250df;
+            --code-bg: #f6f8fa;
+            --code-border: #d1d9e0;
+            --sidebar-bg: #f6f8fa;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+            font-size: 16px;
+            padding-left: 280px;
+            transition: padding-left 0.3s ease;
+        }
+        body.sidebar-collapsed { padding-left: 0; }
+
+        /* ── Sidebar TOC ── */
+        .sidebar {
+            position: fixed;
+            top: 0; left: 0;
+            width: 280px;
+            height: 100vh;
+            overflow-y: auto;
+            background: var(--sidebar-bg);
+            border-right: 1px solid var(--border);
+            padding: 20px 16px 24px;
+            z-index: 100;
+            transition: transform 0.3s ease;
+        }
+        .sidebar.collapsed { transform: translateX(-100%); }
+        .sidebar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .sidebar-header h3 {
+            color: var(--heading);
+            font-size: 0.85em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin: 0;
+        }
+        .sidebar-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+        .sidebar-close:hover { background: var(--border); color: var(--heading); }
+        .sidebar-close svg { width: 16px; height: 16px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-muted);
+            text-decoration: none;
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 0.84em;
+            line-height: 1.5;
+            transition: all 0.15s;
+        }
+        .sidebar a:hover {
+            color: var(--accent);
+            background: rgba(9,105,218,0.06);
+        }
+        .sidebar a.active {
+            color: var(--accent);
+            background: rgba(9,105,218,0.08);
+            font-weight: 600;
+        }
+        .sidebar a.sub { padding-left: 28px; font-size: 0.8em; }
+
+        .toc-toggle {
+            position: fixed;
+            top: 16px; left: 16px;
+            z-index: 200;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--heading);
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .toc-toggle:hover { background: var(--surface); }
+        .toc-toggle svg { width: 18px; height: 18px; }
+        body.sidebar-collapsed .toc-toggle { display: flex; }
+
+        /* ── Hero ── */
+        .hero {
+            background: linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 50%, #f0ecff 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 72px 0 56px;
+            text-align: center;
+        }
+        .hero h1 {
+            font-size: 2.6em;
+            color: var(--heading);
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+        .hero h1 span { color: var(--accent); }
+        .hero .subtitle {
+            font-size: 1.1em;
+            color: var(--text-muted);
+            margin-top: 10px;
+        }
+        .hero .badge-row {
+            margin-top: 20px;
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+            background: var(--bg);
+            border: 1px solid var(--border);
+        }
+        .badge.blue { color: var(--accent); border-color: #b6d4fe; }
+        .badge.green { color: var(--green); border-color: #a7f3d0; }
+        .badge.purple { color: var(--purple); border-color: #d8b4fe; }
+
+        /* ── Layout ── */
+        .container {
+            max-width: 880px;
+            margin: 0 auto;
+            padding: 0 32px;
+        }
+
+        /* ── Main ── */
+        main { padding: 48px 0 120px; }
+
+        /* ── Sections ── */
+        section { margin-bottom: 56px; }
+        section > h2 {
+            font-size: 1.7em;
+            color: var(--heading);
+            font-weight: 700;
+            margin-bottom: 8px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--border);
+            letter-spacing: -0.01em;
+        }
+        section > h2 .num {
+            color: var(--accent);
+            font-weight: 800;
+        }
+        h3 {
+            font-size: 1.2em;
+            color: var(--heading);
+            font-weight: 600;
+            margin: 28px 0 10px;
+        }
+        h4 {
+            font-size: 1.02em;
+            color: var(--heading);
+            font-weight: 600;
+            margin: 20px 0 8px;
+        }
+        p { margin: 10px 0; }
+        strong { color: var(--heading); }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        /* ── Code ── */
+        pre {
+            background: var(--code-bg);
+            border: 1px solid var(--code-border);
+            border-radius: 8px;
+            padding: 18px 20px;
+            overflow-x: auto;
+            margin: 14px 0;
+            font-size: 0.87em;
+            line-height: 1.6;
+        }
+        code {
+            font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+            font-size: 0.9em;
+        }
+        pre code { font-size: 1em; color: #24292f; }
+        :not(pre) > code {
+            background: #eff1f3;
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--code-border);
+            color: #0550ae;
+        }
+
+        /* Syntax highlighting (light) */
+        .kw { color: #cf222e; }
+        .fn { color: #8250df; }
+        .str { color: #0a3069; }
+        .typ { color: #0550ae; }
+        .cmt { color: #6e7781; font-style: italic; }
+        .num { color: #0550ae; }
+        .op { color: #cf222e; }
+        .ann { color: #953800; }
+
+        /* ── Callout boxes ── */
+        .callout {
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin: 18px 0;
+            border-left: 4px solid;
+            font-size: 0.95em;
+        }
+        .callout-question {
+            background: #dbeafe;
+            border-color: var(--accent);
+        }
+        .callout-answer {
+            background: #dcfce7;
+            border-color: var(--green);
+        }
+        .callout-insight {
+            background: #f3e8ff;
+            border-color: var(--purple);
+        }
+        .callout-warning {
+            background: #fef3c7;
+            border-color: var(--orange);
+        }
+        .callout-title {
+            font-weight: 700;
+            color: var(--heading);
+            margin-bottom: 6px;
+            font-size: 0.88em;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .callout-question .callout-title { color: var(--accent); }
+        .callout-answer .callout-title { color: var(--green); }
+        .callout-insight .callout-title { color: var(--purple); }
+        .callout-warning .callout-title { color: var(--orange); }
+
+        /* ── Comparison table ── */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 18px 0;
+            font-size: 0.92em;
+        }
+        th, td {
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            background: var(--surface);
+            color: var(--heading);
+            font-weight: 600;
+            font-size: 0.84em;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        tr:hover td { background: #f6f8fa; }
+        .check { color: var(--green); font-weight: 600; }
+        .cross { color: var(--red); font-weight: 600; }
+
+        /* ── Flow diagram (ASCII art) ── */
+        .flow-diagram {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 24px;
+            margin: 20px 0;
+            overflow-x: auto;
+        }
+        .flow-diagram pre {
+            background: transparent;
+            border: none;
+            padding: 0;
+            margin: 0;
+            font-size: 0.82em;
+            line-height: 1.5;
+            color: var(--text-muted);
+        }
+
+        /* ── Two-column layout ── */
+        .columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin: 18px 0;
+        }
+        .column {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 18px;
+        }
+        .column h4 {
+            margin-top: 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+        .column.green-border { border-color: #86efac; background: #f0fdf4; }
+        .column.red-border { border-color: #fca5a5; background: #fef2f2; }
+        .column.blue-border { border-color: #93c5fd; background: #eff6ff; }
+        .column.purple-border { border-color: #c4b5fd; background: #faf5ff; }
+
+        /* ── Lists ── */
+        ul, ol { margin: 8px 0 8px 24px; }
+        li { margin: 4px 0; }
+        li::marker { color: var(--text-muted); }
+
+        /* ── Architecture diagram ── */
+        .arch-diagram {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+            margin: 20px 0;
+            padding: 28px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+        }
+        .arch-box {
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9em;
+            text-align: center;
+            min-width: 220px;
+        }
+        .arch-box.primary {
+            background: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #93c5fd;
+        }
+        .arch-box.secondary {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #86efac;
+        }
+        .arch-box.tertiary {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 500px;
+        }
+        .arch-box.tertiary .chip {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: 400;
+        }
+        .arch-arrow {
+            color: var(--text-muted);
+            font-size: 0.85em;
+            padding: 8px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        .arch-arrow .label { font-size: 0.85em; color: var(--text-muted); }
+        .arch-arrow .arrow { font-size: 1.2em; }
+
+        /* ── Timeline / Steps ── */
+        .timeline {
+            position: relative;
+            margin: 20px 0;
+            padding-left: 32px;
+        }
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 11px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: var(--border);
+        }
+        .timeline-item {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        .timeline-dot {
+            position: absolute;
+            left: -27px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #bfdbfe;
+            border: 2px solid var(--accent);
+        }
+        .timeline-dot.green { background: #bbf7d0; border-color: var(--green); }
+        .timeline-dot.red { background: #fecaca; border-color: var(--red); }
+        .timeline-dot.orange { background: #fde68a; border-color: var(--orange); }
+        .timeline-content {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 18px;
+        }
+        .timeline-title {
+            font-weight: 600;
+            color: var(--heading);
+            font-size: 0.95em;
+            margin-bottom: 6px;
+        }
+
+        /* ── Footer ── */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 40px 0;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85em;
+        }
+        footer a { color: var(--accent); }
+
+        /* ── Responsive ── */
+        @media (max-width: 768px) {
+            body { padding-left: 0; }
+            .sidebar { transform: translateX(-100%); }
+            .sidebar.mobile-open { transform: translateX(0); }
+            .toc-toggle { display: flex !important; }
+            .hero h1 { font-size: 1.8em; }
+            .columns { grid-template-columns: 1fr; }
+            pre { font-size: 0.8em; padding: 14px; }
+            .container { padding: 0 16px; }
+            main { padding: 32px 0 80px; }
+        }
+
+        /* ── Scroll margin ── */
+        [id] { scroll-margin-top: 20px; }
+
+        /* ── Pill indicators ── */
+        .pill {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.78em;
+            font-weight: 600;
+        }
+        .pill.fast { background: #dcfce7; color: var(--green); }
+        .pill.slow { background: #fef3c7; color: var(--orange); }
+        .pill.low { background: #dcfce7; color: var(--green); }
+        .pill.high { background: #fee2e2; color: var(--red); }
+
+        /* ── Reading progress bar ── */
+        .progress-bar {
+            position: fixed;
+            top: 0; left: 0;
+            width: 0%;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent), var(--purple));
+            z-index: 300;
+            transition: width 0.1s linear;
+        }
+
+        /* ── Section icons ── */
+        .section-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            margin-right: 12px;
+            vertical-align: middle;
+            position: relative;
+            top: -2px;
+        }
+        .section-icon svg { width: 20px; height: 20px; }
+        .section-icon.blue { background: #dbeafe; color: #1d4ed8; }
+        .section-icon.green { background: #dcfce7; color: #166534; }
+        .section-icon.purple { background: #f3e8ff; color: #7c3aed; }
+        .section-icon.orange { background: #fef3c7; color: #92400e; }
+        .section-icon.red { background: #fee2e2; color: #b91c1c; }
+        .section-icon.teal { background: #ccfbf1; color: #0f766e; }
+
+        /* ── Callout icons ── */
+        .callout-title-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .callout-title-row svg { width: 18px; height: 18px; flex-shrink: 0; }
+        .callout-title-row .callout-title { margin-bottom: 0; }
+
+        /* ── Scroll-reveal animations ── */
+        .reveal {
+            opacity: 0;
+            transform: translateY(24px);
+            transition: opacity 0.6s ease, transform 0.6s ease;
+        }
+        .reveal.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ── Hero decoration ── */
+        .hero {
+            position: relative;
+            overflow: hidden;
+        }
+        .hero-icon {
+            position: absolute;
+            opacity: 0.06;
+            animation: float 6s ease-in-out infinite;
+        }
+        .hero-icon:nth-child(1) { top: 15%; left: 8%; animation-delay: 0s; }
+        .hero-icon:nth-child(2) { top: 60%; left: 15%; animation-delay: 1.5s; }
+        .hero-icon:nth-child(3) { top: 20%; right: 10%; animation-delay: 3s; }
+        .hero-icon:nth-child(4) { top: 65%; right: 12%; animation-delay: 4.5s; }
+        .hero-icon svg { width: 64px; height: 64px; color: var(--accent); }
+        @keyframes float {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-12px) rotate(3deg); }
+        }
+
+        /* ── Badge hover ── */
+        .badge {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .badge:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+
+        /* ── Table row animation ── */
+        tbody tr {
+            transition: background 0.15s ease;
+        }
+
+        /* ── Column card hover ── */
+        .column {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .column:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.06);
+        }
+
+
+        /* ── Arch diagram arrow bounce ── */
+        .arch-arrow .arrow {
+            display: inline-block;
+            animation: arrowBounce 2s ease-in-out infinite;
+        }
+        @keyframes arrowBounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(4px); }
+        }
+
+        /* ── Callout left border animation ── */
+        .callout {
+            transition: border-left-width 0.2s ease, padding-left 0.2s ease;
+        }
+        .callout:hover {
+            border-left-width: 6px;
+            padding-left: 18px;
+        }
+
+        /* ── Code block copy hint ── */
+        pre {
+            position: relative;
+        }
+        pre::after {
+            content: '';
+            position: absolute;
+            top: 8px; right: 8px;
+            width: 28px;
+            height: 28px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23656d76'%3E%3Cpath d='M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z'/%3E%3Cpath d='M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z'/%3E%3C/svg%3E");
+            background-size: 16px;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0;
+            transition: opacity 0.2s;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        pre:hover::after { opacity: 0.5; }
+
+        /* ── Sidebar link icons ── */
+        .sidebar a::before {
+            content: '';
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--border);
+            margin-right: 8px;
+            vertical-align: middle;
+            transition: background 0.15s, transform 0.15s;
+        }
+        .sidebar a.active::before {
+            background: var(--accent);
+            transform: scale(1.3);
+        }
+        .sidebar a.sub::before {
+            width: 4px;
+            height: 4px;
+        }
+
+        /* ── Smooth scroll ── */
+        html { scroll-behavior: smooth; }
+
+        /* ── Footer link style ── */
+        footer a {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* ── SVG figures ── */
+        .svg-figure {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 22px 18px 14px;
+            margin: 22px 0;
+            overflow-x: auto;
+        }
+        .svg-figure svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-width: 820px;
+            margin: 0 auto;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        }
+        .svg-figure svg text { fill: var(--text); }
+        .svg-figure svg .svg-title { font-weight: 700; fill: var(--heading); font-size: 13px; }
+        .svg-figure svg .svg-label { font-size: 11px; fill: var(--text); }
+        .svg-figure svg .svg-muted { font-size: 10.5px; fill: var(--text-muted); }
+        .svg-figure svg .svg-mono {
+            font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+            font-size: 10.5px;
+        }
+        .svg-figure svg .axis { stroke: var(--border); stroke-width: 1.5; }
+        .svg-figure svg .axis-tick { stroke: var(--border); stroke-width: 1; }
+        .svg-figure svg .lifeline { stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 3; }
+        .svg-figure svg .arrow-line { stroke: var(--text-muted); stroke-width: 1.4; fill: none; }
+        .svg-figure svg .arrow-strong { stroke: var(--accent); stroke-width: 1.8; fill: none; }
+        .svg-figure svg .marker-pulse {
+            transform-origin: center;
+            transform-box: fill-box;
+            animation: rt-pulse 2.4s ease-in-out infinite;
+        }
+        @keyframes rt-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.55; transform: scale(1.18); }
+        }
+        .svg-caption {
+            font-size: 0.82em;
+            color: var(--text-muted);
+            text-align: center;
+            margin-top: 8px;
+            font-style: italic;
+        }
+        @media (max-width: 768px) {
+            .svg-figure { padding: 14px 8px; }
+            .svg-figure svg { font-size: 11px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Reading progress bar -->
+<div class="progress-bar" id="progress-bar"></div>
+
+<!-- TOC Toggle (visible only when sidebar is collapsed) -->
+<button class="toc-toggle" id="toc-toggle" aria-label="Open table of contents">
+    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75A.75.75 0 0 1 1.75 2h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1 2.75Zm0 5A.75.75 0 0 1 1.75 7h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1 7.75ZM1.75 12h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5Z"/></svg>
+</button>
+
+<!-- Sidebar TOC -->
+<nav class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h3>Contents</h3>
+        <button class="sidebar-close" id="sidebar-close" aria-label="Close table of contents">
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>
+        </button>
+    </div>
+    <a href="#the-problem">1. The Problem Space</a>
+    <a href="#traditional-pattern" class="sub">Traditional .Owns() Pattern</a>
+    <a href="#scaling-problem" class="sub">The Scaling Problem</a>
+    <a href="#resourcetracker">2. The ResourceTracker Pattern</a>
+    <a href="#rt-architecture" class="sub">Architecture</a>
+    <a href="#rt-type" class="sub">ResourceTracker Types</a>
+    <a href="#rt-managed-resources" class="sub">ManagedResource Struct</a>
+    <a href="#self-healing">3. Self-Healing Mechanism</a>
+    <a href="#periodic-reconciliation" class="sub">Periodic Reconciliation</a>
+    <a href="#health-checks" class="sub">Health Check Pipeline</a>
+    <a href="#tuning-window">4. Tuning the Reconcile Window</a>
+    <a href="#tuning-flag" class="sub">The Flag</a>
+    <a href="#tuning-tradeoffs" class="sub">Trade-offs</a>
+    <a href="#tuning-companion" class="sub">Companion Knobs</a>
+    <a href="#tuning-recipes" class="sub">Tuning Recipes</a>
+    <a href="#complete-flow">5. Complete Flow: Deletion to Recreation</a>
+    <a href="#event-filtering">6. Event Filtering</a>
+    <a href="#watches-explained">7. .Watches() vs .Owns()</a>
+    <a href="#findObjectForRT" class="sub">findObjectForResourceTracker</a>
+    <a href="#comparison">8. Pattern Comparison</a>
+    <a href="#design-rationale">9. Why KubeVela Chose This Design</a>
+    <a href="#ownerref-deep-dive">10. OwnerReference: client-go vs controller-runtime</a>
+    <a href="#client-go-manual" class="sub">Manual: client-go</a>
+    <a href="#controller-runtime-auto" class="sub">Automatic: controller-runtime</a>
+    <a href="#owns-internals" class="sub">.Owns() Internals</a>
+    <a href="#choosing">11. Choosing Your Pattern</a>
+    <a href="#crossplane-case-study">12. Case Study: Crossplane RBAC OOMs</a>
+    <a href="#case-what-happened" class="sub">What happened</a>
+    <a href="#case-the-cause" class="sub">The cause</a>
+    <a href="#case-kubevela-immune" class="sub">Why KubeVela is immune</a>
+    <a href="#case-the-lesson" class="sub">The lesson</a>
+</nav>
+
+<!-- Hero -->
+<header class="hero">
+    <!-- Floating Kubernetes-themed icons -->
+    <div class="hero-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
+    <div class="hero-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6M4.22 4.22l4.24 4.24m7.08 7.08l4.24 4.24M1 12h6m6 0h6M4.22 19.78l4.24-4.24m7.08-7.08l4.24-4.24"/></svg></div>
+    <div class="hero-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
+    <div class="hero-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+    <div class="container" style="position:relative;">
+        <h1>KubeVela <span>ResourceTracker</span> Pattern</h1>
+        <p class="subtitle">How KubeVela achieves self-healing without watching child resources directly</p>
+        <div class="badge-row">
+            <span class="badge blue">controller-runtime</span>
+            <span class="badge green">Self-Healing</span>
+            <span class="badge purple">Kubernetes Operators</span>
+        </div>
+    </div>
+</header>
+
+<div class="container">
+<main>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 1 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="the-problem">
+    <h2><span class="section-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5"/></svg></span><span class="num">01</span> &mdash; The Problem Space</h2>
+
+    <p>
+        In the Kubernetes controller ecosystem, operators need to know when child resources are created, modified, or deleted.
+        The standard approach &mdash; registering <strong>Informers</strong> for each child resource type &mdash; works perfectly for operators
+        that manage a predictable, fixed set of resource types. But what happens when your operator is a <em>platform</em> that
+        can manage <strong>any</strong> resource type?
+    </p>
+
+    <div class="callout callout-question">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5"/></svg><div class="callout-title">The Question</div></div>
+        Looking at KubeVela's controller setup, you'll notice it does <strong>not</strong> watch Pods, Deployments, or Services.
+        If it doesn't watch these resources, how does it detect when they're deleted and recreate them?
+    </div>
+
+    <pre><code><span class="cmt">// Application controller setup — SetupWithManager</span>
+<span class="kw">func</span> (r *<span class="typ">Reconciler</span>) <span class="fn">SetupWithManager</span>(mgr ctrl.<span class="typ">Manager</span>) <span class="typ">error</span> {
+    <span class="kw">return</span> ctrl.<span class="fn">NewControllerManagedBy</span>(mgr).
+        <span class="fn">Watches</span>(
+            &amp;v1beta1.<span class="typ">ResourceTracker</span>{},
+            ctrlHandler.<span class="fn">EnqueueRequestsFromMapFunc</span>(findObjectForResourceTracker)).
+        <span class="fn">WithOptions</span>(controller.<span class="typ">Options</span>{
+            MaxConcurrentReconciles: r.concurrentReconciles,
+        }).
+        <span class="fn">WithEventFilter</span>(predicate.<span class="typ">Funcs</span>{ <span class="cmt">/* ... */</span> }).
+        <span class="fn">Watches</span>(
+            &amp;v1beta1.<span class="typ">PolicyDefinition</span>{},
+            ctrlHandler.<span class="fn">EnqueueRequestsFromMapFunc</span>(r.handlePolicyDefinitionChange),
+        ).
+        <span class="fn">For</span>(&amp;v1beta1.<span class="typ">Application</span>{}).
+        <span class="fn">Complete</span>(r)
+}
+<span class="cmt">// Notice: NO .Owns(&corev1.Pod{}), NO .Owns(&appsv1.Deployment{})</span></code></pre>
+
+    <div class="callout callout-answer">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><div class="callout-title">The Answer</div></div>
+        KubeVela uses a <strong>ResourceTracker</strong> intermediary pattern combined with <strong>periodic reconciliation</strong>
+        instead of direct ownership watching. This trades millisecond event-driven reaction for constant-memory,
+        type-agnostic resource management.
+    </div>
+
+    <h3 id="traditional-pattern">The Traditional <code>.Owns()</code> Pattern</h3>
+
+    <p>
+        In a typical Kubebuilder controller, you register direct watches on every child resource type:
+    </p>
+
+    <pre><code><span class="kw">func</span> (r *<span class="typ">MyReconciler</span>) <span class="fn">SetupWithManager</span>(mgr ctrl.<span class="typ">Manager</span>) <span class="typ">error</span> {
+    <span class="kw">return</span> ctrl.<span class="fn">NewControllerManagedBy</span>(mgr).
+        <span class="fn">For</span>(&amp;v1beta1.<span class="typ">MyApp</span>{}).
+        <span class="fn">Owns</span>(&amp;corev1.<span class="typ">Pod</span>{}).           <span class="cmt">// Direct watch on Pods</span>
+        <span class="fn">Owns</span>(&amp;appsv1.<span class="typ">Deployment</span>{}).    <span class="cmt">// Direct watch on Deployments</span>
+        <span class="fn">Owns</span>(&amp;corev1.<span class="typ">Service</span>{}).       <span class="cmt">// Direct watch on Services</span>
+        <span class="fn">Complete</span>(r)
+}</code></pre>
+
+    <p>Each <code>.Owns()</code> call creates a <strong>dedicated Informer</strong> that:</p>
+    <ol>
+        <li>Opens a persistent watch stream to the API server for that resource type</li>
+        <li>Caches <strong>all</strong> instances of that type cluster-wide in memory</li>
+        <li>Fires event handlers on create/update/delete, extracting OwnerReference to find the parent</li>
+    </ol>
+
+    <h3 id="scaling-problem">The Scaling Problem</h3>
+
+    <p>
+        This works beautifully for operators managing 2&ndash;5 known types. But KubeVela is designed to handle
+        <strong>dynamic, polymorphic workloads</strong>. A single Application might produce:
+    </p>
+
+    <div class="columns">
+        <div class="column">
+            <h4>Standard Kubernetes</h4>
+            <ul>
+                <li>Pods, Deployments, StatefulSets</li>
+                <li>Services, Ingresses</li>
+                <li>ConfigMaps, Secrets</li>
+                <li>PVCs, ServiceAccounts</li>
+                <li>Jobs, CronJobs</li>
+            </ul>
+        </div>
+        <div class="column">
+            <h4>Third-Party CRDs</h4>
+            <ul>
+                <li>Prometheus ServiceMonitors</li>
+                <li>Istio VirtualServices</li>
+                <li>Cert-Manager Certificates</li>
+                <li>Crossplane AWS/GCP resources</li>
+                <li>User-defined custom trait CRDs</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="callout callout-warning">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><div class="callout-title">The Cost of .Owns() at Scale</div></div>
+        <p>If your Application can create 100 different resource types, you need 100 <code>.Owns()</code> declarations.
+        Each creates a separate Informer caching <strong>every instance</strong> of that type cluster-wide.
+        In a cluster with 10,000 Pods, the Pod Informer alone holds all 10,000 in memory &mdash; even if only 50 belong to your controller.</p>
+        <p>Worse: you can't predict all resource types users will create through CUE definitions, and adding new CRDs requires a controller restart.</p>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 2 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="resourcetracker">
+    <h2><span class="section-icon green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></span><span class="num">02</span> &mdash; The ResourceTracker Pattern</h2>
+
+    <h3 id="rt-architecture">Architecture</h3>
+
+    <p>
+        KubeVela introduces an intermediary Custom Resource called <strong>ResourceTracker</strong> that acts as a
+        <em>manifest</em> of all resources an Application has created. Instead of watching every child resource type,
+        the controller watches only three KubeVela CRDs &mdash; and uses the ResourceTracker to know what it should expect to exist.
+    </p>
+
+    <div class="arch-diagram">
+        <div class="arch-box primary">Application (your CR)</div>
+        <div class="arch-arrow">
+            <span class="label">creates &amp; owns</span>
+            <span class="arrow">&#9660;</span>
+        </div>
+        <div class="arch-box secondary">ResourceTracker (tracking metadata)</div>
+        <div class="arch-arrow">
+            <span class="label">records references to</span>
+            <span class="arrow">&#9660;</span>
+        </div>
+        <div class="arch-box tertiary">
+            <span class="chip">Pod</span>
+            <span class="chip">Deployment</span>
+            <span class="chip">Service</span>
+            <span class="chip">ConfigMap</span>
+            <span class="chip">Ingress</span>
+            <span class="chip">CRD X</span>
+            <span class="chip">...</span>
+        </div>
+    </div>
+
+    <div class="svg-figure">
+        <svg viewBox="0 0 820 290" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Three ResourceTracker types fan out from a single Application; each managedResources entry carries a cluster field for multicluster references">
+            <text class="svg-title" x="410" y="22" text-anchor="middle">Three ResourceTracker types per Application</text>
+
+            <rect x="250" y="42" width="320" height="44" rx="8" fill="#dbeafe" stroke="#0969da" stroke-width="1.5"/>
+            <text class="svg-label" x="410" y="62" text-anchor="middle" style="font-weight:700;">Application "my-app"</text>
+            <text class="svg-mono" x="410" y="78" text-anchor="middle" fill="#656d76">labels: app.oam.dev/name, app.oam.dev/namespace</text>
+
+            <path class="arrow-line" d="M 410 86 L 410 105 L 130 105 L 130 130" stroke="#0969da"/>
+            <path class="arrow-line" d="M 410 86 L 410 130" stroke="#0969da"/>
+            <path class="arrow-line" d="M 410 86 L 410 105 L 690 105 L 690 130" stroke="#0969da"/>
+            <rect x="358" y="92" width="104" height="14" fill="#f8f9fa"/>
+            <text class="svg-muted" x="410" y="103" text-anchor="middle">creates &amp; owns</text>
+
+            <rect x="50" y="130" width="160" height="80" rx="8" fill="#dcfce7" stroke="#1a7f37" stroke-width="1.5"/>
+            <text class="svg-label" x="130" y="150" text-anchor="middle" style="font-weight:700;">RT (root)</text>
+            <text class="svg-muted" x="130" y="172" text-anchor="middle">persistent, app-scoped</text>
+            <text class="svg-muted" x="130" y="187" text-anchor="middle">recycled on Application</text>
+            <text class="svg-muted" x="130" y="200" text-anchor="middle">deletion only</text>
+
+            <rect x="330" y="130" width="160" height="80" rx="8" fill="#dcfce7" stroke="#1a7f37" stroke-width="1.5"/>
+            <text class="svg-label" x="410" y="150" text-anchor="middle" style="font-weight:700;">RT (versioned)</text>
+            <text class="svg-muted" x="410" y="172" text-anchor="middle">one per AppRevision</text>
+            <text class="svg-muted" x="410" y="187" text-anchor="middle">GC'd when unused &amp;</text>
+            <text class="svg-muted" x="410" y="200" text-anchor="middle">not in latest revision</text>
+
+            <rect x="610" y="130" width="160" height="80" rx="8" fill="#dcfce7" stroke="#1a7f37" stroke-width="1.5"/>
+            <text class="svg-label" x="690" y="150" text-anchor="middle" style="font-weight:700;">RT (component-revision)</text>
+            <text class="svg-muted" x="690" y="172" text-anchor="middle">tracks component</text>
+            <text class="svg-muted" x="690" y="187" text-anchor="middle">revision history for</text>
+            <text class="svg-muted" x="690" y="200" text-anchor="middle">rollback</text>
+
+            <text class="svg-muted" x="410" y="240" text-anchor="middle">Each RT.spec.managedResources is a list of:</text>
+            <rect x="120" y="252" width="580" height="24" rx="6" fill="#f6f8fa" stroke="#d1d9e0"/>
+            <text class="svg-mono" x="410" y="268" text-anchor="middle">{ apiVersion, kind, name, namespace, <tspan fill="#0969da" style="font-weight:700;">cluster</tspan>, raw, deleted, skipGC }</text>
+        </svg>
+        <div class="svg-caption">Figure 2 &mdash; The three RT types each handle a different lifecycle. The <code>cluster</code> field on every entry is what enables multicluster references without OwnerReferences.</div>
+    </div>
+
+    <div class="callout callout-insight">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div class="callout-title">Key Insight</div></div>
+        The Application controller watches three KubeVela-defined CRDs: <strong>Application</strong>, <strong>ResourceTracker</strong>, and <strong>PolicyDefinition</strong>
+        (the last is needed so policy schema changes invalidate cached renders).
+        It does <strong>not</strong> watch Pods, Deployments, Services, or any other managed child resource. Three Informers,
+        regardless of how many resource types exist in the cluster.
+    </div>
+
+    <h3 id="rt-type">ResourceTracker Types</h3>
+
+    <p>KubeVela uses three distinct ResourceTracker types, each serving a different lifecycle purpose:</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Purpose</th>
+                <th>Lifecycle</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>root</code></td>
+                <td>Resources that persist across upgrades</td>
+                <td>Recycled only when Application is deleted</td>
+            </tr>
+            <tr>
+                <td><code>versioned</code></td>
+                <td>Version-specific resources for rollback</td>
+                <td>Recycled when version is unused and not in latest RT</td>
+            </tr>
+            <tr>
+                <td><code>component-revision</code></td>
+                <td>Stores component revision history</td>
+                <td>Tracks all component revisions used</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p>This multi-tracker design enables <strong>version-aware garbage collection</strong>: KubeVela can clean up resources from
+    old revisions while keeping root resources alive, and maintain component revision history for rollback &mdash; all without
+    watching a single child resource.</p>
+
+    <h3 id="rt-managed-resources">ManagedResource Struct</h3>
+
+    <pre><code><span class="kw">type</span> <span class="typ">ManagedResource</span> <span class="kw">struct</span> {
+    common.<span class="typ">ClusterObjectReference</span> <span class="str">`json:",inline"`</span>  <span class="cmt">// apiVersion, kind, name, namespace, cluster</span>
+    common.<span class="typ">OAMObjectReference</span>     <span class="str">`json:",inline"`</span>  <span class="cmt">// component, trait info</span>
+    Data    *runtime.<span class="typ">RawExtension</span>   <span class="str">`json:"raw,omitempty"`</span>     <span class="cmt">// full resource spec</span>
+    Deleted <span class="typ">bool</span>                    <span class="str">`json:"deleted,omitempty"`</span> <span class="cmt">// marks for deletion</span>
+    SkipGC  <span class="typ">bool</span>                    <span class="str">`json:"skipGC,omitempty"`</span>  <span class="cmt">// skip garbage collection</span>
+}</code></pre>
+
+    <p>
+        Each <code>ManagedResource</code> stores enough information to both <strong>identify</strong> the resource
+        (for existence checks) and <strong>recreate</strong> it (the full spec in <code>Data</code>). The <code>Deleted</code> flag enables
+        two-phase garbage collection &mdash; resources are marked before actual deletion, providing a window for rollback.
+    </p>
+
+    <div class="callout callout-insight">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg><div class="callout-title">Design Decision: Storing Full Specs</div></div>
+        <p>By storing the complete rendered spec in <code>Data</code>, KubeVela doesn't need to re-render the Application's
+        CUE templates during self-healing. It can directly <code>Apply()</code> the stored spec. This makes self-healing
+        independent of the template rendering pipeline &mdash; a subtle but important separation of concerns.</p>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 3 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="self-healing">
+    <h2><span class="section-icon red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></span><span class="num">03</span> &mdash; Self-Healing Mechanism</h2>
+
+    <p>
+        Without Informers on child resources, KubeVela cannot react to deletions via events.
+        Instead, it relies on <strong>periodic reconciliation</strong> to achieve eventual consistency &mdash; a fundamentally
+        different self-healing model from traditional controllers.
+    </p>
+
+    <h3 id="periodic-reconciliation">Periodic Reconciliation</h3>
+
+    <p>
+        After every successful reconcile, the controller requeues the Application for future re-evaluation:
+    </p>
+    <pre><code><span class="kw">func</span> (r *<span class="typ">reconcileResult</span>) <span class="fn">ret</span>() (ctrl.<span class="typ">Result</span>, <span class="typ">error</span>) {
+    <span class="kw">if</span> r.Duration.<span class="fn">Seconds</span>() != <span class="num">0</span> {
+        <span class="kw">return</span> ctrl.<span class="typ">Result</span>{RequeueAfter: r.Duration}, r.err
+    } <span class="kw">else if</span> r.err != <span class="kw">nil</span> {
+        <span class="kw">return</span> ctrl.<span class="typ">Result</span>{}, r.err
+    }
+    <span class="kw">return</span> ctrl.<span class="typ">Result</span>{RequeueAfter: common2.<span class="typ">ApplicationReSyncPeriod</span>}, <span class="kw">nil</span>
+}</code></pre>
+
+    <pre><code><span class="cmt">// ApplicationReSyncPeriod re-sync period to reconcile application</span>
+<span class="typ">ApplicationReSyncPeriod</span> = time.Minute * <span class="num">5</span></code></pre>
+
+    <div class="callout callout-insight">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><div class="callout-title">Why 5 Minutes?</div></div>
+        <p>The default re-sync period is <strong>5 minutes</strong>, not 30 seconds as some documentation suggests.
+        This is a deliberate trade-off: in a cluster with thousands of Applications, reconciling each one every 30 seconds
+        would create significant API server load. Five minutes provides a balance between detection latency and
+        cluster health. For workloads requiring faster self-healing, Kubernetes' own Deployment controller already
+        handles Pod recreation via ReplicaSet within seconds &mdash; KubeVela's self-healing is a higher-level concern
+        that re-renders the entire Application's desired state.</p>
+    </div>
+
+    <h3 id="health-checks">Health Check Pipeline</h3>
+
+    <p>During each reconciliation, KubeVela evaluates the health of all components:</p>
+
+    <pre><code><span class="cmt">// Simplified health evaluation flow</span>
+<span class="kw">func</span> <span class="fn">evalStatus</span>(ctx, handler, appFile, appParser) <span class="typ">bool</span> {
+    healthCheck := handler.<span class="fn">checkComponentHealth</span>(appParser, appFile)
+
+    <span class="kw">if</span> !<span class="fn">hasHealthCheckPolicy</span>(appFile.ParsedPolicies) {
+        <span class="fn">applyComponentHealthToServices</span>(ctx, handler, componentMap, healthCheck)
+        handler.app.Status.Services = handler.services
+        <span class="kw">return</span> <span class="fn">isHealthy</span>(handler.services)
+    }
+    <span class="kw">return</span> <span class="kw">true</span>
+}</code></pre>
+
+    <p>The health check pipeline does more than just existence checks. For each tracked resource, it:</p>
+    <ol>
+        <li><strong>Fetches</strong> the resource from the API server using the reference in ResourceTracker</li>
+        <li><strong>Evaluates health</strong> using type-specific health checkers (e.g., Deployment readiness, Pod status)</li>
+        <li><strong>Detects drift</strong> by comparing the actual state against the stored desired state</li>
+        <li><strong>Re-applies</strong> the desired state if drift is detected (server-side apply)</li>
+    </ol>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 4 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="tuning-window">
+    <h2><span class="section-icon orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span class="num">04</span> &mdash; Tuning the ResourceTracker Reconcile Window</h2>
+
+    <p>
+        The 5-minute default in &sect;3 is a balanced trade-off, not a law. KubeVela exposes the period as a
+        tunable flag so you can shorten it for drift-sensitive workloads, lengthen it for large fleets, or
+        leave it alone in the common case. This section walks through the knob itself, what each direction
+        actually costs you, and the adjacent flags that are frequently confused with it.
+    </p>
+
+    <div class="svg-figure">
+        <svg viewBox="0 0 820 380" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Timeline showing how shorter or longer reconcile periods change the upper bound of drift detection latency">
+            <text class="svg-title" x="410" y="24" text-anchor="middle">Drift detection latency vs. --application-re-sync-period</text>
+
+            <text class="svg-muted" x="80" y="86" text-anchor="end" style="font-weight:600;">User</text>
+            <text class="svg-muted" x="80" y="146" text-anchor="end" style="font-weight:600;">Built-in K8s</text>
+            <text class="svg-muted" x="80" y="220" text-anchor="end" style="font-weight:600;">KubeVela RT</text>
+
+            <line class="lifeline" x1="85" y1="82" x2="780" y2="82"/>
+            <line class="lifeline" x1="85" y1="142" x2="780" y2="142"/>
+            <line class="lifeline" x1="85" y1="216" x2="780" y2="216"/>
+
+            <line stroke="#cf222e" stroke-width="1" stroke-dasharray="2 3" x1="85" y1="62" x2="85" y2="284"/>
+
+            <circle cx="85" cy="82" r="6" fill="#fecaca" stroke="#cf222e" stroke-width="2"/>
+            <text class="svg-label" x="100" y="78">kubectl delete pod (t = 0)</text>
+            <text class="svg-muted" x="100" y="94">no event to App controller</text>
+
+            <circle cx="92" cy="142" r="6" fill="#bbf7d0" stroke="#1a7f37" stroke-width="2"/>
+            <text class="svg-label" x="106" y="138">ReplicaSet recreates Pod (within seconds)</text>
+            <text class="svg-muted" x="106" y="154">event-driven, parallel path</text>
+
+            <line class="lifeline" x1="195" y1="216" x2="195" y2="284" stroke="#9a6700" opacity="0.7"/>
+            <circle cx="195" cy="216" r="6" fill="#fde68a" stroke="#9a6700" stroke-width="2"/>
+            <text class="svg-label" x="195" y="204" text-anchor="middle">1m</text>
+
+            <line class="lifeline" x1="440" y1="216" x2="440" y2="284" stroke="#0969da" opacity="0.7"/>
+            <circle class="marker-pulse" cx="440" cy="216" r="9" fill="#dbeafe" stroke="#0969da" stroke-width="2.5"/>
+            <text class="svg-label" x="440" y="200" text-anchor="middle" style="font-weight:700;">5m</text>
+
+            <line class="lifeline" x1="720" y1="216" x2="720" y2="284" stroke="#8250df" opacity="0.7"/>
+            <circle cx="720" cy="216" r="6" fill="#f3e8ff" stroke="#8250df" stroke-width="2"/>
+            <text class="svg-label" x="720" y="204" text-anchor="middle">15m</text>
+
+            <line class="axis" x1="80" y1="284" x2="780" y2="284"/>
+            <polygon points="780,281 788,284 780,287" fill="#656d76"/>
+
+            <line class="axis-tick" x1="85" y1="284" x2="85" y2="290"/>
+            <text class="svg-muted" x="85" y="304" text-anchor="middle">0</text>
+
+            <line class="axis-tick" x1="195" y1="284" x2="195" y2="290"/>
+            <text class="svg-muted" x="195" y="304" text-anchor="middle">1m</text>
+
+            <line class="axis-tick" x1="440" y1="284" x2="440" y2="290"/>
+            <text class="svg-muted" x="440" y="304" text-anchor="middle">5m</text>
+
+            <line class="axis-tick" x1="720" y1="284" x2="720" y2="290"/>
+            <text class="svg-muted" x="720" y="304" text-anchor="middle">15m</text>
+
+            <text class="svg-muted" x="195" y="326" text-anchor="middle">aggressive</text>
+            <text class="svg-muted" x="440" y="326" text-anchor="middle" style="font-weight:700;">default</text>
+            <text class="svg-muted" x="720" y="326" text-anchor="middle">large fleets</text>
+
+            <path class="arrow-line" d="M 85 354 L 85 349 L 720 349 L 720 354" stroke="#656d76"/>
+            <text class="svg-muted" x="402" y="370" text-anchor="middle">drift detection window &mdash; bounded by the configured period</text>
+        </svg>
+        <div class="svg-caption">Figure 1 &mdash; Each marker is one possible value of <code>--application-re-sync-period</code>; the bracket shows the worst-case time before KubeVela notices a higher-level drift. Marker positions are spaced for visual clarity, not strict linear time.</div>
+    </div>
+
+    <h3 id="tuning-flag">The Flag &mdash; <code>--application-re-sync-period</code></h3>
+
+    <p>
+        The flag accepts a Go <code>time.Duration</code> string (<code>30s</code>, <code>1m</code>, <code>15m</code>, &hellip;)
+        and defaults to <code>5m</code>. Here is how to set it up &mdash; there are two ways, depending on
+        whether you run the controller binary directly or deploy it via the official Helm chart.
+    </p>
+
+    <h4>Direct CLI</h4>
+    <pre><code>vela-core --application-re-sync-period=1m</code></pre>
+
+    <h4>Helm chart override (<code>charts/vela-core/values.yaml</code>)</h4>
+    <pre><code><span class="kw">controllerArgs</span>:
+  <span class="kw">reSyncPeriod</span>: <span class="num">1m</span></code></pre>
+
+    <p>The chart key is <code>controllerArgs.reSyncPeriod</code>; the template renders it into the controller's <code>--application-re-sync-period</code> argument. A common typo is to nest it under <code>controllerArgs.applicationReSyncPeriod</code> &mdash; that key is silently ignored.</p>
+
+    <h3 id="tuning-tradeoffs">Trade-offs</h3>
+
+    <p>
+        Reasoning about the cost of changing this value comes down to one observation: on every cycle, the
+        Application controller iterates every <code>ManagedResource</code> in every <code>ResourceTracker</code>,
+        issues a <code>Get</code> per resource against the API server, and an <code>Apply</code> when drift is
+        detected. The period is the divisor on a per-cluster work rate.
+    </p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Direction</th>
+                <th>What you gain</th>
+                <th>What you pay</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Shorter</strong> (e.g. <code>1m</code>)</td>
+                <td>Faster recovery from higher-level drift &mdash; deleted Deployments, missing ConfigMaps, removed Services, mutated Ingresses.</td>
+                <td>API server reads scale roughly as <code>&Sigma; tracked resources / period</code>. With 500 Apps &times; 8 resources &times; 60s period that is ~67 reads/sec just for health checks. Status updates and drift re-applies stack on top.</td>
+            </tr>
+            <tr>
+                <td><strong>Default</strong> (<code>5m</code>)</td>
+                <td>Balanced for typical fleets up to ~1000 Applications.</td>
+                <td>Drift detection latency &le; 5 minutes. Pod-level drift unaffected (handled in milliseconds by Kubernetes' built-in controllers).</td>
+            </tr>
+            <tr>
+                <td><strong>Longer</strong> (e.g. <code>15m</code>)</td>
+                <td>Lower steady-state API server pressure on large fleets. Frees headroom to raise <code>--concurrent-reconciles</code> for spec-change throughput without overloading etcd.</td>
+                <td>Drift detection latency up to 15 minutes. A deleted Service, ConfigMap or Ingress stays missing for that window. Acceptable when the platform is trusted and you let lower-level controllers handle pod-level recovery.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3 id="tuning-companion">Companion Knobs</h3>
+
+    <p>Four flags interact in this area. Keep them straight before turning any single dial:</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Flag</th>
+                <th>Default</th>
+                <th>What it controls</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>--application-re-sync-period</code></td>
+                <td><code>5m</code></td>
+                <td>Period between RT re-evaluation cycles. <strong>This is the one you usually want.</strong> Helm: <code>controllerArgs.reSyncPeriod</code>.</td>
+            </tr>
+            <tr>
+                <td><code>--concurrent-reconciles</code></td>
+                <td><code>4</code></td>
+                <td>Worker count for the Application controller. Raise this if shortening the period creates a queue backlog. Helm: <code>concurrentReconciles</code>.</td>
+            </tr>
+            <tr>
+                <td><code>--informer-sync-period</code></td>
+                <td><code>10h</code></td>
+                <td>Kubernetes Informer cache full-resync interval &mdash; <em>not related</em> to RT reconcile. Almost never worth touching.</td>
+            </tr>
+            <tr>
+                <td><code>--kube-api-qps</code></td>
+                <td><code>50</code></td>
+                <td>QPS limit on the controller's API client. If you raise <code>--concurrent-reconciles</code>, raise this proportionally or you will hit client-side throttling silently.</td>
+            </tr>
+            <tr>
+                <td><code>--kube-api-burst</code></td>
+                <td><code>100</code></td>
+                <td>Burst limit on the API client. The flag's own help text recommends keeping it at <code>qps &times; 2</code>; bump alongside <code>--kube-api-qps</code>.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3 id="tuning-recipes">Tuning Recipes</h3>
+
+    <p>
+        Starting points, not benchmarks. Profile your cluster after any change &mdash; the right setting
+        depends on resource count per Application, custom traits, controller-runtime version, and the noise
+        floor of the rest of your control plane.
+    </p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Cluster profile</th>
+                <th>re-sync period</th>
+                <th>concurrent-reconciles</th>
+                <th>kube-api-qps / burst</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Dev / small (&lt;100 Apps), drift-sensitive</td>
+                <td><code>1m</code></td>
+                <td><code>4</code> (default)</td>
+                <td><code>50</code> / <code>100</code> (defaults)</td>
+            </tr>
+            <tr>
+                <td>Production / typical (100&ndash;1000 Apps)</td>
+                <td><code>5m</code> (default)</td>
+                <td><code>4</code>&ndash;<code>8</code></td>
+                <td><code>50</code>&ndash;<code>100</code> / <code>100</code>&ndash;<code>200</code></td>
+            </tr>
+            <tr>
+                <td>Large fleet (1000&ndash;10k Apps)</td>
+                <td><code>10m</code>&ndash;<code>15m</code></td>
+                <td><code>16</code>&ndash;<code>32</code></td>
+                <td><code>200</code>&ndash;<code>400</code> / <code>400</code>&ndash;<code>800</code></td>
+            </tr>
+            <tr>
+                <td>Edge / quiet workloads, very high stability</td>
+                <td><code>30m</code>+</td>
+                <td><code>4</code></td>
+                <td><code>50</code> / <code>100</code> (defaults)</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="callout callout-warning">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><div class="callout-title">Don't tune blindly</div></div>
+        <p>Before shortening the period, confirm that the drift you're chasing actually requires it. Pod restarts,
+        <code>CrashLoopBackOff</code> recovery, and Deployment-managed scale-up are all handled by Kubernetes'
+        built-in controllers in seconds &mdash; the RT period only matters when something deletes or mutates a
+        top-level resource the Application owns. If your incident postmortem says <em>&ldquo;we lost a ConfigMap and
+        didn't notice for 5 minutes&rdquo;</em>, shortening helps. If it says <em>&ldquo;a Pod CrashLooped&rdquo;</em>,
+        the period is irrelevant and you should be looking at probes and resource limits instead.</p>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 5 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="complete-flow">
+    <h2><span class="section-icon orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></span><span class="num">05</span> &mdash; Complete Flow: Deletion to Recreation</h2>
+
+    <p>Let's trace the full lifecycle when a user manually deletes a Pod that was created by a KubeVela Application:</p>
+
+    <div class="svg-figure">
+        <svg viewBox="0 0 820 360" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Sequence diagram showing pod deletion, the silence on the Application controller lane, and the periodic reconcile that re-applies missing resources">
+            <text class="svg-title" x="410" y="22" text-anchor="middle">Pod deletion → 5-minute silence → periodic reconcile → re-apply</text>
+
+            <text class="svg-muted" x="100" y="84" text-anchor="end" style="font-weight:600;">User</text>
+            <text class="svg-muted" x="100" y="144" text-anchor="end" style="font-weight:600;">API server</text>
+            <text class="svg-muted" x="100" y="204" text-anchor="end" style="font-weight:600;">App controller</text>
+            <text class="svg-muted" x="100" y="264" text-anchor="end" style="font-weight:600;">Pod (child)</text>
+
+            <line class="lifeline" x1="105" y1="80" x2="790" y2="80"/>
+            <line class="lifeline" x1="105" y1="140" x2="790" y2="140"/>
+            <line class="lifeline" x1="105" y1="200" x2="790" y2="200"/>
+            <line class="lifeline" x1="105" y1="260" x2="790" y2="260"/>
+
+            <line stroke="#cf222e" stroke-width="1" stroke-dasharray="2 3" x1="140" y1="50" x2="140" y2="320"/>
+
+            <circle cx="140" cy="80" r="5" fill="#fecaca" stroke="#cf222e" stroke-width="2"/>
+            <path d="M 140 86 L 140 134" stroke="#cf222e" stroke-width="1.6" fill="none"/>
+            <polygon points="136,134 144,134 140,140" fill="#cf222e"/>
+            <text class="svg-mono" x="150" y="108">kubectl delete pod</text>
+
+            <circle cx="140" cy="140" r="5" fill="#bfdbfe" stroke="#0969da" stroke-width="2"/>
+            <path d="M 150 142 C 200 142, 200 260, 230 260" stroke="#0550ae" stroke-width="1.6" fill="none"/>
+            <polygon points="226,256 232,260 226,264" fill="#0550ae"/>
+            <text class="svg-mono" x="195" y="180">remove from etcd</text>
+
+            <text class="svg-label" x="230" y="266" text-anchor="middle" style="font-weight:700; fill:#cf222e;">&#10005;</text>
+            <text class="svg-muted" x="230" y="282" text-anchor="middle">pod gone</text>
+
+            <rect x="270" y="186" width="220" height="32" rx="4" fill="#fef3c7" stroke="#9a6700" stroke-width="1"/>
+            <text class="svg-mono" x="380" y="200" text-anchor="middle" fill="#9a6700">no Pod Informer</text>
+            <text class="svg-muted" x="380" y="213" text-anchor="middle" fill="#9a6700">→ App controller is silent</text>
+
+            <text class="svg-muted" x="380" y="306" text-anchor="middle" style="font-style:italic;">(meanwhile, ReplicaSet recreates the Pod within seconds via its own event-driven path)</text>
+
+            <line stroke="#0969da" stroke-width="1" stroke-dasharray="2 3" x1="560" y1="50" x2="560" y2="320"/>
+
+            <circle class="marker-pulse" cx="560" cy="200" r="8" fill="#dbeafe" stroke="#0969da" stroke-width="2.5"/>
+            <text class="svg-mono" x="572" y="224" style="font-weight:700; fill:#0550ae;">Reconcile()</text>
+
+            <path d="M 560 192 L 560 146" stroke="#0969da" stroke-width="1.6" fill="none"/>
+            <polygon points="556,146 564,146 560,140" fill="#0969da"/>
+            <text class="svg-mono" x="568" y="170" fill="#0550ae">Get RT</text>
+
+            <circle cx="620" cy="140" r="5" fill="#bfdbfe" stroke="#0969da" stroke-width="2"/>
+            <path d="M 620 146 L 620 194" stroke="#0969da" stroke-width="1.6" stroke-dasharray="3 3" fill="none"/>
+            <polygon points="616,194 624,194 620,200" fill="#0969da"/>
+            <text class="svg-mono" x="628" y="170" fill="#0550ae">RT.spec</text>
+
+            <path d="M 680 194 L 680 146" stroke="#1a7f37" stroke-width="1.6" fill="none"/>
+            <polygon points="676,146 684,146 680,140" fill="#1a7f37"/>
+            <text class="svg-mono" x="688" y="170" fill="#1a7f37">SSA Apply</text>
+
+            <circle cx="680" cy="140" r="5" fill="#bbf7d0" stroke="#1a7f37" stroke-width="2"/>
+            <path d="M 685 142 C 720 142, 720 260, 740 260" stroke="#1a7f37" stroke-width="1.6" fill="none"/>
+            <polygon points="736,256 742,260 736,264" fill="#1a7f37"/>
+            <circle cx="740" cy="260" r="5" fill="#bbf7d0" stroke="#1a7f37" stroke-width="2"/>
+            <text class="svg-muted" x="740" y="282" text-anchor="middle" fill="#1a7f37">re-applied</text>
+
+            <line class="axis" x1="100" y1="320" x2="800" y2="320"/>
+            <line class="axis-tick" x1="140" y1="320" x2="140" y2="326"/>
+            <text class="svg-muted" x="140" y="338" text-anchor="middle">t = 0</text>
+            <line class="axis-tick" x1="560" y1="320" x2="560" y2="326"/>
+            <text class="svg-muted" x="560" y="338" text-anchor="middle">t = 5 min (next re-sync)</text>
+            <text class="svg-muted" x="800" y="338" text-anchor="end" style="font-style:italic;">&rarr; time</text>
+        </svg>
+        <div class="svg-caption">Figure 3 &mdash; The Application controller stays silent during the deletion (no Pod Informer) and only acts when the periodic re-sync timer fires. The five steps below detail each phase.</div>
+    </div>
+
+    <div class="timeline">
+        <div class="timeline-item">
+            <div class="timeline-dot red"></div>
+            <div class="timeline-content">
+                <div class="timeline-title">Step 1: Pod Deletion</div>
+                <p>User runs <code>kubectl delete pod my-app-pod-1</code></p>
+                <p>The API server removes the Pod from etcd. <strong>No event is sent to the Application controller</strong>
+                because it has no Pod Informer.</p>
+                <p>However, if the Pod is managed by a Deployment, the Deployment's ReplicaSet controller <em>will</em>
+                recreate it within seconds. KubeVela's self-healing operates at the higher Application level.</p>
+            </div>
+        </div>
+
+        <div class="timeline-item">
+            <div class="timeline-dot orange"></div>
+            <div class="timeline-content">
+                <div class="timeline-title">Step 2: Periodic Reconciliation Fires (up to 5 min later)</div>
+                <p>The re-sync timer triggers: <code>Reconcile(ctx, Request{Name: "my-app"})</code></p>
+                <p>The work queue picks up the Application for reconciliation.</p>
+            </div>
+        </div>
+
+        <div class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div class="timeline-content">
+                <div class="timeline-title">Step 3: ResourceTracker Lookup</div>
+                <p>The reconciler fetches the Application CR, then retrieves its associated ResourceTracker(s).
+                The tracker lists all expected resources with their full specs.</p>
+            </div>
+        </div>
+
+        <div class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div class="timeline-content">
+                <div class="timeline-title">Step 4: Health Check &amp; Drift Detection</div>
+                <p>For each <code>ManagedResource</code> in the tracker, the controller:</p>
+                <pre><code>r.<span class="fn">Get</span>(ctx, namespacedName, &amp;obj)
+<span class="kw">if</span> apierrors.<span class="fn">IsNotFound</span>(err) {
+    <span class="cmt">// Resource should exist but doesn't! Re-apply it.</span>
+    r.<span class="fn">Apply</span>(ctx, desiredSpec)
+}</code></pre>
+                <p>If the resource exists but has drifted from desired state, server-side apply corrects it.</p>
+            </div>
+        </div>
+
+        <div class="timeline-item">
+            <div class="timeline-dot green"></div>
+            <div class="timeline-content">
+                <div class="timeline-title">Step 5: Recreation &amp; Requeue</div>
+                <p>Missing or drifted resources are re-applied. The Application status is updated.
+                The controller requeues for the next health check cycle:</p>
+                <pre><code><span class="kw">return</span> ctrl.<span class="typ">Result</span>{RequeueAfter: <span class="num">5</span> * time.Minute}, <span class="kw">nil</span></code></pre>
+            </div>
+        </div>
+    </div>
+
+    <div class="callout callout-insight">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><div class="callout-title">Layered Self-Healing</div></div>
+        <p>In practice, KubeVela's self-healing works <em>in concert</em> with Kubernetes' built-in controllers.
+        If you delete a Pod managed by a Deployment, the ReplicaSet controller recreates it in milliseconds.
+        KubeVela's 5-minute cycle handles higher-level drift: deleted Deployments, modified Services, missing ConfigMaps,
+        or entire resource graphs that need reconstruction.</p>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 6 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="event-filtering">
+    <h2><span class="section-icon purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></span><span class="num">06</span> &mdash; Event Filtering: Preventing Infinite Loops</h2>
+
+    <p>
+        Every Kubernetes controller that updates its own <code>status</code> during reconciliation risks an infinite loop:
+        the status update fires an event, which triggers another reconcile, which updates status again.
+        KubeVela's Application controller is especially prone to this &mdash; a single reconcile can update
+        workflow progress, health results, and applied resource lists, each generating an event.
+    </p>
+
+    <p>
+        KubeVela solves this with <strong>event predicates</strong> &mdash; filters that decide whether an update
+        event is worth reacting to. The core idea is simple: <strong>only reconcile when a human (or external system)
+        changed the spec, or when it's time for a periodic health check.</strong> Everything else is the controller
+        talking to itself and can be safely ignored.
+    </p>
+
+    <table>
+        <thead>
+            <tr><th>What Changed?</th><th>Decision</th><th>Why</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>User edited the <code>spec</code> (generation incremented)</td>
+                <td class="check">Reconcile</td>
+                <td>User intent &mdash; always honor</td>
+            </tr>
+            <tr>
+                <td>Periodic re-sync (old == new)</td>
+                <td class="check">Reconcile</td>
+                <td>Health check trigger</td>
+            </tr>
+            <tr>
+                <td>Workflow progress, phase transitions, applied resources</td>
+                <td class="cross">Skip</td>
+                <td>Controller's own writes &mdash; not user action</td>
+            </tr>
+            <tr>
+                <td><code>managedFields</code> or <code>resourceVersion</code> only</td>
+                <td class="cross">Skip</td>
+                <td>API server bookkeeping</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="callout callout-insight">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div class="callout-title">ResourceTracker: Delete-Only Trigger</div></div>
+        <p>
+            The ResourceTracker faces the same loop risk &mdash; the controller updates it during every reconcile
+            to record newly dispatched resources. KubeVela's solution is aggressive: by default,
+            ResourceTracker events <strong>only</strong> trigger a reconcile when the tracker is being <em>deleted</em>.
+            All create and update events are silently dropped.
+        </p>
+        <p>
+            This works because the controller already reconciles Applications periodically &mdash; it doesn't
+            need RT update events to do its job. The only RT event that matters is deletion, which signals
+            garbage collection in progress and requires the owning Application to respond.
+        </p>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 7 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="watches-explained">
+    <h2><span class="section-icon teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span><span class="num">07</span> &mdash; <code>.Watches()</code> vs <code>.Owns()</code></h2>
+
+    <p>
+        controller-runtime provides two ways to watch related resources.
+        Understanding the difference is key to understanding KubeVela's design choice.
+    </p>
+
+    <div class="columns">
+        <div class="column blue-border">
+            <h4><code>.Owns()</code></h4>
+            <ul>
+                <li>Automatically maps child &rarr; parent via OwnerReference</li>
+                <li>Requires child to have <code>ownerReferences</code> pointing to parent</li>
+                <li>One Informer per child type</li>
+                <li>Cannot work cross-namespace (OwnerRef is namespace-scoped)</li>
+                <li>Cannot work cross-cluster</li>
+            </ul>
+        </div>
+        <div class="column purple-border">
+            <h4><code>.Watches()</code></h4>
+            <ul>
+                <li>Requires a custom mapping function (<code>EnqueueRequestsFromMapFunc</code>)</li>
+                <li>Can use any logic to map source &rarr; target (labels, annotations, any field)</li>
+                <li>Only watches the source type you specify</li>
+                <li>Can map across namespaces</li>
+                <li>Can map across clusters (with custom client)</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="svg-figure">
+        <svg viewBox="0 0 820 290" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Side-by-side comparison of how a child event becomes an Application reconcile request via .Owns() versus .Watches()">
+            <text class="svg-title" x="410" y="22" text-anchor="middle">Two paths from a child event to the Application reconcile queue</text>
+
+            <line stroke="#d1d9e0" stroke-width="1" stroke-dasharray="3 4" x1="410" y1="40" x2="410" y2="280"/>
+
+            <text class="svg-label" x="200" y="50" text-anchor="middle" style="font-weight:700;">.Owns(&amp;Pod{})</text>
+            <text class="svg-muted" x="200" y="65" text-anchor="middle">automatic via OwnerReference</text>
+
+            <rect x="120" y="80" width="160" height="46" rx="6" fill="#dbeafe" stroke="#0969da" stroke-width="1.5"/>
+            <text class="svg-label" x="200" y="98" text-anchor="middle" style="font-weight:700;">Pod (child)</text>
+            <text class="svg-mono" x="200" y="115" text-anchor="middle">ownerReferences: [App]</text>
+
+            <path d="M 200 126 L 200 168" stroke="#0969da" stroke-width="1.8" fill="none"/>
+            <polygon points="196,168 204,168 200,174" fill="#0969da"/>
+            <text class="svg-mono" x="210" y="151" fill="#0550ae">EnqueueRequestForOwner</text>
+
+            <rect x="120" y="174" width="160" height="44" rx="6" fill="#dcfce7" stroke="#1a7f37" stroke-width="1.5"/>
+            <text class="svg-label" x="200" y="192" text-anchor="middle" style="font-weight:700;">App reconcile queue</text>
+            <text class="svg-mono" x="200" y="209" text-anchor="middle" fill="#656d76">{name, ns from ownerRef}</text>
+
+            <rect x="100" y="232" width="200" height="42" rx="4" fill="#fee2e2" stroke="#cf222e" stroke-width="1"/>
+            <text class="svg-muted" x="200" y="248" text-anchor="middle" fill="#cf222e">&#10007; cross-namespace</text>
+            <text class="svg-muted" x="200" y="263" text-anchor="middle" fill="#cf222e">&#10007; cross-cluster (one Informer per type)</text>
+
+            <text class="svg-label" x="620" y="50" text-anchor="middle" style="font-weight:700;">.Watches(&amp;ResourceTracker{}, ...)</text>
+            <text class="svg-muted" x="620" y="65" text-anchor="middle">custom map: labels &rarr; reconcile.Request</text>
+
+            <rect x="540" y="80" width="160" height="46" rx="6" fill="#f3e8ff" stroke="#8250df" stroke-width="1.5"/>
+            <text class="svg-label" x="620" y="98" text-anchor="middle" style="font-weight:700;">ResourceTracker</text>
+            <text class="svg-mono" x="620" y="115" text-anchor="middle">labels: app.oam.dev/name</text>
+
+            <path d="M 620 126 L 620 168" stroke="#8250df" stroke-width="1.8" fill="none"/>
+            <polygon points="616,168 624,168 620,174" fill="#8250df"/>
+            <text class="svg-mono" x="630" y="143" fill="#8250df">findObjectForRT()</text>
+            <text class="svg-muted" x="630" y="158" fill="#8250df">labels &rarr; Request</text>
+
+            <rect x="540" y="174" width="160" height="44" rx="6" fill="#dcfce7" stroke="#1a7f37" stroke-width="1.5"/>
+            <text class="svg-label" x="620" y="192" text-anchor="middle" style="font-weight:700;">App reconcile queue</text>
+            <text class="svg-mono" x="620" y="209" text-anchor="middle" fill="#656d76">{name, ns from labels}</text>
+
+            <rect x="520" y="232" width="200" height="42" rx="4" fill="#dcfce7" stroke="#1a7f37" stroke-width="1"/>
+            <text class="svg-muted" x="620" y="248" text-anchor="middle" fill="#1a7f37">&#10003; cross-namespace</text>
+            <text class="svg-muted" x="620" y="263" text-anchor="middle" fill="#1a7f37">&#10003; cross-cluster (single Informer for RT)</text>
+        </svg>
+        <div class="svg-caption">Figure 4 &mdash; <code>.Owns()</code> reads OwnerReferences from each child type's Informer; <code>.Watches()</code> reads only ResourceTracker labels via the custom MapFunc <code>findObjectForResourceTracker</code>.</div>
+    </div>
+
+    <h3 id="findObjectForRT"><code>findObjectForResourceTracker</code></h3>
+
+    <pre><code><span class="kw">func</span> <span class="fn">findObjectForResourceTracker</span>(_ context.<span class="typ">Context</span>, rt client.<span class="typ">Object</span>) []reconcile.<span class="typ">Request</span> {
+    <span class="cmt">// Optimization: only trigger on RT deletion</span>
+    <span class="kw">if</span> <span class="typ">EnableResourceTrackerDeleteOnlyTrigger</span> &amp;&amp; rt.<span class="fn">GetDeletionTimestamp</span>() == <span class="kw">nil</span> {
+        <span class="kw">return</span> <span class="kw">nil</span>
+    }
+    <span class="kw">if</span> labels := rt.<span class="fn">GetLabels</span>(); labels != <span class="kw">nil</span> {
+        <span class="kw">var</span> request reconcile.<span class="typ">Request</span>
+        request.Name = labels[oam.<span class="typ">LabelAppName</span>]
+        request.Namespace = labels[oam.<span class="typ">LabelAppNamespace</span>]
+        <span class="kw">if</span> request.Namespace != <span class="str">""</span> &amp;&amp; request.Name != <span class="str">""</span> {
+            <span class="kw">return</span> []reconcile.<span class="typ">Request</span>{request}
+        }
+    }
+    <span class="kw">return</span> <span class="kw">nil</span>
+}</code></pre>
+
+    <p>
+        Instead of OwnerReference (which is embedded in the child object's metadata), this function uses
+        <strong>labels</strong> on the ResourceTracker (<code>app.oam.dev/name</code>, <code>app.oam.dev/namespace</code>)
+        to find the owning Application. This decouples the mapping from Kubernetes' built-in ownership model,
+        enabling cross-namespace and cross-cluster scenarios.
+    </p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 8 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="comparison">
+    <h2><span class="section-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span class="num">08</span> &mdash; Pattern Comparison</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Aspect</th>
+                <th>Traditional <code>.Owns()</code></th>
+                <th>KubeVela ResourceTracker</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Informers needed</td>
+                <td>One per child type <span class="pill high">O(n)</span></td>
+                <td>Three total <span class="pill low">O(1)</span></td>
+            </tr>
+            <tr>
+                <td>Memory cache</td>
+                <td>All instances of each watched type</td>
+                <td>Only Applications, ResourceTrackers &amp; PolicyDefinitions</td>
+            </tr>
+            <tr>
+                <td>Detection latency</td>
+                <td><span class="pill fast">Milliseconds</span> (event-driven)</td>
+                <td><span class="pill slow">Up to 5 min</span> (periodic)</td>
+            </tr>
+            <tr>
+                <td>New CRD support</td>
+                <td>Requires code change + controller restart</td>
+                <td>Automatic &mdash; no changes needed</td>
+            </tr>
+            <tr>
+                <td>Cross-namespace</td>
+                <td class="cross">Not supported (OwnerRef is namespace-scoped)</td>
+                <td class="check">Supported via label-based mapping</td>
+            </tr>
+            <tr>
+                <td>Cross-cluster</td>
+                <td class="cross">Not supported</td>
+                <td class="check">Supported (ClusterObjectReference)</td>
+            </tr>
+            <tr>
+                <td>API server watch streams</td>
+                <td>One per resource type</td>
+                <td>Three total</td>
+            </tr>
+            <tr>
+                <td>Garbage collection</td>
+                <td>Kubernetes built-in (cascading delete via OwnerRef)</td>
+                <td>Custom GC with versioned tracking &amp; two-phase delete</td>
+            </tr>
+            <tr>
+                <td>Rollback support</td>
+                <td>Not built-in</td>
+                <td>Versioned ResourceTrackers enable revision history</td>
+            </tr>
+            <tr>
+                <td>Implementation complexity</td>
+                <td>Simple (1 line per type)</td>
+                <td>Significant (custom CRD, GC logic, health pipeline)</td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 9 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="design-rationale">
+    <h2><span class="section-icon green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><span class="num">09</span> &mdash; Why KubeVela Chose This Design</h2>
+
+    <p>The ResourceTracker pattern isn't just a performance optimization. It reflects several fundamental architectural decisions:</p>
+
+    <h3>1. Type Agnosticism</h3>
+    <p>
+        KubeVela's core value proposition is that users define workloads using CUE templates (ComponentDefinitions, TraitDefinitions),
+        which can output <em>any</em> Kubernetes resource type. The controller cannot know at compile time what resource types
+        it will need to manage. The <code>.Owns()</code> pattern requires compile-time registration of each type,
+        making it fundamentally incompatible with KubeVela's extensibility model.
+    </p>
+
+    <h3>2. Multicluster Resource Management</h3>
+    <p>
+        KubeVela distributes workloads across multiple clusters via its cluster gateway. OwnerReferences only work
+        within a single cluster (they reference objects by UID, which is cluster-scoped). ResourceTracker uses
+        <code>ClusterObjectReference</code> which includes a <code>cluster</code> field, enabling tracking of resources
+        across cluster boundaries.
+    </p>
+
+    <h3>3. Version-Aware Lifecycle Management</h3>
+    <p>
+        With versioned ResourceTrackers, KubeVela maintains a history of which resources belonged to which Application
+        revision. This enables:
+    </p>
+    <ul>
+        <li><strong>Rollback:</strong> Re-activate a previous version's ResourceTracker (via the <code>app.oam.dev/publishVersion</code> annotation) to restore the exact set of resources from that revision</li>
+        <li><strong>Safe GC:</strong> Old versioned ResourceTrackers are kept as history; their resources are only garbage collected once a newer RT has taken over managing them</li>
+    </ul>
+
+    <h3>4. Separation of Concerns</h3>
+    <p>
+        The ResourceTracker creates a clear boundary between the <em>rendering pipeline</em> (CUE evaluation &rarr; resource generation)
+        and the <em>dispatch pipeline</em> (apply resources, track state, self-heal). The rendering pipeline writes to the tracker;
+        the dispatch pipeline reads from it. Neither needs to understand the other's internals.
+    </p>
+
+    <h3>5. Bounded Resource Consumption</h3>
+    <p>
+        In a cluster with 100 CRD types and 50,000 total resources, the <code>.Owns()</code> approach would cache
+        all 50,000 resources across 100 Informers. KubeVela's approach caches only Application and ResourceTracker objects &mdash;
+        typically orders of magnitude fewer. Memory usage is proportional to the number of <em>Applications</em>, not the
+        number of <em>managed resources</em> or <em>resource types</em>.
+    </p>
+
+    <div class="callout callout-warning">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><div class="callout-title">The Trade-off is Real</div></div>
+        <p>This isn't a free lunch. The periodic reconciliation model means:</p>
+        <ul>
+            <li>Detection latency of up to 5 minutes (configurable via <code>ApplicationReSyncPeriod</code>)</li>
+            <li>API server load from periodic GET requests for every tracked resource</li>
+            <li>More complex garbage collection logic than Kubernetes' built-in cascading delete</li>
+            <li>The controller must handle stale ResourceTracker data gracefully</li>
+        </ul>
+        <p>For KubeVela's use case as a platform engine managing diverse, dynamic workloads across clusters,
+        these trade-offs are well worth it.</p>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 10 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="ownerref-deep-dive">
+    <h2><span class="section-icon purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg></span><span class="num">10</span> &mdash; OwnerReference Handling: client-go vs controller-runtime</h2>
+
+    <p>
+        To fully appreciate the ResourceTracker pattern, it helps to understand the standard approach it replaces.
+        Kubernetes controllers need to answer one question when a child resource changes:
+        <strong>"Which parent should I reconcile?"</strong> The ecosystem offers three answers at increasing levels
+        of abstraction.
+    </p>
+
+    <h3 id="the-ownership-problem">The Ownership Problem</h3>
+
+    <p>
+        When a Deployment is deleted, the controller that created it needs to know. But Kubernetes doesn't
+        automatically notify "whoever created this resource." Instead, the controller must:
+    </p>
+    <ol>
+        <li><strong>Watch</strong> the child resource type (set up an Informer)</li>
+        <li><strong>Receive</strong> the deletion event</li>
+        <li><strong>Map</strong> the child back to its parent (find who owns it)</li>
+        <li><strong>Enqueue</strong> the parent for reconciliation</li>
+    </ol>
+
+    <p>
+        The mechanism for step 3 is the <strong>OwnerReference</strong> &mdash; a field embedded in the child's metadata
+        that points back to its parent:
+    </p>
+
+    <pre><code><span class="cmt"># Every child resource carries a pointer to its parent</span>
+<span class="typ">apiVersion</span>: apps/v1
+<span class="typ">kind</span>: Deployment
+<span class="typ">metadata</span>:
+  <span class="typ">name</span>: my-app-deployment
+  <span class="typ">ownerReferences</span>:
+    - <span class="typ">apiVersion</span>: mygroup.io/v1
+      <span class="typ">kind</span>: MyApp                <span class="cmt"># parent type</span>
+      <span class="typ">name</span>: my-app               <span class="cmt"># parent name</span>
+      <span class="typ">controller</span>: <span class="kw">true</span>            <span class="cmt"># "I am the controller owner"</span>
+      <span class="typ">uid</span>: abc-123               <span class="cmt"># parent UID</span></code></pre>
+
+    <p>
+        How you set this up, and how much of it you write yourself, depends on which abstraction layer you use.
+    </p>
+
+    <h3 id="client-go-manual">Level 1: Raw client-go (Maximum Control)</h3>
+
+    <p>
+        Kubernetes' own <a href="https://github.com/kubernetes/sample-controller" target="_blank">sample-controller</a>
+        uses raw client-go. You build every piece of the pipeline manually:
+    </p>
+
+    <div class="callout callout-warning">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><div class="callout-title">What You Write Yourself</div></div>
+        <p>For <strong>each child resource type</strong> you want to watch, you must:</p>
+        <ul>
+            <li>Create a <strong>SharedInformerFactory</strong> and extract the typed Informer</li>
+            <li>Register <strong>three event handlers</strong> (Add, Update, Delete)</li>
+            <li>In each handler: extract the <strong>OwnerReference</strong> from the child object</li>
+            <li>Verify the owner is your <strong>specific CRD Kind</strong></li>
+            <li>Look up the parent using a <strong>Lister</strong></li>
+            <li>Enqueue the parent key into the <strong>work queue</strong></li>
+        </ul>
+        <p><strong>Cost:</strong> ~100 lines of boilerplate per child type. For 3 child types, that's 9 handler functions and ~300 lines.</p>
+    </div>
+
+    <p>
+        You also manually build the OwnerReference when creating children. Every field &mdash;
+        <code>apiVersion</code>, <code>kind</code>, <code>name</code>, <code>uid</code>,
+        <code>controller: true</code> &mdash; is your responsibility to set correctly.
+    </p>
+
+    <h3 id="controller-runtime-auto">Level 2: controller-runtime <code>.Owns()</code> (Automated Wiring)</h3>
+
+    <p>
+        The controller-runtime framework (used by Kubebuilder and Operator SDK) collapses the entire
+        client-go pipeline into a single method call:
+    </p>
+
+    <pre><code><span class="kw">func</span> (r *<span class="typ">MyReconciler</span>) <span class="fn">SetupWithManager</span>(mgr ctrl.<span class="typ">Manager</span>) <span class="typ">error</span> {
+    <span class="kw">return</span> ctrl.<span class="fn">NewControllerManagedBy</span>(mgr).
+        <span class="fn">For</span>(&amp;myv1.<span class="typ">MyApp</span>{}).
+        <span class="fn">Owns</span>(&amp;appsv1.<span class="typ">Deployment</span>{}).   <span class="cmt">// this one line replaces ~100 lines of client-go</span>
+        <span class="fn">Owns</span>(&amp;corev1.<span class="typ">Service</span>{}).
+        <span class="fn">Owns</span>(&amp;corev1.<span class="typ">ConfigMap</span>{}).
+        <span class="fn">Complete</span>(r)
+}</code></pre>
+
+    <h4 id="owns-internals">What <code>.Owns()</code> does behind the scenes</h4>
+
+    <p>Each <code>.Owns()</code> call automatically:</p>
+
+    <table>
+        <thead>
+            <tr><th>Step</th><th>client-go (you write it)</th><th><code>.Owns()</code> (generated)</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Create Informer</td>
+                <td>NewSharedInformerFactory + typed getter</td>
+                <td>Auto-created from the GVK</td>
+            </tr>
+            <tr>
+                <td>Register handlers</td>
+                <td>AddEventHandler with 3 functions</td>
+                <td>Uses built-in <code>EnqueueRequestForOwner</code></td>
+            </tr>
+            <tr>
+                <td>Extract OwnerRef</td>
+                <td>GetControllerOf + Kind check</td>
+                <td>Automatic: matches Kind + APIVersion + controller flag</td>
+            </tr>
+            <tr>
+                <td>Enqueue parent</td>
+                <td>workqueue.Add(key)</td>
+                <td>Returns <code>reconcile.Request</code> automatically</td>
+            </tr>
+            <tr>
+                <td>Set OwnerRef on create</td>
+                <td>Build OwnerReferences array manually</td>
+                <td>One-liner: <code>ctrl.SetControllerReference()</code></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="callout callout-answer">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><div class="callout-title">The Result</div></div>
+        <p>
+            Watching 3 child types goes from <strong>~300 lines</strong> (client-go) to <strong>3 lines</strong>
+            (controller-runtime). The abstraction is nearly perfect for operators with a known, fixed set of child types.
+        </p>
+    </div>
+
+    <h3>Level 3: KubeVela ResourceTracker (Type-Agnostic)</h3>
+
+    <p>
+        Both client-go and controller-runtime share a fundamental assumption:
+        <strong>you know your child types at compile time.</strong> Each type needs explicit registration &mdash;
+        whether that's 100 lines (client-go) or 1 line (<code>.Owns()</code>) per type.
+    </p>
+
+    <p>KubeVela breaks this assumption entirely:</p>
+
+    <pre><code><span class="cmt">// KubeVela's entire watch setup — handles ANY managed resource type</span>
+ctrl.<span class="fn">NewControllerManagedBy</span>(mgr).
+    <span class="fn">For</span>(&amp;v1beta1.<span class="typ">Application</span>{}).
+    <span class="fn">Watches</span>(&amp;v1beta1.<span class="typ">ResourceTracker</span>{}, ...).
+    <span class="fn">Watches</span>(&amp;v1beta1.<span class="typ">PolicyDefinition</span>{}, ...).
+    <span class="fn">Complete</span>(r)
+<span class="cmt">// Three Informers total — Application, ResourceTracker, PolicyDefinition.</span>
+<span class="cmt">// None of them is a managed child. Handles Pods, Deployments, Services,</span>
+<span class="cmt">// Istio VirtualServices, Crossplane RDS instances, user-defined CRDs —</span>
+<span class="cmt">// anything, dynamically, with zero .Owns() calls.</span></code></pre>
+
+    <p>
+        Instead of registering a watch per type, the ResourceTracker <em>records</em> what was created.
+        Instead of OwnerReference-based event-driven mapping, the controller <em>periodically checks</em>
+        if tracked resources still exist. The ownership model moves from "embedded in the child" to
+        "recorded in a manifest."
+    </p>
+
+    <h3>The Abstraction Spectrum</h3>
+
+    <div class="svg-figure">
+        <svg viewBox="0 0 820 340" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Side-by-side comparison of client-go, controller-runtime .Owns(), and KubeVela ResourceTracker across five practical dimensions">
+            <text class="svg-title" x="410" y="24" text-anchor="middle">Three abstraction levels for child-resource ownership, at a glance</text>
+
+            <rect x="260" y="42" width="180" height="58" rx="6" fill="#fee2e2"/>
+            <rect x="440" y="42" width="180" height="58" rx="6" fill="#fef3c7"/>
+            <rect x="620" y="42" width="180" height="58" rx="6" fill="#dcfce7"/>
+
+            <text class="svg-mono" x="350" y="60" text-anchor="middle" fill="#cf222e" style="font-weight:700;">LEVEL 1</text>
+            <text class="svg-label" x="350" y="78" text-anchor="middle" style="font-weight:700;">client-go</text>
+            <text class="svg-muted" x="350" y="93" text-anchor="middle">manual everything</text>
+
+            <text class="svg-mono" x="530" y="60" text-anchor="middle" fill="#9a6700" style="font-weight:700;">LEVEL 2</text>
+            <text class="svg-label" x="530" y="78" text-anchor="middle" style="font-weight:700;">.Owns()</text>
+            <text class="svg-muted" x="530" y="93" text-anchor="middle">controller-runtime</text>
+
+            <text class="svg-mono" x="710" y="60" text-anchor="middle" fill="#1a7f37" style="font-weight:700;">LEVEL 3</text>
+            <text class="svg-label" x="710" y="78" text-anchor="middle" style="font-weight:700;">ResourceTracker</text>
+            <text class="svg-muted" x="710" y="93" text-anchor="middle">KubeVela</text>
+
+            <line stroke="#d1d9e0" stroke-width="1.5" x1="30" y1="110" x2="800" y2="110"/>
+
+            <text class="svg-label" x="40" y="132" style="font-weight:600;">Code per child type</text>
+            <text class="svg-label" x="350" y="132" text-anchor="middle" fill="#cf222e">~100 lines</text>
+            <text class="svg-label" x="530" y="132" text-anchor="middle" fill="#9a6700">~1 line</text>
+            <text class="svg-label" x="710" y="132" text-anchor="middle" fill="#1a7f37" style="font-weight:700;">0 lines</text>
+            <line stroke="#eaeef2" stroke-width="1" x1="30" y1="146" x2="800" y2="146"/>
+
+            <text class="svg-label" x="40" y="166" style="font-weight:600;">Reaction model</text>
+            <text class="svg-label" x="350" y="166" text-anchor="middle" fill="#1a7f37">Event-driven</text>
+            <text class="svg-label" x="530" y="166" text-anchor="middle" fill="#1a7f37">Event-driven</text>
+            <text class="svg-label" x="710" y="166" text-anchor="middle" fill="#9a6700">Periodic (&le; 5m)</text>
+            <line stroke="#eaeef2" stroke-width="1" x1="30" y1="180" x2="800" y2="180"/>
+
+            <text class="svg-label" x="40" y="200" style="font-weight:600;">Child types</text>
+            <text class="svg-label" x="350" y="200" text-anchor="middle" fill="#cf222e">Fixed at compile time</text>
+            <text class="svg-label" x="530" y="200" text-anchor="middle" fill="#cf222e">Fixed at compile time</text>
+            <text class="svg-label" x="710" y="200" text-anchor="middle" fill="#1a7f37" style="font-weight:700;">Any (runtime)</text>
+            <line stroke="#eaeef2" stroke-width="1" x1="30" y1="214" x2="800" y2="214"/>
+
+            <text class="svg-label" x="40" y="234" style="font-weight:600;">Scope</text>
+            <text class="svg-label" x="350" y="234" text-anchor="middle" fill="#cf222e">Same namespace only</text>
+            <text class="svg-label" x="530" y="234" text-anchor="middle" fill="#cf222e">Same namespace only</text>
+            <text class="svg-label" x="710" y="234" text-anchor="middle" fill="#1a7f37" style="font-weight:700;">Cross-NS, cross-cluster</text>
+            <line stroke="#eaeef2" stroke-width="1" x1="30" y1="248" x2="800" y2="248"/>
+
+            <text class="svg-label" x="40" y="268" style="font-weight:600;">Informers</text>
+            <text class="svg-label" x="350" y="268" text-anchor="middle" fill="#9a6700">N (one per type)</text>
+            <text class="svg-label" x="530" y="268" text-anchor="middle" fill="#9a6700">N (one per type)</text>
+            <text class="svg-label" x="710" y="268" text-anchor="middle" fill="#1a7f37" style="font-weight:700;">3 total (fixed)</text>
+
+            <line class="axis" x1="40" y1="305" x2="790" y2="305"/>
+            <polygon points="38,302 30,305 38,308" fill="#cf222e"/>
+            <polygon points="792,302 800,305 792,308" fill="#1a7f37"/>
+            <text class="svg-muted" x="50" y="324" text-anchor="start">most code, fixed types, same NS</text>
+            <text class="svg-muted" x="780" y="324" text-anchor="end">least code, any type, cross-cluster</text>
+        </svg>
+        <div class="svg-caption">Figure 5 &mdash; Levels 1 and 2 differ only in code size, not capability; Level 3 is the only one that breaks the same-namespace, fixed-types ceiling. Color-coded values: red = constraint, amber = neutral / caveat, green = unrestricted.</div>
+    </div>
+
+    <div class="callout callout-insight">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg><div class="callout-title">Choosing Your Level</div></div>
+        <p>Each level trades simplicity for flexibility:</p>
+        <ul>
+            <li><strong>client-go</strong> &mdash; Use when you need extremely custom event handling logic that
+                controller-runtime's abstractions don't support (rare).</li>
+            <li><strong>controller-runtime <code>.Owns()</code></strong> &mdash; The right choice for 95% of operators.
+                If you know your child types and they're in the same namespace, start here.</li>
+            <li><strong>ResourceTracker pattern</strong> &mdash; Use when building a <em>platform</em> that manages
+                dynamic, user-defined resource types across namespace or cluster boundaries. The added complexity
+                is justified only when <code>.Owns()</code> fundamentally cannot work.</li>
+        </ul>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 11 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="choosing">
+    <h2><span class="section-icon orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span><span class="num">11</span> &mdash; Choosing Your Pattern</h2>
+
+    <div class="columns">
+        <div class="column green-border">
+            <h4>Use <code>.Owns()</code> when:</h4>
+            <ul>
+                <li>Managing 2&ndash;10 known resource types</li>
+                <li>All resources are in the same namespace</li>
+                <li>Single-cluster only</li>
+                <li>Immediate event-driven self-healing is required</li>
+                <li>You want Kubernetes' built-in cascading delete</li>
+                <li>Simplicity is more important than scalability</li>
+            </ul>
+        </div>
+        <div class="column purple-border">
+            <h4>Consider ResourceTracker when:</h4>
+            <ul>
+                <li>Managing unknown or user-defined resource types</li>
+                <li>Resources span multiple namespaces or clusters</li>
+                <li>Resource type count is large or unbounded</li>
+                <li>You need version-aware resource tracking</li>
+                <li>Memory efficiency at scale is critical</li>
+                <li>Eventual consistency (seconds to minutes) is acceptable</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="callout callout-answer">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><div class="callout-title">The Bottom Line</div></div>
+        <p>
+            The ResourceTracker pattern is not a replacement for <code>.Owns()</code> &mdash; it's a solution for a fundamentally
+            different problem. Traditional operators know their child types at compile time; platform engines like KubeVela don't.
+            If you're building a simple operator, use <code>.Owns()</code>. If you're building a platform that manages dynamic,
+            user-defined workloads across cluster boundaries, study how KubeVela's ResourceTracker achieves type-agnostic
+            self-healing with bounded resource consumption.
+        </p>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- SECTION 12 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<section class="reveal" id="crossplane-case-study">
+    <h2><span class="section-icon red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span><span class="num">12</span> &mdash; Case Study: Crossplane RBAC Manager OOMs at Scale</h2>
+
+    <p>
+        The architectural argument so far has been theoretical: <em>unbounded watches make controller memory grow with cluster size.</em>
+        Here is a production failure that shows what that growth actually looks like, and why KubeVela's Application controller
+        is structurally immune to it.
+    </p>
+
+    <h3 id="case-what-happened">What happened</h3>
+
+    <p>
+        A team running Crossplane on a fleet of Kubernetes clusters noticed something strange: the
+        <code>crossplane-rbac-manager</code> pod was crash-looping on one cluster while staying perfectly healthy on every other
+        cluster running the <strong>identical Helm release</strong> &mdash; same image, same providers, same arguments,
+        same <code>2 GiB</code> memory limit. Over a 13-day window, the affected pod recorded:
+    </p>
+
+    <ul>
+        <li><strong>56 <code>OOMKilled</code> events</strong> (exit code 137) &mdash; roughly four kills per day</li>
+        <li>Each crash arrived within <strong>~20 seconds of pod start</strong>, during the initial informer cache synchronization</li>
+        <li>Periodic re-kills aligned with the controller's hourly <code>SyncPeriod</code> cache re-LIST &mdash; the moment
+            controller-runtime re-fetches every watched object from the API server</li>
+    </ul>
+
+    <p>
+        In stretches where the pod did stay alive, its steady-state memory usage hovered around <code>293 MiB</code> &mdash;
+        under one-seventh of the limit. This wasn't a slow leak being chased to exhaustion: the pod ran comfortably for hours,
+        then died in a single sub-minute spike during a re-LIST.
+    </p>
+
+    <p>
+        What looked like a memory leak wasn't one. By every Crossplane-internal metric, the controller was healthy: it was
+        managing roughly <strong>36 ProviderRevisions</strong> and <strong>680 ClusterRoles</strong>, both well within design
+        parameters. The growth driver was external to Crossplane's own resource graph &mdash; something none of those numbers
+        captured.
+    </p>
+
+    <p>The only meaningful difference between the affected cluster and the healthy ones was the cluster's <strong>total Deployment count</strong>:</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Cluster</th>
+                <th>Total Deployments</th>
+                <th>RBAC manager status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Affected cluster</td>
+                <td><strong>6,073</strong></td>
+                <td class="cross">OOMKilled, 56 restarts in 13 days</td>
+            </tr>
+            <tr>
+                <td>All sister clusters</td>
+                <td>&lt; 600</td>
+                <td class="check">Healthy, zero restarts</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p>A roughly 10&times; ratio in cluster Deployment density. Nothing else differed.</p>
+
+    <h3 id="case-the-cause">The cause</h3>
+
+    <p>Inside the RBAC manager's binding controller (<code>internal/controller/rbac/provider/binding/reconciler.go</code>):</p>
+
+    <pre><code>ctrl.<span class="fn">NewControllerManagedBy</span>(mgr).
+    <span class="fn">For</span>(&amp;v1.<span class="typ">ProviderRevision</span>{}).
+    <span class="fn">Owns</span>(&amp;rbacv1.<span class="typ">ClusterRoleBinding</span>{}).
+    <span class="fn">Watches</span>(&amp;appsv1.<span class="typ">Deployment</span>{}, ...)   <span class="cmt">// caches ALL Deployments cluster-wide</span></code></pre>
+
+    <p>
+        There is no namespace filter, no field selector, no <code>cache.ByObject</code> constraint.
+        <strong>Every Deployment in the cluster &mdash; regardless of who created it &mdash; is materialized in the controller's
+        informer cache.</strong> The cache cost is <code>O(cluster Deployment count)</code>, not
+        <code>O(Crossplane managed resources)</code>.
+    </p>
+
+    <p>
+        With ~600 Deployments the cache fits comfortably in 2 GiB. With 6,073 Deployments, the periodic re-LIST event
+        occasionally pushes the working set past 2 GiB and the kernel OOM-killer terminates the process. The same Helm chart,
+        the same providers, the same memory limit &mdash; only the number of unrelated Deployments in the cluster differs,
+        and that's enough to crash the controller.
+    </p>
+
+    <h3 id="case-kubevela-immune">Why KubeVela doesn't have this failure mode</h3>
+
+    <p>
+        KubeVela's Application controller does not watch <code>Deployment</code> at all. Its <code>SetupWithManager</code>
+        registers exactly three Informers &mdash; <code>Application</code>, <code>ResourceTracker</code>,
+        <code>PolicyDefinition</code> &mdash; and that set is fixed regardless of what users build with KubeVela. Pods,
+        Deployments, Services, Ingresses, custom CRDs: none of them are in the controller's cache. The cluster could have
+        60 Deployments or 60,000; the controller's memory footprint is identical.
+    </p>
+
+    <p>
+        The structural property: <strong>the controller's memory profile is decoupled from the cluster's resource inventory.</strong>
+        It scales with the number of <em>Applications you've defined</em>, not with the count of anything else in the cluster.
+    </p>
+
+    <table>
+        <thead>
+            <tr>
+                <th></th>
+                <th>Crossplane RBAC manager</th>
+                <th>KubeVela Application controller</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Watches <code>Deployment</code></td>
+                <td class="cross">Yes (unfiltered, cluster-wide)</td>
+                <td class="check">No</td>
+            </tr>
+            <tr>
+                <td>Cache footprint scales with</td>
+                <td>Total Deployments in cluster</td>
+                <td>Number of Applications defined</td>
+            </tr>
+            <tr>
+                <td>Effect of growing cluster</td>
+                <td class="cross">Memory grows linearly &rarr; eventual OOM</td>
+                <td class="check">No effect</td>
+            </tr>
+            <tr>
+                <td>6,000 Deployments outcome</td>
+                <td class="cross">OOMKilled, 56 restarts in 13 days</td>
+                <td class="check">Unchanged</td>
+            </tr>
+            <tr>
+                <td>Mitigation needed</td>
+                <td>Raise limit, lower concurrency, add filters</td>
+                <td class="check">None &mdash; bounded by design</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3 id="case-the-lesson">The lesson</h3>
+
+    <p>
+        Any controller that uses <code>.Owns()</code> or unfiltered <code>.Watches()</code> on a high-cardinality,
+        cluster-scoped Kubernetes type inherits that type's growth as a memory cost. The bug is not in the cluster size
+        &mdash; it's in the watch set. Crossplane's RBAC manager works correctly at small scale because the watch set's
+        cost stays under the limit; it fails at large scale because nothing in the controller's design ever bounded that cost.
+    </p>
+
+    <div class="callout callout-insight">
+        <div class="callout-title-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg><div class="callout-title">The architectural takeaway</div></div>
+        <p>The ResourceTracker pattern doesn't try to filter the watch set &mdash; it removes the high-cardinality types
+        from the watch set entirely, replacing direct watching with a record-and-poll model. That's why memory consumption
+        is bounded by <em>what KubeVela manages</em>, not by <em>what else exists in the cluster</em>. It's a real
+        architectural difference with real production consequences, not a stylistic choice.</p>
+    </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+    <div class="container">
+        <p style="font-weight: 600; color: var(--heading);">KubeVela ResourceTracker Pattern &mdash; Advanced Controller Design</p>
+        <p style="margin-top: 12px; display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;">
+            <a href="https://kubevela.io" target="_blank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>kubevela.io</a>
+            <a href="https://github.com/kubevela/kubevela" target="_blank"><svg viewBox="0 0 16 16" fill="currentColor" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
+        </p>
+    </div>
+</footer>
+
+<script>
+// Sidebar active link tracking
+const sections = document.querySelectorAll('section[id], h3[id]');
+const navLinks = document.querySelectorAll('.sidebar a');
+
+const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            navLinks.forEach(link => link.classList.remove('active'));
+            const activeLink = document.querySelector(`.sidebar a[href="#${entry.target.id}"]`);
+            if (activeLink) activeLink.classList.add('active');
+        }
+    });
+}, { rootMargin: '-20% 0px -80% 0px' });
+
+sections.forEach(section => observer.observe(section));
+
+// Sidebar toggle
+const toggleBtn = document.getElementById('toc-toggle');
+const closeBtn = document.getElementById('sidebar-close');
+const sidebar = document.getElementById('sidebar');
+
+function collapseSidebar() {
+    sidebar.classList.add('collapsed');
+    document.body.classList.add('sidebar-collapsed');
+}
+function expandSidebar() {
+    sidebar.classList.remove('collapsed');
+    document.body.classList.remove('sidebar-collapsed');
+}
+
+closeBtn.addEventListener('click', collapseSidebar);
+toggleBtn.addEventListener('click', expandSidebar);
+
+// Close sidebar on link click (mobile)
+navLinks.forEach(link => {
+    link.addEventListener('click', () => {
+        if (window.innerWidth < 768) collapseSidebar();
+    });
+});
+
+// Reading progress bar
+const progressBar = document.getElementById('progress-bar');
+window.addEventListener('scroll', () => {
+    const scrollTop = window.scrollY;
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+    progressBar.style.width = progress + '%';
+}, { passive: true });
+
+// Scroll-reveal animation
+const revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+        }
+    });
+}, { threshold: 0.08 });
+
+document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+
+// Copy code on click
+document.querySelectorAll('pre').forEach(pre => {
+    pre.addEventListener('click', (e) => {
+        const rect = pre.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        if (x > rect.width - 40 && y < 40) {
+            const code = pre.querySelector('code');
+            if (code) {
+                navigator.clipboard.writeText(code.textContent).then(() => {
+                    pre.style.outline = '2px solid var(--accent)';
+                    setTimeout(() => { pre.style.outline = 'none'; }, 600);
+                });
+            }
+        }
+    });
+});
+</script>
+
+</body>
+</html>

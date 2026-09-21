@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# mount-ownership-doctor -- detect Docker volume mount-points left root-owned by
+# a silently-skipped chown sidecar.
+#
+# mount-bind's ensure-mounts.py chowns volume-nocopy mountpoints to the
+# container user via a throwaway Alpine container. If the Alpine image is not
+# cached locally, that step prints a yellow WARNING and SKIPS -- but the overall
+# init still reports STATUS: SUCCESS. The volumes then stay root-owned, and
+# downstream post-create scripts (ccbridge clone into ~/.local/tools, gradle
+# cache writes, ~/.cache/ccbridge) fail with "Permission denied" -- a confusing,
+# delayed failure whose root cause (the skipped chown) is buried in the init log.
+#
+# This doctor checks the well-known node-owned volume mountpoints and, for any
+# that exist but are NOT owned by the current user, reports the skipped-chown
+# cause with a re-chown / pull-the-image fix.
+#
+# Read-only. The fix (re-run the chown, or pull the Alpine image and rebuild)
+# generally needs the host / a rebuild, so we guide rather than act.
+#
+# Usage:   mount-ownership-doctor [--format text|json]
+# Exit:    0 = all present mountpoints node-owned, 1 = a root-owned one,
+#          2 = usage error.
+#
+# Test hook: MOUNT_OWNERSHIP_DOCTOR_PATHS overrides the checked path list
+# (space-separated) so the ownership branches can be exercised hermetically.
+#
+# Doctor contract (shared with mcp-github-doctor, ccbridge-doctor,
+# zshenv-secrets-doctor): a *-doctor script in ~/.claude/scripts/ that exits
+# 0/1/2 and prints findings as WARNING/impact/fix triplets; the profile-doctor
+# aggregator runs all of them.
+
+set -uo pipefail
+
+SECTION=mount-ownership
+FORMAT=text
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --format) FORMAT="${2:-text}"; shift; [ $# -gt 0 ] && shift ;;
+        --format=*) FORMAT="${1#*=}"; shift ;;
+        -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Unknown argument: $1 (try --help)" >&2; exit 2 ;;
+    esac
+done
+case "$FORMAT" in text|json) ;; *) echo "Invalid --format: $FORMAT" >&2; exit 2 ;; esac
+
+# Well-known volume mountpoints that ensure-mounts.py chowns to the container
+# user. Overridable for tests. These are the actual node-owned volume targets
+# whose root-ownership has caused post-create failures. NOTE: the *parent*
+# ~/.local/tools is intentionally root-owned (Docker creates it when mounting
+# sibling volumes), so it is deliberately NOT listed -- only the real volume
+# sub-mountpoints (ide-bridge, intellij) are.
+DEFAULT_PATHS="$HOME/.local/tools/ide-bridge $HOME/.local/tools/intellij $HOME/.cache/ccbridge $HOME/.gradle"
+PATHS="${MOUNT_OWNERSHIP_DOCTOR_PATHS:-$DEFAULT_PATHS}"
+
+PROBLEMS=0
+JSON_ROWS=""
+note() { # <status: ok|warn|problem> <key> <single-line message...>
+    local s="$1" k="$2"; shift 2
+    local msg="$*" em
+    [ "$s" = problem ] && PROBLEMS=$((PROBLEMS + 1))
+    em="${msg//\\/\\\\}"; em="${em//\"/\\\"}"
+    JSON_ROWS="${JSON_ROWS:+$JSON_ROWS,}{\"section\":\"$SECTION\",\"status\":\"$s\",\"key\":\"$k\",\"message\":\"$em\"}"
+}
+say() { [ "$FORMAT" = text ] && printf '%s\n' "$*" >&2 || true; }
+guide() { # <what> <impact> <fix>
+    [ "$FORMAT" = text ] || return 0
+    printf '  WARNING: %s\n' "$1" >&2
+    printf '           impact: %s\n' "$2" >&2
+    printf '           fix:    %s\n' "$3" >&2
+}
+
+# owner uid of a path (portable), or empty if unstat-able.
+owner_uid() { # <path>
+    case "$(uname -s)" in
+        Darwin) stat -f '%u' "$1" 2>/dev/null ;;
+        *) stat -c '%u' "$1" 2>/dev/null ;;
+    esac
+}
+
+# slugify a path into a json key suffix
+slug() { printf '%s' "$1" | sed -E 's#^/##; s#[^A-Za-z0-9]+#_#g; s#_+$##'; }
+
+say "mount-ownership doctor -- are Docker volume mountpoints owned by the container user?"
+
+me="$(id -u)"
+checked=0; bad=0
+for p in $PATHS; do
+    [ -e "$p" ] || continue          # not every profile mounts every volume; skip absent
+    checked=$((checked + 1))
+    o="$(owner_uid "$p")"
+    key="mount_$(slug "$p")"
+    if [ -z "$o" ]; then
+        note warn "${key}_unstat" "could not stat $p (skipped)."
+    elif [ "$o" = "$me" ]; then
+        note ok "$key" "$p owned by the container user."
+    elif [ "$o" = 0 ]; then
+        note problem "$key" "$p is ROOT-owned (the chown sidecar skipped -- likely the Alpine image was not cached)."
+        guide "$p is owned by root, not the container user (uid $me) -- mount-bind's chown sidecar skipped silently (Alpine image '${ALPINE_HINT:-artifactory.guidewire.com/hub-docker-remote/alpine}' not cached at init)." \
+              "Post-create steps that write here (ccbridge clone, gradle cache, ~/.cache/ccbridge) fail with 'Permission denied' even though container init reported STATUS: SUCCESS." \
+              "On the HOST: 'docker pull artifactory.guidewire.com/hub-docker-remote/alpine' then 'dev rebuild' so ensure-mounts.py can chown; or in-container as root: sudo chown -R $me:$me $p"
+    else
+        note problem "$key" "$p is owned by uid $o, not the container user (uid $me)."
+        guide "$p is owned by uid $o, not the container user (uid $me)." \
+              "Writes here by post-create steps / your tools may fail with 'Permission denied'." \
+              "Re-chown it: sudo chown -R $me:$me $p (and check why the mount came up with the wrong owner)."
+    fi
+done
+[ "$checked" = 0 ] && note ok no_mountpoints "none of the known volume mountpoints are present (nothing to check)."
+
+if [ "$FORMAT" = json ]; then
+    ok=true; [ "$PROBLEMS" -gt 0 ] && ok=false
+    printf '{"schema_version":1,"doctor":"%s","problems":%s,"ok":%s,"checks":[%s]}\n' \
+        "$SECTION" "$PROBLEMS" "$ok" "$JSON_ROWS"
+else
+    if [ "$PROBLEMS" -eq 0 ]; then
+        say "[OK] all present volume mountpoints are owned by the container user."
+    else
+        say "[PROBLEM] $PROBLEMS mountpoint(s) wrongly-owned -- a skipped chown will surface as Permission denied (fix above)."
+    fi
+fi
+
+[ "$PROBLEMS" -eq 0 ] || exit 1
+exit 0

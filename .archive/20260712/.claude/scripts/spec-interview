@@ -1,0 +1,103 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Interactive Q&A to refine spec"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-interview)", "Read", "Write", "AskUserQuestion"]
+#
+# [tool.claude.output]
+# prompt = """Analyze the spec documents provided in the script output for gaps, ambiguities, and inconsistencies.
+#
+# Using AskUserQuestion, ask 1-4 targeted questions to clarify:
+# - Missing requirements or acceptance criteria
+# - Unclear technical decisions
+# - Ambiguous interfaces or data flow
+# - Incomplete implementation tasks
+#
+# Based on the answers, update the relevant spec documents.
+# Iterate if needed until the spec is complete and clear.
+#
+# IMPORTANT: When updating requirements.md, ALL acceptance criteria MUST use EARS notation:
+# - WHEN [event] THE SYSTEM SHALL [action]
+# - IF [condition] THEN THE SYSTEM SHALL [action]
+# - WHILE [state] THE SYSTEM SHALL [action]
+# - WHEN [event] AND [condition] THE SYSTEM SHALL [action]
+# - THE SYSTEM SHALL [action]  (ubiquitous, use sparingly)
+#
+# Use numbered lists (1. 2. 3.) for acceptance criteria, never checkboxes.
+# If existing criteria don't use EARS notation, convert them during updates.
+#
+# After each round of questions, summarize what was clarified and what documents were updated."""
+# examples = [
+#   "Analyzing spec 'feature-auth'...\n\nFound 3 areas needing clarification:\n\n1. Authentication method not specified\n2. Token expiration policy unclear\n3. Missing error handling scenarios\n\n[Asks questions via AskUserQuestion]\n\nUpdated:\n  - requirements.md: Added AC-1.4 for token expiration\n  - design.md: Added error handling table"
+# ]
+# ///
+
+"""
+Gather all spec documents for interview/analysis.
+
+Uses the spec associated with the current branch.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import require_associated_spec, spec_path
+
+
+def main():
+    spec_name, branch = require_associated_spec()
+
+    path = spec_path(spec_name)
+
+    if not path.exists():
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': f"Spec '{spec_name}' not found", 'spec_name': spec_name}))
+        else:
+            print(f"Error: Spec '{spec_name}' not found at {path}/", file=sys.stderr)
+        sys.exit(1)
+
+    reqs_file = path / 'requirements.md'
+    design_file = path / 'design.md'
+    tasks_file = path / 'tasks.md'
+
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(path),
+        'reqs': {
+            'file': str(reqs_file),
+            'exists': reqs_file.exists(),
+            'content': reqs_file.read_text() if reqs_file.exists() else None
+        },
+        'design': {
+            'file': str(design_file),
+            'exists': design_file.exists(),
+            'content': design_file.read_text() if design_file.exists() else None
+        },
+        'tasks': {
+            'file': str(tasks_file),
+            'exists': tasks_file.exists(),
+            'content': tasks_file.read_text() if tasks_file.exists() else None
+        }
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Analyzing spec '{spec_name}'...")
+        print()
+        print("Documents found:")
+        for doc in ['reqs', 'design', 'tasks']:
+            icon = "[OK]" if data[doc]['exists'] else "[ ]"
+            print(f"  {icon} {doc}.md")
+
+
+if __name__ == "__main__":
+    main()

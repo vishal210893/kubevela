@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: err-unknown-comp
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-err-unknown-comp-fixed
+spec:
+  components:
+    - name: ghost
+      type: this-component-type-does-not-exist
+      properties:
+        image: nginx:1.21

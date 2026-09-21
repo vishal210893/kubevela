@@ -1,0 +1,467 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Prune merged branches (incl. squash-merged PRs) and stale tracking refs"
+# model = "sonnet"
+# context = "fork"
+#
+# [tool.claude.output]
+# prompt = "Show branches that were pruned (remote and local separately). List protected branches that were skipped."
+# examples = [
+#   "[OK] Pruned 2 remote branches: feature-old, fix-bug\n[OK] Cleaned up 2 local branches: feature-old, fix-bug\nProtected (kept): main",
+#   "No merged branches to prune. [OK] Cleaned up stale tracking refs"
+# ]
+# ///
+
+"""
+Prune branches that have been merged into the default branch.
+
+This command:
+1. Fetches and prunes stale remote tracking references
+2. Finds remote branches that are fully merged into main/master
+3. Finds branches with merged PRs (handles squash-merge and rebase-merge)
+4. Deletes the merged remote branches
+5. Cleans up local branches that tracked deleted/merged remotes
+6. Cleans up orphaned spec-branch associations
+
+Safety:
+- Never deletes protected branches (main, master, develop, release/*, etc.)
+- Only deletes branches that are FULLY merged or have merged PRs
+"""
+
+import sys
+import os
+import subprocess
+import re
+import json
+
+# Add bin directory to path to import gitlib
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    get_repo_url,
+    get_default_branch,
+    get_current_branch,
+    run_git,
+    output_result,
+    get_template_from_metadata,
+    error,
+    cleanup_branch_associations
+)
+
+# Protected branch patterns - NEVER delete these
+PROTECTED_PATTERNS = [
+    r'^main$',
+    r'^master$',
+    r'^develop$',
+    r'^development$',
+    r'^staging$',
+    r'^production$',
+    r'^release[/-].*',
+    r'^hotfix[/-].*',
+    r'^HEAD$',
+]
+
+
+def is_protected(branch_name):
+    """Check if a branch name matches any protected pattern."""
+    for pattern in PROTECTED_PATTERNS:
+        if re.match(pattern, branch_name, re.IGNORECASE):
+            return True
+    return False
+
+
+def get_merged_remote_branches(default_branch):
+    """Get list of remote branches that are merged into the default branch."""
+    try:
+        result = run_git(
+            ['branch', '-r', '--merged', f'origin/{default_branch}'],
+            operation_description="list merged remote branches",
+            capture_output=True,
+            check=False
+        )
+
+        if result.returncode != 0:
+            return []
+
+        branches = []
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if '->' in line:
+                continue
+            if line.startswith('origin/'):
+                branch_name = line[7:]
+                branches.append(branch_name)
+
+        return branches
+
+    except Exception as e:
+        print(f"Error getting merged branches: {e}", file=sys.stderr)
+        return []
+
+
+def get_branches_with_unmerged_prs():
+    """Get branch names that have an open or closed-but-unmerged PR.
+
+    Used to protect branches whose name was reused after an earlier PR
+    was merged -- the current PR is still active or was closed without
+    merging, so the branch must not be pruned.
+    """
+    unmerged = set()
+    for state in ('open', 'closed'):
+        try:
+            result = subprocess.run(
+                ['gh', 'pr', 'list', '--state', state, '--limit', '500',
+                 '--json', 'headRefName,mergedAt'],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode != 0:
+                continue
+            prs = json.loads(result.stdout)
+            for pr in prs:
+                if not pr.get('mergedAt'):
+                    unmerged.add(pr['headRefName'])
+        except FileNotFoundError:
+            print("  Note: gh CLI not found, skipping unmerged-PR detection", file=sys.stderr)
+            return set()
+        except (json.JSONDecodeError, KeyError):
+            pass
+        except Exception as e:
+            print(f"Error checking {state} PRs: {e}", file=sys.stderr)
+    return unmerged
+
+
+def get_branches_with_merged_prs(unmerged_branches):
+    """Get branches that have merged PRs (handles squash-merge and rebase-merge).
+
+    Excludes branches that also have an open or closed-but-unmerged PR,
+    which happens when a branch name is reused for a new PR after an
+    earlier PR under the same name was merged.
+    """
+    try:
+        result = run_git(
+            ['branch', '-r', '--format=%(refname:short)'],
+            operation_description="list remote branches",
+            capture_output=True,
+            check=False
+        )
+
+        if result.returncode != 0:
+            return []
+
+        remote_branches = []
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if not line or '->' in line:
+                continue
+            if line.startswith('origin/'):
+                remote_branches.append(line[7:])
+
+        if not remote_branches:
+            return []
+
+        result = subprocess.run(
+            ['gh', 'pr', 'list', '--state', 'merged', '--limit', '500', '--json', 'headRefName'],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            return []
+
+        try:
+            prs = json.loads(result.stdout)
+            merged_branches = {pr['headRefName'] for pr in prs}
+        except (json.JSONDecodeError, KeyError):
+            return []
+
+        # Exclude branches that have an open or unmerged-closed PR
+        # (branch name was reused for a new PR)
+        merged_branches -= unmerged_branches
+
+        return [b for b in remote_branches if b in merged_branches]
+
+    except FileNotFoundError:
+        print("  Note: gh CLI not found, skipping squash-merge detection", file=sys.stderr)
+        return []
+    except Exception as e:
+        print(f"Error checking merged PRs: {e}", file=sys.stderr)
+        return []
+
+
+def get_local_branches_with_gone_upstream():
+    """Get local branches whose upstream remote branch is gone."""
+    try:
+        result = run_git(
+            ['branch', '-vv'],
+            operation_description="list branches with tracking",
+            capture_output=True,
+            check=False
+        )
+
+        if result.returncode != 0:
+            return []
+
+        gone_branches = []
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('* '):
+                line = line[2:]
+            if ': gone]' in line:
+                branch_name = line.split()[0]
+                gone_branches.append(branch_name)
+
+        return gone_branches
+
+    except Exception as e:
+        print(f"Error getting gone branches: {e}", file=sys.stderr)
+        return []
+
+
+def get_merged_local_branches(default_branch):
+    """Get local branches that are merged into the default branch."""
+    try:
+        result = run_git(
+            ['branch', '--merged', default_branch],
+            operation_description="list merged local branches",
+            capture_output=True,
+            check=False
+        )
+
+        if result.returncode != 0:
+            return []
+
+        branches = []
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('* '):
+                line = line[2:]
+            branches.append(line)
+
+        return branches
+
+    except Exception as e:
+        print(f"Error getting merged local branches: {e}", file=sys.stderr)
+        return []
+
+
+def get_local_branches_with_merged_prs(unmerged_branches):
+    """Get local branches that have merged PRs (handles squash-merge and rebase-merge)."""
+    try:
+        result = run_git(
+            ['branch', '--format=%(refname:short)'],
+            operation_description="list local branches",
+            capture_output=True,
+            check=False
+        )
+
+        if result.returncode != 0:
+            return []
+
+        local_branches = [b.strip() for b in result.stdout.strip().split('\n') if b.strip()]
+
+        if not local_branches:
+            return []
+
+        result = subprocess.run(
+            ['gh', 'pr', 'list', '--state', 'merged', '--limit', '500', '--json', 'headRefName'],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            return []
+
+        try:
+            prs = json.loads(result.stdout)
+            merged_branches = {pr['headRefName'] for pr in prs}
+        except (json.JSONDecodeError, KeyError):
+            return []
+
+        # Exclude branches that have an open or unmerged-closed PR
+        # (branch name was reused for a new PR)
+        merged_branches -= unmerged_branches
+
+        return [b for b in local_branches if b in merged_branches]
+
+    except FileNotFoundError:
+        print("  Note: gh CLI not found, skipping squash-merge detection for local branches", file=sys.stderr)
+        return []
+    except Exception as e:
+        print(f"Error checking local branches for merged PRs: {e}", file=sys.stderr)
+        return []
+
+
+def delete_remote_branch(branch_name, repo_url):
+    """Delete a remote branch."""
+    try:
+        result = run_git(
+            ['push', repo_url, '--delete', branch_name],
+            operation_description="delete remote branch",
+            context=branch_name,
+            check=False,
+            capture_output=True
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def delete_local_branch(branch_name):
+    """Delete a local branch (safe delete)."""
+    try:
+        result = run_git(
+            ['branch', '-d', branch_name],
+            operation_description="delete local branch",
+            context=branch_name,
+            check=False,
+            capture_output=True
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def cleanup_devyaml_associations(branches):
+    """Clean up dev.yaml branch associations for deleted branches."""
+    cleaned = []
+    for branch in branches:
+        if cleanup_branch_associations(branch):
+            cleaned.append(branch)
+    return cleaned
+
+
+def main():
+    """Prune branches that have been merged into the default branch.
+
+    Always prunes both local and remote branches, including user/* branches.
+    """
+
+    default_branch = get_default_branch()
+    current_branch = get_current_branch()
+    repo_url = get_repo_url()
+
+    print(f"Fetching and checking for merged branches...", file=sys.stderr)
+
+    # Fetch and prune stale remote refs
+    run_git(
+        ['fetch', '--prune'],
+        operation_description="fetch and prune stale refs",
+        check=False
+    )
+
+    results = {
+        'remote_pruned': [],
+        'remote_failed': [],
+        'remote_skipped_protected': [],
+        'local_pruned': [],
+        'local_failed': [],
+        'local_skipped_protected': [],
+        'local_skipped_current': False,
+        'spec_cleaned': [],
+    }
+
+    # --- Compute unmerged PRs once for reused-branch protection ---
+    unmerged_branches = get_branches_with_unmerged_prs()
+
+    # --- Remote branch cleanup ---
+    merged_remote = get_merged_remote_branches(default_branch)
+
+    print("  Checking for squash-merged PRs...", file=sys.stderr)
+    squash_merged = get_branches_with_merged_prs(unmerged_branches)
+
+    all_merged_remote = list(set(merged_remote + squash_merged))
+
+    for branch in all_merged_remote:
+        if is_protected(branch):
+            results['remote_skipped_protected'].append(branch)
+        else:
+            print(f"  Deleting remote {branch}...", file=sys.stderr)
+            if delete_remote_branch(branch, repo_url):
+                results['remote_pruned'].append(branch)
+            else:
+                results['remote_failed'].append(branch)
+
+    # --- Local branch cleanup ---
+    gone_branches = get_local_branches_with_gone_upstream()
+    merged_local = get_merged_local_branches(default_branch)
+    local_with_merged_prs = get_local_branches_with_merged_prs(unmerged_branches)
+
+    local_candidates = list(set(gone_branches + merged_local + local_with_merged_prs))
+
+    for branch in local_candidates:
+        if is_protected(branch):
+            results['local_skipped_protected'].append(branch)
+        elif branch == current_branch:
+            results['local_skipped_current'] = True
+        else:
+            print(f"  Deleting local {branch}...", file=sys.stderr)
+            if delete_local_branch(branch):
+                results['local_pruned'].append(branch)
+            else:
+                results['local_failed'].append(branch)
+
+    # --- dev.yaml association cleanup ---
+    all_deleted = results['remote_pruned'] + results['local_pruned']
+    if all_deleted:
+        results['spec_cleaned'] = cleanup_devyaml_associations(all_deleted)
+
+    # --- Build output message ---
+    msg_parts = []
+
+    if results['remote_pruned']:
+        msg_parts.append(f"[OK] Pruned {len(results['remote_pruned'])} remote branch(es):")
+        for b in results['remote_pruned']:
+            msg_parts.append(f"  - {b}")
+
+    if results['remote_failed']:
+        msg_parts.append(f"\n[!] Failed to delete {len(results['remote_failed'])} remote branch(es):")
+        for b in results['remote_failed']:
+            msg_parts.append(f"  - {b}")
+
+    if results['local_pruned']:
+        msg_parts.append(f"\n[OK] Cleaned up {len(results['local_pruned'])} local branch(es):")
+        for b in results['local_pruned']:
+            msg_parts.append(f"  - {b}")
+
+    if results['local_failed']:
+        msg_parts.append(f"\n[!] Failed to delete {len(results['local_failed'])} local branch(es):")
+        for b in results['local_failed']:
+            msg_parts.append(f"  - {b}")
+
+    all_skipped_protected = list(set(
+        results['remote_skipped_protected'] + results['local_skipped_protected']
+    ))
+    if all_skipped_protected:
+        msg_parts.append(f"\nProtected branches (kept): {', '.join(all_skipped_protected)}")
+
+    if results['local_skipped_current']:
+        msg_parts.append(f"\nSkipped current branch: {current_branch}")
+
+    if results['spec_cleaned']:
+        msg_parts.append(f"\n[OK] Cleaned up {len(results['spec_cleaned'])} dev.yaml association(s)")
+
+    if not results['remote_pruned'] and not results['local_pruned']:
+        if not results['remote_failed'] and not results['local_failed']:
+            msg_parts.append("No merged branches to prune.")
+
+    msg_parts.append("\n[OK] Cleaned up stale tracking refs")
+
+    results['message'] = '\n'.join(msg_parts)
+
+    template = get_template_from_metadata(script_path=__file__)
+    output_result(results, template)
+
+
+if __name__ == "__main__":
+    main()

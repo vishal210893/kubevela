@@ -1,0 +1,58 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Fetch and merge changes from remote"
+# model = "haiku"
+# context = "fork"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/git-pull)"]
+#
+# [tool.claude.output]
+# prompt = "Show what was pulled. Summarize changes (files, insertions, deletions). Note if fast-forward or merge."
+# examples = [
+#   "[OK] Pulled changes from origin/feature\n2 files changed, 15 insertions(+), 3 deletions(-)"
+# ]
+# ///
+
+"""Fetch and merge changes from remote."""
+
+import sys
+import os
+from pathlib import Path
+
+# Load shared library
+_script_dir = Path(__file__).parent
+exec(open(_script_dir / 'lib/gitlib.py').read())
+
+
+def main():
+    # Get repo info
+    repo_url = get_repo_url()
+    branch = get_current_branch()
+
+    # Pull from remote
+    result = run_git(
+        ['pull', repo_url, branch],
+        operation_description="pull changes",
+        context=f"{branch} from remote",
+        capture_output=True
+    )
+
+    # Extract summary from output (last line typically has the summary)
+    output_lines = result.stdout.strip().split('\n')
+    summary = output_lines[-1] if output_lines else "Already up to date"
+
+    # Output result
+    output_data = {
+        "remote": "origin",
+        "branch": branch,
+        "summary": summary
+    }
+
+    template = get_template_from_metadata()
+    output_result(output_data, template)
+
+
+if __name__ == "__main__":
+    main()

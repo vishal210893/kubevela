@@ -1,0 +1,522 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "View or modify statusline configuration"
+# model = "sonnet"
+# context = "fork"
+#
+# [[tool.claude.argument]]
+# name = "set"
+# type = "optional-passthrough"
+# hint = "--set key value"
+# description = "Set a config value (e.g., --set theme dark, --set show-model false)"
+#
+# [[tool.claude.argument]]
+# name = "unset"
+# type = "optional-passthrough"
+# hint = "--unset key"
+# description = "Remove a config value, reverting to default (e.g., --unset show-model)"
+#
+# [tool.claude.output]
+# prompt = "Show current config values or confirm set/unset operation. For show output, display the values list in order; append ' (default)' when source is default so unset settings are visible. If warnings are present, show each warning after the config."
+# examples = [
+#   "Statusline config:\n  theme: dark\n  display-format: compact (default)\n  model-format: compact\n  show-model: true\n  show-profile: true\n  show-profile-version: true (default)\n  show-container-version: true\n  show-claude-code-version: true\n  show-context-percentage: true\n  show-usage: true\n  show-project: true\n  show-context: true\n  show-git-branch: true\n  show-spec: true\n  show-path: true\n  show-path-wsroot-shorthand: true",
+#   "Set theme = dark",
+#   "Unset show-model (reverts to default: true)",
+#   "No statusline config set. All segments use defaults (enabled)."
+# ]
+# ///
+
+"""View or modify statusline configuration stored in dev.yaml under the statusline namespace."""
+
+import json
+import os
+import sys
+
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+from lib.devyaml import get, set as yaml_set, unset as yaml_unset, register_defaults
+
+
+VALID_KEYS = {
+    'theme': 'Color theme: dark or light (default: dark)',
+    'display-format': 'Overall display grammar: compact or full (default: compact). compact renders examples like admin2@27, img101, cc195, ctx35%, and · separators; full uses old version labels and | separators.',
+    'version-format': 'Compatibility alias for display-format when display-format is unset: compact or full (default: compact)',
+    'show-model': 'Show model name, e.g. S46h in compact model format (default: true)',
+    'model-format': 'Model segment format: full or compact (default: compact)',
+    'show-profile': 'Show profile name, e.g. admin2 or admin2@27 with version enabled (default: true)',
+    'show-profile-version': 'Show profile version next to the profile name (default: true)',
+    'show-container-version': 'Show container image version with update indicator, e.g. img101³ (default: true)',
+    'show-claude-code-version': 'Show Claude Code version, e.g. cc195 (default: true)',
+    'show-context-percentage': 'Show context usage, e.g. ctx35% in compact display (default: true)',
+    'show-context-bar': 'Show visual context usage bar with block characters (default: true)',
+    'show-usage': 'Show Anthropic money usage: credit pool and overage spend, e.g. 16%/$1k or $1k · 3%/$300 (default: true)',
+    'show-git-branch': 'Show git branch and status indicator (default: true)',
+    'show-spec': 'Show spec name and arrow before branch (default: true)',
+    'show-project': 'Show spec project name before spec/branch (default: true)',
+    'show-context': 'Show loaded branch contexts before spec/branch (default: true)',
+    'show-path': 'Show working directory path (default: true)',
+    'show-path-wsroot-shorthand': 'Replace $WSROOT with // prefix in path (default: true)',
+    'usage-cache-ttl': 'Seconds to cache API usage data before re-fetching (default: 120)',
+    'usage-threshold-warning': 'Money usage % where the percent turns gold (default: 50)',
+    'usage-threshold-critical': 'Money usage % where the percent turns red (default: 80)',
+    'show-idle': 'Show idle time since the transcript was last written, warning when the prompt cache is likely cold (default: true)',
+    'idle-ttl-seconds': 'Seconds of idle time after which the prompt cache is assumed expired (auto-detected per session from the transcript\'s own cache-write events; set explicitly to override auto-detection)',
+    'idle-warn-percent': 'Percent of idle-ttl-seconds where idle time turns gold as an early warning (default: 80)',
+}
+
+BOOL_KEYS = {
+    'show-model', 'show-profile', 'show-profile-version', 'show-container-version', 'show-claude-code-version',
+    'show-context-percentage', 'show-context-bar', 'show-usage', 'show-project', 'show-context', 'show-git-branch', 'show-spec', 'show-path',
+    'show-path-wsroot-shorthand', 'show-idle',
+}
+
+INT_KEYS = {
+    'usage-cache-ttl': (10, 3600),
+    'usage-threshold-warning': (1, 99),
+    'usage-threshold-critical': (1, 99),
+    'idle-ttl-seconds': (10, 86400),
+    'idle-warn-percent': (1, 100),
+}
+
+DEFAULTS = {
+    'theme': 'dark',
+    'display-format': 'compact',
+    'version-format': 'compact',
+    'model-format': 'compact',
+    'show-model': True,
+    'show-profile': True,
+    'show-profile-version': True,
+    'show-container-version': True,
+    'show-claude-code-version': True,
+    'show-context-percentage': True,
+    'show-context-bar': True,
+    'show-usage': True,
+    'show-git-branch': True,
+    'show-spec': True,
+    'show-project': True,
+    'show-context': True,
+    'show-path': True,
+    'show-path-wsroot-shorthand': True,
+    'usage-cache-ttl': 120,
+    'usage-threshold-warning': 50,
+    'usage-threshold-critical': 80,
+    'show-idle': True,
+    'idle-warn-percent': 80,
+}
+register_defaults('statusline', DEFAULTS)
+
+# idle-ttl-seconds has no static default -- it's auto-detected per session
+# from the transcript (see statusline.py's get_idle_ttl_seconds). Keeping it
+# out of DEFAULTS means it's never materialized into dev.yaml, so its absence
+# there reliably signals "not explicitly overridden" rather than looking
+# identical to a real user override.
+AUTO_DETECTED_KEYS = {
+    'idle-ttl-seconds': 'auto-detected per session from the transcript',
+}
+
+LEGACY_KEYS = {
+    'usage-projection-display': None,
+    'usage-projection-warning': 'usage-threshold-warning',
+    'usage-projection-critical': 'usage-threshold-critical',
+    # Context threshold keys folded into the unified context-colors palette
+    # (the warning/critical pair is just its special case). Surface a migration
+    # warning so a stale dev.yaml value doesn't silently no-op.
+    'context-threshold-warning': 'context-colors',
+    'context-threshold-critical': 'context-colors',
+    'context-threshold-warning-1m': 'context-colors-1m',
+    'context-threshold-critical-1m': 'context-colors-1m',
+    'context-1m-uniform': 'context-colors-1m',
+}
+
+# Keys that were replaced by the context-colors palette (not a simple rename --
+# context-colors is a list of stops, not settable via --set).
+PALETTE_REPLACED_KEYS = frozenset({
+    'context-threshold-warning',
+    'context-threshold-critical',
+    'context-threshold-warning-1m',
+    'context-threshold-critical-1m',
+    'context-1m-uniform',
+})
+
+
+def _parse_typed_value(key, str_value):
+    """Convert string value to proper Python type for dev.yaml storage."""
+    if key in BOOL_KEYS:
+        return str_value.lower() == 'true'
+    if key in INT_KEYS:
+        return int(str_value)
+    return str_value
+
+
+def get_config_value(key):
+    """Read statusline config from dev.yaml."""
+    value = get(f'statusline.{key}')
+    if value is not None:
+        if isinstance(value, bool):
+            return str(value).lower()
+        return str(value) if not isinstance(value, str) else value
+    return None
+
+
+def migrate_threshold_keys():
+    """Auto-migrate old context-threshold-* keys to context-colors palette stops.
+
+    Converts warning/critical threshold pairs to [[W-1, dim], [C, gold], [100, red]]
+    stops and writes context-colors / context-colors-1m only when the result differs
+    from the built-in default (users with stock thresholds just get the old keys
+    removed). Idempotent: no-op when old keys are absent.
+
+    Returns a list of records for reporting, one per migrated group.
+    """
+    DEFAULT_STOPS = [[29, 'dim'], [60, 'gold'], [100, 'red']]
+    DEFAULT_STOPS_1M = [[14, 'dim'], [40, 'gold'], [100, 'red']]
+    records = []
+
+    def _safe_int(val, fallback):
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return fallback
+
+    def _normalize_stops(raw):
+        """Coerce a stored palette (list of [pct, name] or {threshold, color})
+        into plain [[int, str], ...], dropping malformed entries. Returns None
+        when raw is not a usable palette so callers can fall back to a default."""
+        if not isinstance(raw, list):
+            return None
+        out = []
+        for item in raw:
+            if isinstance(item, dict):
+                thr, name = item.get('threshold'), item.get('color')
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                thr, name = item[0], item[1]
+            else:
+                continue
+            try:
+                thr = int(thr)
+            except (TypeError, ValueError):
+                continue
+            if not name:
+                continue
+            out.append([thr, str(name)])
+        return out or None
+
+    # Regular thresholds -> context-colors
+    w_raw = get('statusline.context-threshold-warning')
+    c_raw = get('statusline.context-threshold-critical')
+    if w_raw is not None or c_raw is not None:
+        w = _safe_int(w_raw, 30)
+        c = _safe_int(c_raw, 60)
+        stops = [[w - 1, 'dim'], [c, 'gold'], [100, 'red']]
+        wrote = False
+        if get('statusline.context-colors') is None and stops != DEFAULT_STOPS:
+            yaml_set('statusline.context-colors', stops)
+            wrote = True
+        if w_raw is not None:
+            yaml_unset('statusline.context-threshold-warning')
+        if c_raw is not None:
+            yaml_unset('statusline.context-threshold-critical')
+        note = f"converted to context-colors = {stops}" if wrote else "matched built-in default; old keys removed"
+        records.append({'keys': ['context-threshold-warning', 'context-threshold-critical'], 'note': note})
+
+    # 1M thresholds -> context-colors-1m
+    w1_raw = get('statusline.context-threshold-warning-1m')
+    c1_raw = get('statusline.context-threshold-critical-1m')
+    if w1_raw is not None or c1_raw is not None:
+        w1 = _safe_int(w1_raw, 15)
+        c1 = _safe_int(c1_raw, 40)
+        stops_1m = [[w1 - 1, 'dim'], [c1, 'gold'], [100, 'red']]
+        wrote = False
+        if get('statusline.context-colors-1m') is None and stops_1m != DEFAULT_STOPS_1M:
+            yaml_set('statusline.context-colors-1m', stops_1m)
+            wrote = True
+        if w1_raw is not None:
+            yaml_unset('statusline.context-threshold-warning-1m')
+        if c1_raw is not None:
+            yaml_unset('statusline.context-threshold-critical-1m')
+        note = f"converted to context-colors-1m = {stops_1m}" if wrote else "matched built-in default; old keys removed"
+        records.append({'keys': ['context-threshold-warning-1m', 'context-threshold-critical-1m'], 'note': note})
+
+    # context-1m-uniform: a truthy value meant "1M models use the regular
+    # (uniform) palette, not the earlier-warning 1M defaults". Its palette
+    # equivalent is pinning context-colors-1m to the active base palette
+    # (context-colors if the user set one, else the regular default stops):
+    # that reproduces uniform coloring even when both keys are otherwise
+    # unset, where the built-in fallback would instead be the 1M-specific
+    # DEFAULT_STOPS_1M. A falsy value carried no behavior, so it is just removed.
+    u_raw = get('statusline.context-1m-uniform')
+    if u_raw is not None:
+        truthy = u_raw if isinstance(u_raw, bool) else str(u_raw).strip().lower() in ('true', '1', 'yes', 'on')
+        if truthy and get('statusline.context-colors-1m') is None:
+            base = _normalize_stops(get('statusline.context-colors')) or DEFAULT_STOPS
+            yaml_set('statusline.context-colors-1m', base)
+            note = f"was uniform; pinned context-colors-1m = {base} to preserve 1M coloring"
+        else:
+            note = 'removed (no palette equivalent)'
+        yaml_unset('statusline.context-1m-uniform')
+        records.append({'keys': ['context-1m-uniform'], 'note': note})
+
+    return records
+
+
+def get_legacy_warnings():
+    """Return warnings for stale config keys that are ignored by current code."""
+    warnings = []
+    for legacy_key, replacement in LEGACY_KEYS.items():
+        value = get(f'statusline.{legacy_key}')
+        if value is None:
+            continue
+        if legacy_key in PALETTE_REPLACED_KEYS:
+            replacement_key = LEGACY_KEYS[legacy_key]
+            message = (f"statusline.{legacy_key} was replaced by the {replacement_key} palette; "
+                       f"remove this key from dev.yaml to use built-in defaults")
+        elif replacement:
+            message = f"statusline.{legacy_key} was renamed to statusline.{replacement}; old key is ignored"
+        else:
+            message = f"statusline.{legacy_key} was removed with five-hour usage projection; old key is ignored"
+        warnings.append({
+            'key': legacy_key,
+            'replacement': replacement,
+            'value': str(value) if not isinstance(value, str) else value,
+            'message': message,
+        })
+    return warnings
+
+
+def set_config_value(key, value):
+    """Write statusline config to dev.yaml."""
+    typed = _parse_typed_value(key, value)
+    yaml_set(f'statusline.{key}', typed)
+    return True
+
+
+def unset_config_value(key):
+    """Remove statusline config from dev.yaml."""
+    return yaml_unset(f'statusline.{key}')
+
+
+def parse_args(argv):
+    """Parse command line arguments.
+
+    Returns:
+        tuple: (action, key, value) where action is 'set', 'unset', or 'show'
+    """
+    args = argv[1:]
+
+    if not args:
+        return ('show', None, None)
+
+    if args[0] == '--set':
+        if len(args) < 3:
+            print("Error: --set requires key and value", file=sys.stderr)
+            print("Usage: statusline-config --set <key> <value>", file=sys.stderr)
+            print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+            sys.exit(1)
+        return ('set', args[1], args[2])
+
+    if args[0] == '--unset':
+        if len(args) < 2:
+            print("Error: --unset requires a key", file=sys.stderr)
+            print("Usage: statusline-config --unset <key>", file=sys.stderr)
+            print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+            sys.exit(1)
+        return ('unset', args[1], None)
+
+    print(f"Error: Unknown argument '{args[0]}'", file=sys.stderr)
+    print("Usage: statusline-config [--set key value] [--unset key]", file=sys.stderr)
+    sys.exit(1)
+
+
+def validate_key(key):
+    """Validate that key is a supported config key."""
+    if key in LEGACY_KEYS:
+        if key in PALETTE_REPLACED_KEYS:
+            replacement_key = LEGACY_KEYS[key]
+            print(f"Error: {key} was replaced by the {replacement_key} palette (a list of [upper-pct, color-name] stops); "
+                  f"edit statusline.{replacement_key} in dev.yaml directly", file=sys.stderr)
+        elif LEGACY_KEYS[key]:
+            print(f"Error: {key} was renamed to {LEGACY_KEYS[key]}; old key is ignored", file=sys.stderr)
+        else:
+            print(f"Error: {key} was removed with five-hour usage projection; old key is ignored", file=sys.stderr)
+        sys.exit(1)
+    if key not in VALID_KEYS:
+        print(f"Error: Unknown key '{key}'", file=sys.stderr)
+        print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+        sys.exit(1)
+
+
+def handle_set(key, value):
+    """Handle --set key value."""
+    validate_key(key)
+
+    if key in BOOL_KEYS:
+        if value.lower() not in ('true', 'false'):
+            print(f"Error: {key} must be 'true' or 'false' (got '{value}')", file=sys.stderr)
+            sys.exit(1)
+        value = value.lower()
+    elif key == 'theme':
+        if value.lower() not in ('dark', 'light'):
+            print(f"Error: theme must be 'dark' or 'light' (got '{value}')", file=sys.stderr)
+            sys.exit(1)
+        value = value.lower()
+    elif key in ('display-format', 'version-format', 'model-format'):
+        if value.lower() not in ('full', 'compact'):
+            print(f"Error: {key} must be 'full' or 'compact' (got '{value}')", file=sys.stderr)
+            sys.exit(1)
+        value = value.lower()
+    elif key in INT_KEYS:
+        min_val, max_val = INT_KEYS[key]
+        try:
+            int_value = int(value)
+            if not (min_val <= int_value <= max_val):
+                raise ValueError
+        except ValueError:
+            print(f"Error: {key} must be an integer between {min_val} and {max_val} (got '{value}')", file=sys.stderr)
+            sys.exit(1)
+        # Cross-validate warning < critical
+        def _safe_int(raw, default):
+            try:
+                return int(raw) if raw else default
+            except (ValueError, TypeError):
+                return default
+
+        if key == 'usage-threshold-warning':
+            critical_val = _safe_int(get_config_value('usage-threshold-critical'), 80)
+            if int_value >= critical_val:
+                print(f"Error: Spend warning threshold ({int_value}) must be less than spend critical threshold ({critical_val})", file=sys.stderr)
+                sys.exit(1)
+        elif key == 'usage-threshold-critical':
+            warning_val = _safe_int(get_config_value('usage-threshold-warning'), 50)
+            if int_value <= warning_val:
+                print(f"Error: Spend critical threshold ({int_value}) must be greater than spend warning threshold ({warning_val})", file=sys.stderr)
+                sys.exit(1)
+        value = str(int_value)
+
+    success = set_config_value(key, value)
+
+    if not success:
+        print(f"Error: Failed to set statusline.{key}", file=sys.stderr)
+        sys.exit(1)
+
+    data = {
+        'action': 'set',
+        'key': key,
+        'config_key': f'statusline.{key}',
+        'value': value
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Set {key} = {value}")
+
+
+def handle_unset(key):
+    """Handle --unset key."""
+    validate_key(key)
+
+    success = unset_config_value(key)
+
+    if not success:
+        data = {
+            'action': 'unset',
+            'key': key,
+            'config_key': f'statusline.{key}',
+            'was_set': False
+        }
+        if os.getenv('CC') == '1':
+            print(json.dumps(data))
+        else:
+            print(f"Key '{key}' was not set (nothing to remove)")
+        return
+
+    data = {
+        'action': 'unset',
+        'key': key,
+        'config_key': f'statusline.{key}',
+        'was_set': True
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Removed {key} (reverts to default)")
+
+
+def _default_display(key, defaults):
+    """Return the display string for a key's non-explicit value.
+
+    Most keys have a static default in DEFAULTS. idle-ttl-seconds instead has
+    no static default -- it's auto-detected per session from the transcript --
+    so it gets a descriptive label instead of a fixed number.
+    """
+    if key in AUTO_DETECTED_KEYS:
+        return AUTO_DETECTED_KEYS[key]
+    return defaults[key]
+
+
+def handle_show():
+    """Handle display of current config (no args)."""
+    config = {}
+    for key in VALID_KEYS:
+        value = get_config_value(key)
+        if value is not None:
+            config[key] = value
+
+    defaults = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in DEFAULTS.items()}
+    values = []
+    for key in sorted(VALID_KEYS.keys()):
+        explicit = key in config
+        # `value` stays reserved for a real, parseable setting (or None when
+        # there isn't one yet) so a programmatic consumer never has to guess
+        # whether it got a number/bool or a prose sentence; `display` is
+        # always the human-readable string shown in text-mode output.
+        value = config[key] if explicit else (None if key in AUTO_DETECTED_KEYS else defaults[key])
+        values.append({
+            'key': key,
+            'value': value,
+            'display': config[key] if explicit else _default_display(key, defaults),
+            'source': 'explicit' if explicit else ('auto' if key in AUTO_DETECTED_KEYS else 'default'),
+            'is_default': not explicit,
+        })
+
+    warnings = get_legacy_warnings()
+    data = {'action': 'show', 'config': config, 'defaults': defaults, 'values': values, 'warnings': warnings}
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print("Statusline config:")
+        for key in sorted(VALID_KEYS.keys()):
+            if key in config:
+                print(f"  {key}: {config[key]}")
+            elif key in AUTO_DETECTED_KEYS:
+                print(f"  {key}: {AUTO_DETECTED_KEYS[key]}")
+            else:
+                print(f"  {key}: {defaults[key]} (default)")
+        for warning in warnings:
+            print(f"Warning: {warning['message']}")
+
+
+def main():
+    """Main entry point."""
+    action, key, value = parse_args(sys.argv)
+
+    for m in migrate_threshold_keys():
+        keys = ', '.join(f'statusline.{k}' for k in m['keys'])
+        print(f"Migrated: {keys}: {m['note']}", file=sys.stderr)
+
+    if action == 'set':
+        handle_set(key, value)
+    elif action == 'unset':
+        handle_unset(key)
+    else:
+        handle_show()
+
+
+if __name__ == "__main__":
+    main()

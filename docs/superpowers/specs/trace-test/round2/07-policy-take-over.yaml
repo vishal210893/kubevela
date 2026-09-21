@@ -1,0 +1,21 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: pol-takeover
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-takeover-fixed
+spec:
+  components:
+    - name: takeover-web
+      type: webservice
+      properties:
+        image: nginx:1.21
+  policies:
+    - name: take-existing
+      type: take-over
+      properties:
+        rules:
+          - selector:
+              resourceTypes:
+                - Deployment

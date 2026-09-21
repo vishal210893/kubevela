@@ -1,0 +1,22 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: tf-omit
+  namespace: default
+spec:
+  components:
+    - name: tf-omit
+      type: tf-fake
+      properties: {}
+---
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: tf-explicit
+  namespace: default
+spec:
+  components:
+    - name: tf-explicit
+      type: tf-fake
+      properties:
+        deleteResource: true

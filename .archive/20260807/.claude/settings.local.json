@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(docker network *)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "confluence",
+    "jira",
+    "devassistant",
+    "figma",
+    "github",
+    "guidewire-docs",
+    "guidewire-docs-staging",
+    "jutro-developer-assistant"
+  ]
+}

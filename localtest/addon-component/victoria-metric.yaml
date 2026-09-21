@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-victoria-metric
+  namespace: vela-system
+spec:
+  components:
+    - name: victoria-metric
+      type: addon
+      properties:
+        skipVersionValidation: true

@@ -1,0 +1,104 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Merge latest default branch into current branch"
+# model = "haiku"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/branch-update)"]
+#
+# [tool.claude.output]
+# prompt = "Confirm merge of default branch succeeded. Show how many commits are ahead of default branch."
+# examples = [
+#   "[OK] Merged origin/{default_branch} into 'feature-auth'\n5 commits ahead"
+# ]
+# ///
+"""Merge latest default branch into current branch."""
+import sys
+import os
+from pathlib import Path
+
+# Add bin directory to path to import gitlib
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    get_current_branch,
+    get_default_branch,
+    get_repo_url,
+    run_git,
+    output_result,
+    get_template_from_metadata
+)
+
+
+def main():
+    """
+    Merge latest default branch into current branch.
+
+    Idempotent: Yes (safe to run multiple times)
+    Worktree Constraints: None
+    """
+    # Get current branch
+    branch = get_current_branch()
+    default_branch = get_default_branch()
+    repo_url = get_repo_url()
+
+    # Don't merge default branch into itself
+    if branch == default_branch:
+        print(f"Already on {default_branch}, nothing to merge.")
+        sys.exit(0)
+
+    # Fetch latest default branch
+    run_git(
+        ['fetch', repo_url, default_branch],
+        operation_description=f"fetch latest {default_branch}"
+    )
+
+    # Check if already up to date
+    result = run_git(
+        ['rev-list', '--count', f'HEAD..origin/{default_branch}'],
+        operation_description="check for new commits",
+        capture_output=True
+    )
+    incoming_commits = int(result.stdout.strip())
+
+    if incoming_commits == 0:
+        # Count commits ahead for output
+        result = run_git(
+            ['rev-list', '--count', f'origin/{default_branch}..HEAD'],
+            capture_output=True
+        )
+        commits_ahead = result.stdout.strip()
+        print(f"[OK] Already up to date with origin/{default_branch} ({commits_ahead} commits ahead)")
+        sys.exit(0)
+
+    # Merge default branch into current branch
+    run_git(
+        ['merge', f'origin/{default_branch}', '--no-edit'],
+        operation_description=f"merge {default_branch}",
+        context=branch
+    )
+
+    # Count commits ahead
+    result = run_git(
+        ['rev-list', '--count', f'origin/{default_branch}..HEAD'],
+        operation_description="count commits ahead",
+        capture_output=True
+    )
+    commits_ahead = result.stdout.strip()
+
+    # Output result
+    output_data = {
+        "branch": branch,
+        "base": f"origin/{default_branch}",
+        "incoming": str(incoming_commits),
+        "ahead": commits_ahead,
+        "message": f"[OK] Merged origin/{default_branch} into '{branch}' ({incoming_commits} commits merged, {commits_ahead} commits ahead)"
+    }
+    template = get_template_from_metadata()
+    output_result(output_data, template)
+
+
+if __name__ == "__main__":
+    main()

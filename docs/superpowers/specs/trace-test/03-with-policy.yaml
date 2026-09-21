@@ -1,0 +1,23 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: trace-with-policy
+  namespace: trace-test
+spec:
+  components:
+    - name: policy-web
+      type: webservice
+      properties:
+        image: nginx:1.21
+  policies:
+    - name: gc-policy
+      type: garbage-collect
+      properties:
+        keepLegacyResource: true
+    - name: shared-resource
+      type: shared-resource
+      properties:
+        rules:
+          - selector:
+              resourceTypes:
+                - ConfigMap

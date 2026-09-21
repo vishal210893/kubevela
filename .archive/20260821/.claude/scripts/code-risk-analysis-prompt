@@ -1,0 +1,64 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""
+code-risk-analysis-prompt - Render the PR risk analysis prompt template.
+
+Reads the code-risk-analysis-prompt.md template from the sibling files/
+directory and substitutes placeholders with values from environment
+variables.  Prints the rendered prompt to stdout for use as the
+direct_prompt in the harness-code-risk.yaml workflow.
+
+Environment variables:
+    PR_NUMBER      - Pull request number
+    REPO           - Repository in owner/name format
+    CRITICAL_FILES - Newline-separated list of critical-risk file paths
+    HIGH_FILES     - Newline-separated list of high-risk file paths
+    MEDIUM_FILES   - Newline-separated list of medium-risk file paths
+
+Usage:
+    PR_NUMBER=42 REPO=org/repo CRITICAL_FILES=src/main.py \\
+        uv run --quiet --script code-risk-analysis-prompt
+"""
+
+import os
+import sys
+from pathlib import Path
+
+
+def main():
+    # Locate the template relative to this script
+    script_dir = Path(__file__).resolve().parent
+    template_path = script_dir / ".." / "files" / "code-risk-analysis-prompt.md"
+    template_path = template_path.resolve()
+
+    if not template_path.exists():
+        print(
+            f"Error: template not found at {template_path}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    template = template_path.read_text()
+
+    # Map of placeholder -> env var name
+    placeholders = {
+        "{{PR_NUMBER}}": "PR_NUMBER",
+        "{{REPO}}": "REPO",
+        "{{CRITICAL_FILES}}": "CRITICAL_FILES",
+        "{{HIGH_FILES}}": "HIGH_FILES",
+        "{{MEDIUM_FILES}}": "MEDIUM_FILES",
+    }
+
+    rendered = template
+    for placeholder, env_var in placeholders.items():
+        value = os.environ.get(env_var, "")
+        rendered = rendered.replace(placeholder, value)
+
+    print(rendered)
+
+
+if __name__ == "__main__":
+    main()

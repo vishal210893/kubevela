@@ -1,0 +1,153 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Clean up orphaned spec-branch associations"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-prune)"]
+#
+# [tool.claude.output]
+# prompt = "Show which associations were kept vs removed. Display summary with counts."
+# examples = [
+#   "Checking spec-branch associations...\n\nFound 3 associations:\n  [OK] feature-auth -> feature-auth (branch exists)\n  [--] old-branch -> old-spec (branch deleted)\n\nRemoved 1 orphaned association\nKept 1 association"
+# ]
+# ///
+
+"""
+Clean up orphaned spec-branch associations from dev.yaml.
+
+Finds spec-branch association entries in dev.yaml where the branch
+no longer exists (neither locally nor on remote) and removes them.
+"""
+
+import subprocess
+import sys
+import os
+import json
+from pathlib import Path
+from typing import Set, List, Tuple
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import get_all_associations, get_repo_name
+
+# Import devyaml for direct dev.yaml manipulation
+_lib = str(Path(__file__).parent / 'lib')
+if _lib not in sys.path:
+    sys.path.insert(0, _lib)
+from devyaml import read_config, unset as yaml_unset
+
+
+def get_existing_branches() -> Set[str]:
+    """Get all existing branches (local and remote)."""
+    branches = set()
+
+    try:
+        output = subprocess.check_output(
+            ['git', 'branch', '--format=%(refname:short)'],
+            text=True,
+            stderr=subprocess.DEVNULL
+        )
+        branches.update(output.strip().split('\n'))
+    except subprocess.CalledProcessError:
+        pass
+
+    try:
+        output = subprocess.check_output(
+            ['git', 'branch', '-r', '--format=%(refname:short)'],
+            text=True,
+            stderr=subprocess.DEVNULL
+        )
+        remote_branches = [b.split('/', 1)[-1] for b in output.strip().split('\n') if '/' in b]
+        branches.update(remote_branches)
+    except subprocess.CalledProcessError:
+        pass
+
+    branches.discard('')
+    return branches
+
+
+def remove_branch_association_from_devyaml(branch: str) -> None:
+    """Remove the entire branch entry from dev.yaml spec section."""
+    repo = get_repo_name()
+    if not repo:
+        return
+    # Remove spec association
+    yaml_unset(f'spec.{repo}.branches.{branch}.spec')
+    # Also remove ctx and project if present
+    yaml_unset(f'spec.{repo}.branches.{branch}.ctx')
+    yaml_unset(f'spec.{repo}.branches.{branch}.project')
+    # If branch entry is now empty, remove the branch key itself
+    config = read_config()
+    branch_data = (config.get('spec', {})
+                         .get(repo, {})
+                         .get('branches', {})
+                         .get(branch, {}))
+    if not branch_data:
+        yaml_unset(f'spec.{repo}.branches.{branch}')
+
+
+def main():
+    """Main function."""
+    try:
+        subprocess.check_call(
+            ['git', 'rev-parse', '--git-dir'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+    except subprocess.CalledProcessError:
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    associations = get_all_associations()
+    existing_branches = get_existing_branches()
+
+    kept: List[Tuple[str, str]] = []
+    orphaned: List[Tuple[str, str]] = []
+
+    for branch, spec in associations.items():
+        if branch in existing_branches:
+            kept.append((branch, spec))
+        else:
+            orphaned.append((branch, spec))
+
+    # Remove orphaned
+    removed = []
+    for branch, spec in orphaned:
+        # Remove from dev.yaml (spec, ctx, project, and empty branch key)
+        remove_branch_association_from_devyaml(branch)
+        removed.append((branch, spec))
+
+    data = {
+        'total': len(associations),
+        'kept': [{'branch': b, 'spec': s} for b, s in kept],
+        'removed': [{'branch': b, 'spec': s} for b, s in removed]
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if not associations:
+            print("No spec-branch associations found.")
+            return
+
+        print("Checking spec-branch associations...")
+        print()
+        print(f"Found {len(associations)} association(s):")
+
+        for branch, spec in kept:
+            print(f"  [OK] {branch} -> {spec} (branch exists)")
+
+        for branch, spec in orphaned:
+            print(f"  [RM] {branch} -> {spec} (branch deleted)")
+
+        if removed:
+            print()
+            print(f"Removed {len(removed)} orphaned association(s)")
+
+        print(f"Kept {len(kept)} association(s)")
+
+
+if __name__ == '__main__':
+    main()

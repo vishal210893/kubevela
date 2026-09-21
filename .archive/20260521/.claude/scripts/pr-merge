@@ -1,0 +1,204 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Merge PR with cleanup"
+# model = "sonnet"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/pr-merge:*)"]
+#
+# [[tool.claude.argument]]
+# name = "pr-number"
+# type = "optional-passthrough"
+# hint = "[pr-number]"
+# description = "PR number (defaults to current branch's PR)"
+#
+# [[tool.claude.argument]]
+# name = "admin"
+# type = "optional-passthrough"
+# hint = "[--admin]"
+# description = "Bypass PR requirements (requires admin permissions)"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "no-squash"
+# type = "optional-passthrough"
+# hint = "[--no-squash]"
+# description = "Use regular merge instead of squash merge"
+# flag = true
+#
+# [tool.claude.output]
+# prompt = "Confirm merge. Show merge type, cleanup actions. Note if branch was updated before merge and if default branch was updated."
+# examples = [
+#   "[OK] Merged PR #123\nSquash merged (commits combined)\n[OK] Deleted remote branch\n[OK] Updated local {default_branch}",
+#   "[OK] Merged PR #123\n⚠ Branch was behind - updated before merge\nSquash merged (commits combined)\n[OK] Deleted remote branch\n[OK] Updated local {default_branch}"
+# ]
+# ///
+
+import sys
+import os
+import argparse
+import subprocess
+import json
+
+# Import gitlib
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.gitlib import (
+    get_current_branch, get_repo_url, get_repo_root, run_git,
+    error, output_result, get_template_from_metadata,
+    branch_exists, has_uncommitted_changes, get_default_branch
+)
+
+
+def get_commit_count(pr_number):
+    """Get number of commits in a PR."""
+    result = subprocess.run(
+        ['gh', 'pr', 'view', str(pr_number), '--json', 'commits', '-q', '.commits | length'],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        try:
+            return int(result.stdout.strip())
+        except:
+            return None
+    return None
+
+
+def get_pr_mergeable_state(pr_number):
+    """Get the mergeable state of a PR."""
+    result = subprocess.run(
+        ['gh', 'pr', 'view', str(pr_number), '--json', 'mergeStateStatus', '-q', '.mergeStateStatus'],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    return None
+
+
+def update_pr_branch(pr_number):
+    """Update PR branch with latest changes from base branch using GitHub API."""
+    # Get repo info
+    result = subprocess.run(
+        ['gh', 'repo', 'view', '--json', 'owner,name', '-q', '.owner.login + "/" + .name'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return False, "Failed to get repo info"
+
+    repo = result.stdout.strip()
+
+    # Update branch via GitHub API
+    result = subprocess.run(
+        ['gh', 'api', '-X', 'PUT', f'repos/{repo}/pulls/{pr_number}/update-branch'],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        return False, result.stderr.strip()
+
+    return True, "Branch updated"
+
+
+def update_local_main(repo_url, current_branch, default_branch):
+    """Update local default branch after merge."""
+    # Check if default branch has uncommitted changes
+    if has_uncommitted_changes():
+        error("Working directory has uncommitted changes")
+        print("Commit or stash changes before proceeding", file=sys.stderr)
+        sys.exit(1)
+
+    # Switch to default branch and pull
+    run_git(['checkout', default_branch], operation_description=f"switch to {default_branch}")
+    run_git(['pull', repo_url, default_branch], operation_description=f"pull latest {default_branch}")
+
+    # Switch back to original branch if it still exists
+    if current_branch != default_branch and branch_exists(current_branch):
+        run_git(['checkout', current_branch], operation_description="switch back to original branch")
+
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Merge PR with cleanup')
+    parser.add_argument('pr_number', nargs='?', help='PR number (defaults to current branch)')
+    parser.add_argument('--admin', action='store_true',
+                       help='Bypass PR requirements (requires admin permissions)')
+    parser.add_argument('--no-squash', action='store_true',
+                       help='Use regular merge instead of squash merge')
+    args = parser.parse_args()
+
+    default_branch = get_default_branch()
+    repo_url = get_repo_url()
+    current_branch = get_current_branch()
+
+    # Determine PR number (use arg or infer from current branch)
+    pr_number = args.pr_number
+    if not pr_number:
+        # Get PR number from current branch
+        result = subprocess.run(
+            ['gh', 'pr', 'view', '--json', 'number', '-q', '.number'],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            error("No PR found for current branch")
+            sys.exit(1)
+        pr_number = result.stdout.strip()
+
+    # Get commit count for merge type message
+    commit_count = get_commit_count(pr_number)
+
+    # Check if PR branch is behind base and needs updating
+    mergeable_state = get_pr_mergeable_state(pr_number)
+    branch_updated = False
+
+    if mergeable_state == 'BEHIND':
+        print(f"PR branch is behind base branch, updating...", file=sys.stderr)
+        success, message = update_pr_branch(pr_number)
+        if not success:
+            error(f"Failed to update PR branch: {message}")
+            print("Please rebase manually and push before merging", file=sys.stderr)
+            sys.exit(1)
+        branch_updated = True
+        # Give GitHub a moment to process the update
+        import time
+        time.sleep(2)
+
+    # Build gh pr merge command
+    gh_cmd = ['gh', 'pr', 'merge', pr_number, '--delete-branch']
+
+    # Choose merge strategy
+    if args.no_squash:
+        gh_cmd.append('--merge')
+        if commit_count:
+            merge_type = f"Regular merge (preserved {commit_count} commits)"
+        else:
+            merge_type = "Regular merge"
+    else:
+        gh_cmd.append('--squash')
+        merge_type = "Squash merged (commits combined into one)"
+
+    if args.admin:
+        gh_cmd.append('--admin')
+
+    # Merge the PR
+    result = subprocess.run(gh_cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        error(f"Failed to merge PR #{pr_number}", command=gh_cmd, stderr_output=result.stderr)
+        sys.exit(result.returncode)
+
+    # Update local default branch
+    update_local_main(repo_url, current_branch, default_branch)
+
+    # Output result
+    data = {
+        "pr_number": int(pr_number),
+        "merge_type": merge_type,
+        "branch_updated": branch_updated
+    }
+
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

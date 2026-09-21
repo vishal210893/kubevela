@@ -1,0 +1,95 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""
+code-risk-reclassify-all - Trigger risk reclassification for all open PRs.
+
+Lists all open non-draft PRs in the current repository and triggers the
+pr.yaml workflow for each one.
+
+Environment variables:
+    GH_TOKEN        - GitHub token for API access (required by gh CLI)
+    WORKFLOW_FILE   - Workflow filename (default: pr.yaml)
+    WORKFLOW_REF    - Git ref for workflow dispatch (default: main)
+
+Usage:
+    uv run --quiet --script code-risk-reclassify-all
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+
+def run_gh(args, check=True):
+    """Run a gh CLI command and return (returncode, stdout)."""
+    result = subprocess.run(
+        ["gh"] + args,
+        capture_output=True,
+        text=True,
+    )
+    if check and result.returncode != 0:
+        print(f"[WARN] gh {' '.join(args)}: {result.stderr.strip()}", file=sys.stderr)
+    return result.returncode, result.stdout.strip()
+
+
+def list_open_pr_numbers():
+    """List PR numbers for all open non-draft PRs."""
+    _, raw = run_gh([
+        "pr", "list", "--state", "open",
+        "--json", "number,isDraft",
+        "-q", ".[] | select(.isDraft == false) | .number",
+    ])
+    if not raw:
+        return []
+    return [n.strip() for n in raw.splitlines() if n.strip()]
+
+
+def trigger_workflow(pr_number, workflow_file, workflow_ref):
+    """Trigger the risk workflow for a single PR. Returns True on success."""
+    rc, _ = run_gh([
+        "workflow", "run", workflow_file,
+        "--ref", workflow_ref,
+        "-f", f"pr_number={pr_number}",
+    ], check=False)
+    return rc == 0
+
+
+def main():
+    workflow_file = os.environ.get("WORKFLOW_FILE", "pr.yaml")
+    workflow_ref = os.environ.get("WORKFLOW_REF", "main")
+
+    pr_numbers = list_open_pr_numbers()
+
+    if not pr_numbers:
+        print("No open non-draft PRs found.")
+        return
+
+    total = 0
+    triggered = 0
+    failed = 0
+
+    for num in pr_numbers:
+        total += 1
+        if trigger_workflow(num, workflow_file, workflow_ref):
+            print(f"[OK] Triggered for PR #{num}")
+            triggered += 1
+        else:
+            print(f"[FAIL] PR #{num}")
+            failed += 1
+
+    print("")
+    print("=== Summary ===")
+    print(f"Total open non-draft PRs: {total}")
+    print(f"Triggered: {triggered}")
+    print(f"Failed: {failed}")
+
+    if failed > 0:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

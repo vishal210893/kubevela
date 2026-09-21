@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-cloudshell
+  namespace: vela-system
+spec:
+  components:
+    - name: cloudshell
+      type: addon
+      properties:
+        skipVersionValidation: true

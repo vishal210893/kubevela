@@ -1,0 +1,210 @@
+# Reproducible fixture for the Vela Config controller audit.
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-basic
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-basic
+    namespace: cfg-audit-7105
+  alias: Basic instance
+  description: Inline property audit
+  properties:
+    username: alice
+    count: 3
+    enabled: true
+    nested:
+      message: "line one\nline two ✓"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: audit-input
+  namespace: cfg-audit-7105
+type: Opaque
+stringData:
+  custom.json: '{"username":"bob","greeting":"hola","count":7,"enabled":false}'
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-basic-defaults
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-basic
+    namespace: cfg-audit-7105
+  properties:
+    username: carol
+    nested:
+      message: "quotes: \"hello\"; unicode: नमस्ते; line one\nline two"
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-from-secret
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-basic
+    namespace: cfg-audit-7105
+  propertiesFrom:
+    secretRef:
+      name: audit-input
+      key: custom.json
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-freeform
+  namespace: cfg-audit-7105
+spec:
+  properties:
+    arbitrary: value
+    nested:
+      enabled: true
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-legacy
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-legacy
+    namespace: cfg-audit-7105
+  properties:
+    value: works
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-missing-template
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: appears-later
+    namespace: cfg-audit-7105
+  properties:
+    value: recover
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-invalid-dependent
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: appears-later
+    namespace: cfg-audit-7105
+  properties:
+    value: fixed-later
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-sensitive-inline
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-sensitive
+    namespace: cfg-audit-7105
+  properties:
+    token: placeholder-not-a-real-secret
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: audit-token-input
+  namespace: cfg-audit-7105
+type: Opaque
+stringData:
+  properties: '{"token":"from-input-two"}'
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-sensitive-from-secret
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-sensitive
+    namespace: cfg-audit-7105
+  propertiesFrom:
+    secretRef:
+      name: audit-token-input
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-renamed
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-renamed-output
+    namespace: cfg-audit-7105
+  properties:
+    suffix: two
+    value: second
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-outputs
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-outputs
+    namespace: cfg-audit-7105
+  properties:
+    value: primary-and-extra
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-no-output
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-no-output
+    namespace: cfg-audit-7105
+  properties:
+    value: retained-as-input-properties
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-non-secret-output
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-non-secret-output
+    namespace: cfg-audit-7105
+  properties:
+    value: invalid-output-kind
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-validation-fail
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-validation
+    namespace: cfg-audit-7105
+  properties:
+    value: forbidden
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-both-sources
+  namespace: cfg-audit-7105
+spec:
+  properties:
+    value: inline
+  propertiesFrom:
+    secretRef:
+      name: audit-input
+      key: custom.json

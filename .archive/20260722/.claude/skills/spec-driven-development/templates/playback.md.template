@@ -1,0 +1,85 @@
+# {{FEATURE_NAME}} Playback Narrative
+
+{{BRIEF_DESCRIPTION}}
+
+---
+
+## Overview
+
+{{OVERVIEW_PARAGRAPH}}
+
+Key value delivered:
+- **For {{PRIMARY_PERSONA_GROUP}}**: {{PRIMARY_VALUE}}
+- **For {{SECONDARY_PERSONA_GROUP}}**: {{SECONDARY_VALUE}}
+
+---
+
+## Context
+
+{{CONTEXT_DESCRIPTION}}
+
+Key concepts and assumptions for this playback:
+- {{CONTEXT_ITEM_1}}
+- {{CONTEXT_ITEM_2}}
+- {{CONTEXT_ITEM_3}}
+
+---
+
+## Personas
+
+**{{PERSONA_1_NAME}}** -- {{PERSONA_1_DESCRIPTION}}
+
+**{{PERSONA_2_NAME}}** -- {{PERSONA_2_DESCRIPTION}}
+
+---
+
+## Narrative 1: {{NARRATIVE_1_NAME}}
+
+**{{NARRATIVE_1_PERSONA}}**: {{NARRATIVE_1_PERSONA_DESCRIPTION}}
+
+1. **{{STEP_1_NAME}}**
+   - {{STEP_1_ACTION_1}}
+   - {{STEP_1_ACTION_2}}
+   - {{STEP_1_ACTION_3}}
+
+2. **{{STEP_2_NAME}}**
+   - {{STEP_2_ACTION_1}}
+   - {{STEP_2_ACTION_2}}
+   - {{STEP_2_ACTION_3}}
+
+3. **{{STEP_3_NAME}}**
+   - {{STEP_3_ACTION_1}}
+   - {{STEP_3_ACTION_2}}
+   - {{STEP_3_ACTION_3}}
+
+4. **{{STEP_4_NAME}}**
+   - {{STEP_4_ACTION_1}}
+   - {{STEP_4_ACTION_2}}
+   - {{STEP_4_ACTION_3}}
+
+---
+
+## Narrative 2: {{NARRATIVE_2_NAME}}
+
+**{{NARRATIVE_2_PERSONA}}**: {{NARRATIVE_2_PERSONA_DESCRIPTION}}
+
+1. **{{STEP_1_NAME}}**
+   - {{STEP_1_ACTION_1}}
+   - {{STEP_1_ACTION_2}}
+   - {{STEP_1_ACTION_3}}
+
+2. **{{STEP_2_NAME}}**
+   - {{STEP_2_ACTION_1}}
+   - {{STEP_2_ACTION_2}}
+   - {{STEP_2_ACTION_3}}
+
+3. **{{STEP_3_NAME}}**
+   - {{STEP_3_ACTION_1}}
+   - {{STEP_3_ACTION_2}}
+   - {{STEP_3_ACTION_3}}
+
+---
+
+## Notes
+
+{{ADDITIONAL_NOTES_CONSTRAINTS_OR_CONSIDERATIONS}}

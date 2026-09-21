@@ -1,0 +1,48 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: kube-worker
+  namespace: default
+spec:
+  workload: 
+    definition: 
+      apiVersion: apps/v1
+      kind: Deployment
+  schematic:
+    cue:
+      template: |
+        output: {
+          apiVersion: "apps/v1"
+          kind:       "Deployment"
+          spec: {
+            selector: {
+              matchLabels: {
+                app: "nginx"
+              }
+            }
+            template: {
+              metadata: {
+                labels: {
+                  app: "nginx"
+                }
+              }
+              spec: {
+                containers: [
+                  {
+                    name: "nginx"
+                    image: parameter.image
+                    ports: [
+                      {
+                        containerPort: 80
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+        outputs: {}
+        parameter: {
+          "image": string
+        }

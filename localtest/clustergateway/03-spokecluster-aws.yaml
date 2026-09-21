@@ -1,0 +1,17 @@
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: cgspoke1
+  namespace: vela-system
+spec:
+  mode: connect
+  credential:
+    type: aws
+    aws:
+      authMode: podIdentity
+      clusterName: atmos-scratch-cgspoke
+      region: us-west-2
+      roleArn: arn:aws:iam::776719623202:role/oam-sc-cgspoke-scoped
+  probeIntervalSeconds: 10
+  probeTimeoutSeconds: 10
+  deletionPolicy: detach

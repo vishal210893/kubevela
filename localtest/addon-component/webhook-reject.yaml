@@ -1,0 +1,16 @@
+# Webhook test: an addon component WITHOUT skipVersionValidation, so the Application
+# validating webhook runs the addon compatibility check at admission.
+# The check resolves the addon's SystemRequirements from the registry and, if the
+# running environment does not satisfy them, DENIES the apply (the Application is
+# never created). skipVersionValidation is intentionally omitted here.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-fluxcd-webhook
+  namespace: vela-system
+spec:
+  components:
+    - name: fluxcd
+      type: addon
+      properties:
+        version: "3.0.2"

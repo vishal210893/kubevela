@@ -56,6 +56,40 @@ type ScopedReader interface {
 	ListAddonMetaFor(name string) (SourceMeta, error)
 }
 
+// ContentRevisionReader is an AsyncReader that can name the revision of each
+// package's own content, rather than of the source as a whole.
+//
+// This is a different question from RevisionReader's. Revision answers "may I
+// keep what I read", so it has to be usable as a read pin and errs towards
+// reporting a move: git reports the repository's head, and a commit touching
+// any package moves it for every package. That is safe for a cache and far too
+// blunt for deciding whose Application to re-run, which is what this answers.
+//
+// The whole map is returned rather than one package's entry because a source
+// can usually produce all of them for what one would cost: a git registry
+// lists its directory once and reads the tree SHA off each entry. Revisions
+// here are compared for equality only and are not read pins.
+type ContentRevisionReader interface {
+	PackageContentRevisions(ctx context.Context, lastKnown ContentRevisionSet) (ContentRevisionSet, error)
+}
+
+// ContentRevisionSet is every package in one source mapped to its content
+// revision, together with an opaque token for revalidating the whole set.
+//
+// The token matters more than it looks. This probe runs on every reconcile of
+// every Application naming a package, and an Application reconciles on its own
+// schedule, so throttling alone leaves the cost growing with the number of
+// Applications. Handing the token back lets the source answer "unchanged"
+// without sending the set again: for GitHub that is an ETag and a 304, which
+// does not count against the rate limit at all. Steady state then costs
+// nothing however many Applications ask and however often.
+//
+// A source that cannot revalidate leaves Token empty and is simply re-read.
+type ContentRevisionSet struct {
+	Token     string
+	Revisions map[string]string
+}
+
 // CredentialDigest is a short, stable fingerprint of a secret, for use in a
 // cache key or a gate key. It exists so that rotating a token invalidates what
 // the old one could see, and so two credentials on one source can be told

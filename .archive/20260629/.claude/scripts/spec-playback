@@ -1,0 +1,121 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Generate or refine playback narratives document"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-playback)", "Read", "Write"]
+#
+# [tool.claude.output]
+# prompt = """Based on the script output, generate or refine the playback.md at the spec path.
+#
+# Read requirements.md, design.md, and tasks.md first if they exist to inform the narratives.
+# If playback.md exists (existing_content provided), refine and expand it.
+# If it doesn't exist, generate a new one.
+#
+# Generate persona-based step-by-step narratives showing how the feature plays out end-to-end.
+#
+# Document structure (in order):
+#
+# # [Feature Name] Playback Narrative
+# [1-2 sentence summary of what this playback demonstrates]
+#
+# ## Overview
+# [2-3 paragraphs describing the feature, what it enables, and the key scenarios this playback covers]
+# Key value delivered:
+# - **For [Primary Persona Group]**: [Value they get]
+# - **For [Secondary Persona Group]**: [Value they get]
+#
+# ## Context
+# [Technical/business context that applies to all narratives - relevant system state, configuration, assumptions]
+# Key concepts and assumptions:
+# - [Item 1]
+# - [Item 2]
+#
+# ## Personas
+# **[Persona Name]** -- [One sentence describing who they are and their goal in this context]
+# **[Persona Name]** -- [One sentence describing who they are and their goal in this context]
+#
+# ## Narrative 1: [Descriptive Name]
+# **[Persona Name]**: [Brief statement of who performs these steps and why]
+# 1. **[Phase Name]**
+#    - [Specific action with tool/UI/system name in bold]
+#    - [Specific action]
+#    - [Specific action]
+# 2. **[Phase Name]**
+#    - [Specific action]
+# ...
+#
+# ## Narrative 2: [Descriptive Name]
+# [Same structure]
+#
+# ## Notes
+# [Constraints, edge cases, or important clarifications]
+#
+# Style guidance:
+# - Each narrative should have a distinct persona performing it
+# - Steps are numbered phases with bold headers; sub-actions are nested bullets
+# - Actions are specific and concrete (name the UI, tool, command, or API involved)
+# - Bold key names, versions, or identifiers within step descriptions
+# - 2+ narratives minimum; add Narrative 1a/1b sub-sections for complex flows with multiple sub-scenarios
+#
+# After writing/updating, list the personas and narratives covered."""
+# examples = [
+#   "[OK] Created playback.md for spec 'feature-auth'\n\nPersonas:\n  - Developer (builds and publishes)\n  - Admin (deploys and activates)\n\nNarratives:\n  1. Developer Setup and Build\n  2. Admin Deployment and Activation"
+# ]
+# ///
+
+"""
+Gather context for playback narratives document generation.
+
+Uses the spec associated with the current branch.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import require_associated_spec, spec_path
+
+
+def main():
+    spec_name, branch = require_associated_spec()
+
+    path = spec_path(spec_name)
+    path.mkdir(parents=True, exist_ok=True)
+
+    playback_file = path / 'playback.md'
+    reqs_file = path / 'requirements.md'
+    design_file = path / 'design.md'
+    tasks_file = path / 'tasks.md'
+
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(path),
+        'playback_file': str(playback_file),
+        'exists': playback_file.exists(),
+        'existing_content': playback_file.read_text() if playback_file.exists() else None,
+        'reqs_exists': reqs_file.exists(),
+        'reqs_content': reqs_file.read_text() if reqs_file.exists() else None,
+        'design_exists': design_file.exists(),
+        'design_content': design_file.read_text() if design_file.exists() else None,
+        'tasks_exists': tasks_file.exists(),
+        'tasks_content': tasks_file.read_text() if tasks_file.exists() else None
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if data['exists']:
+            print(f"Spec '{spec_name}' has existing playback.md - will refine")
+        else:
+            print(f"Will create new playback.md for spec '{spec_name}'")
+
+
+if __name__ == "__main__":
+    main()

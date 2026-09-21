@@ -1,0 +1,14 @@
+Index: docs/spokecluster-connect/examples/02-spokecluster-kubeconfig-full.yaml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Every field the connect path understands, set explicitly rather than defaulted.\napiVersion: core.oam.dev/v1beta1\nkind: SpokeCluster\nmetadata:\n  name: spoke-full\n  namespace: vela-system\n  labels:\n    # Free-form. Nothing in the controller reads these; they are for your own selectors.\n    provider: k3d\n    environment: dev\nspec:\n  # Only \"connect\" is supported in this release. provision and adopt are rejected.\n  mode: connect\n\n  credential:\n    type: kubeconfig\n    kubeconfig:\n      secretRef:\n        name: spoke-kubeconfig\n        # Defaults to the SpokeCluster's namespace when omitted.\n        # See the note in the README: cross-namespace refs are NOT currently\n        # rejected even though the API doc claims they are.\n        namespace: vela-system\n        # Defaults to \"kubeconfig\".\n        key: kubeconfig\n\n  # How often the hub probes /healthz through cluster-gateway.\n  # The actual requeue is the sooner of this and the credential's own refresh\n  # deadline, so an AWS spoke is reconciled before its token expires.\n  probeIntervalSeconds: 30\n\n  # Per-probe timeout. Keep it well under probeIntervalSeconds.\n  probeTimeoutSeconds: 10\n\n  # detach removes the gateway Secret when this object is deleted.\n  # orphan leaves it in place.\n  deletionPolicy: detach\n
+===================================================================
+diff --git a/docs/spokecluster-connect/examples/02-spokecluster-kubeconfig-full.yaml b/docs/spokecluster-connect/examples/02-spokecluster-kubeconfig-full.yaml
+--- a/docs/spokecluster-connect/examples/02-spokecluster-kubeconfig-full.yaml	(revision 8e03142d5ac1c0db73cf8f3e9168ea392475a918)
++++ b/docs/spokecluster-connect/examples/02-spokecluster-kubeconfig-full.yaml	(date 1785823787596)
+@@ -1,4 +1,4 @@
+-# Every field the connect path understands, set explicitly rather than defaulted.
++it confusing what are you are te# Every field the connect path understands, set explicitly rather than defaulted.
+ apiVersion: core.oam.dev/v1beta1
+ kind: SpokeCluster
+ metadata:

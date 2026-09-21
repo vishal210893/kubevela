@@ -1,0 +1,288 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Create spec directory structure in current branch"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-create:*)"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "optional-passthrough"
+# hint = "[project:]name[:ctx1,ctx2]"
+# description = "Spec name in composite format. Use issue:name format (e.g., 123:auth) to seed from GitHub issue"
+#
+# [tool.claude.output]
+# prompt = "Confirm spec creation. Show the spec name, location, branch association, and list files created. If seeded from GitHub issue, mention the issue number and title. If contexts were set, show them too. Suggest running /spec:interview to refine requirements."
+# examples = [
+#   "[OK] Created spec 'feature-auth'\n\nDetails:\n  Location: .dev/specs/feature-auth/\n  Branch: feature-auth\n  Associated: Yes (stored in dev.yaml)\n\nFiles created:\n  - requirements.md\n  - design.md\n  - tasks.md\n\nNext steps:\n  - Refine requirements: /spec:interview\n  - Generate requirements: /spec:requirements",
+#   "[OK] Created spec '199-git-integration' from GitHub issue #199\n\nDetails:\n  Location: .dev/specs/199-git-integration/\n  Branch: main\n  Associated: Yes (stored in dev.yaml)\n  Source: GitHub Issue #199 - Add issue integration\n\nFiles created:\n  - requirements.md (seeded from issue)\n  - design.md\n  - tasks.md\n\nNext steps:\n  - Refine requirements: /spec:interview\n  - Generate design: /spec:design"
+# ]
+# ///
+
+"""
+Create spec directory structure in current branch.
+
+Creates a <doc-root>/specs/<name>/ directory with template files for requirements,
+design, and tasks. Automatically associates the spec with the current branch.
+
+Uses spec_lib for shared functions.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import get_current_branch, associate_spec, set_branch_project, in_git_repo, spec_path, set_contexts, resolve_context_path, parse_spec_and_ctx
+
+# Add git lib for issue fetching
+git_scripts_dir = Path(__file__).parent.parent.parent.parent / 'git' / 'src' / 'claude' / 'scripts'
+sys.path.insert(0, str(git_scripts_dir))
+try:
+    from lib.ghlib import fetch_issue, format_issue_for_spec
+    GH_AVAILABLE = True
+except ImportError:
+    GH_AVAILABLE = False
+
+
+def create_spec_file(path, content):
+    """Create a spec file if it doesn't exist."""
+    if path.exists():
+        return False
+    path.write_text(content)
+    return True
+
+
+def main():
+    """Main entry point."""
+    # Validate in git repo
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    # Get current branch
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse arguments (supports composite format and --ctx flag)
+    project, name_arg, context_refs = parse_spec_and_ctx(sys.argv)
+    if name_arg is None:
+        name_arg = branch
+    issue_number = None
+    spec_name = name_arg
+
+    # Check for issue:name format (e.g., 123:auth) — numeric first part means issue seeding
+    # This is distinct from composite format because issue numbers are always numeric
+    if ':' in name_arg and project is None:
+        parts = name_arg.split(':', 1)
+        if parts[0].isdigit():
+            issue_number = int(parts[0])
+            spec_name_part = parts[1]
+            spec_name = f"{issue_number}-{spec_name_part}"
+
+    # Create spec directory (with optional project override)
+    path = spec_path(spec_name, project)
+    path.mkdir(parents=True, exist_ok=True)
+
+    # Track what was created
+    files_created = []
+    files_existed = []
+
+    # Fetch issue if issue_number provided
+    issue = None
+    issue_ref = ""
+    if issue_number:
+        if not GH_AVAILABLE:
+            print("Error: ghlib not available", file=sys.stderr)
+            print("Cannot seed from GitHub issue without git capabilities installed", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            issue = fetch_issue(issue_number)
+            if not issue:
+                print(f"Error: GitHub issue #{issue_number} not found", file=sys.stderr)
+                sys.exit(1)
+            issue_ref = f"\n\n**Related Issue**: [#{issue['number']}]({issue['html_url']})\n"
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # Create template files
+    templates = {}
+
+    # If issue provided, use it for requirements.md
+    if issue:
+        templates['requirements.md'] = format_issue_for_spec(issue)
+    else:
+        templates['requirements.md'] = f"""# {spec_name} - Requirements
+
+## Introduction
+
+[Brief description - 2-3 sentences about what's being built and why]
+
+## Requirements
+
+### Requirement 1: [Feature Area]
+
+**User Story:** As a [role], I want [capability], so that [benefit]
+
+#### Acceptance Criteria
+
+1. WHEN [event] THE SYSTEM SHALL [action]
+2. WHEN [event] AND [condition] THE SYSTEM SHALL [action]
+3. IF [condition] THEN THE SYSTEM SHALL [action]
+
+### Requirement 2: [Feature Area]
+
+**User Story:** As a [role], I want [capability], so that [benefit]
+
+#### Acceptance Criteria
+
+1. WHEN [event] THE SYSTEM SHALL [action]
+2. WHILE [state] THE SYSTEM SHALL [action]
+
+### Requirement 3: Non-Functional Requirements
+
+**User Story:** As a [role], I want [quality attribute], so that [benefit]
+
+#### Acceptance Criteria
+
+1. THE SYSTEM SHALL [performance/reliability constraint]
+2. WHILE [state] THE SYSTEM SHALL [behavior constraint]
+
+## Constraints
+
+- [Technical or business constraint]
+"""
+
+    # Add design.md template (with issue reference if applicable)
+    templates['design.md'] = f"""# {spec_name} - Design{issue_ref}
+## Overview
+
+[High-level design approach]
+
+## Architecture
+
+[Architectural decisions and project interactions]
+
+## Implementation Details
+
+[Key implementation details]
+
+## API Changes
+
+[Any API changes required]
+
+## Data Model
+
+[Data model changes if applicable]
+"""
+
+    templates['tasks.md'] = f"""# {spec_name} - Tasks{issue_ref}
+## Implementation Tasks
+
+- [ ] Task 1
+- [ ] Task 2
+- [ ] Task 3
+
+## Testing Tasks
+
+- [ ] Write unit tests
+- [ ] Write integration tests
+
+## Documentation Tasks
+
+- [ ] Update README
+- [ ] Update API docs
+"""
+
+    for filename, content in templates.items():
+        file_path = path / filename
+        if create_spec_file(file_path, content):
+            files_created.append(filename)
+        else:
+            files_existed.append(filename)
+
+    # Associate spec with current branch
+    associated = associate_spec(spec_name, branch)
+
+    # Persist project override when explicitly provided
+    if project:
+        set_branch_project(branch, project)
+
+    # Set contexts if provided
+    context_resolved = []
+    if context_refs:
+        for ref in context_refs:
+            path = resolve_context_path(ref, project)
+            if not path.exists():
+                print(f"Warning: '{ref}' not found at {path}", file=sys.stderr)
+            context_resolved.append({'ref': ref, 'path': str(path)})
+        set_contexts(context_refs, branch)
+
+    # Build output data
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(path),
+        'branch': branch,
+        'associated': associated,
+        'files_created': files_created,
+        'files_existed': files_existed
+    }
+
+    if context_refs:
+        data['context_refs'] = context_refs
+        data['contexts'] = context_resolved
+
+    if issue:
+        data['issue_number'] = issue['number']
+        data['issue_title'] = issue['title']
+        data['issue_url'] = issue['html_url']
+
+    # Output based on mode
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if issue:
+            print(f"[OK] Created spec '{spec_name}' from GitHub issue #{issue['number']}")
+        else:
+            print(f"[OK] Created spec '{spec_name}'")
+        print()
+        print("Details:")
+        print(f"  Location: {path}/")
+        print(f"  Branch: {branch}")
+        print(f"  Associated: {'Yes' if associated else 'No'}")
+        if issue:
+            print(f"  Source: GitHub Issue #{issue['number']} - {issue['title']}")
+        if context_refs:
+            print(f"  Contexts: {', '.join(context_refs)}")
+        print()
+        if files_created:
+            print("Files created:")
+            for f in files_created:
+                if issue and f == 'requirements.md':
+                    print(f"  - {f} (seeded from issue)")
+                else:
+                    print(f"  - {f}")
+        if files_existed:
+            print("Files already existed:")
+            for f in files_existed:
+                print(f"  - {f}")
+        print()
+        print("Next steps:")
+        print("  - Refine requirements: /spec:interview")
+        if issue:
+            print("  - Review requirements: /spec:requirements")
+        else:
+            print("  - Define requirements: /spec:requirements")
+
+
+if __name__ == "__main__":
+    main()

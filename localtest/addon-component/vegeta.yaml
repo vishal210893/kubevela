@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-vegeta
+  namespace: vela-system
+spec:
+  components:
+    - name: vegeta
+      type: addon
+      properties:
+        skipVersionValidation: true

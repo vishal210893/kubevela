@@ -1,0 +1,17 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: err-unknown-trait
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-err-unknown-trait-fixed
+spec:
+  components:
+    - name: web
+      type: webservice
+      properties:
+        image: nginx:1.21
+      traits:
+        - type: phantom-trait-not-found
+          properties:
+            magic: true

@@ -1,0 +1,13 @@
+annotations:
+  addon.name: oci-widget
+apiVersion: v2
+appVersion: 1.1.0
+description: Test addon delivered over OCI. Installs the oci-widget-greeter component
+  definition, writes a ConfigMap, and imports the oci-gadget module, so an addon that
+  nests a module is exercised end to end.
+keywords:
+- test
+- oci
+name: oci-widget
+type: library
+version: 1.1.0

@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-prometheus-server
+  namespace: vela-system
+spec:
+  components:
+    - name: prometheus-server
+      type: addon
+      properties:
+        skipVersionValidation: true

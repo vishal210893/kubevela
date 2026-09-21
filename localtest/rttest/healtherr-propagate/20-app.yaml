@@ -1,0 +1,12 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: broken-health-app
+  namespace: default
+spec:
+  components:
+    - name: broken-health-nginx
+      type: broken-health-nginx
+      properties:
+        image: nginx:1.25
+        replicas: 1

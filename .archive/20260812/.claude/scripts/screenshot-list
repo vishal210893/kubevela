@@ -1,0 +1,87 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = []
+#
+# [tool.claude]
+# description = "List all available screenshots with timestamps"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash"]
+#
+# [tool.claude.output]
+# format = "array"
+# prompt = "List screenshots with timestamps, showing the 10 most recent."
+# ///
+
+"""List all available screenshots."""
+
+import sys
+from pathlib import Path
+import os
+import json
+from datetime import datetime
+
+def list_screenshots():
+    """List all screenshots with metadata."""
+    screenshots_dir = Path('/workspaces/.screenshots')
+
+    if not screenshots_dir.exists():
+        return []
+
+    # Get all PNG files sorted by modification time (newest first)
+    png_files = sorted(
+        screenshots_dir.glob('*.png'),
+        key=os.path.getmtime,
+        reverse=True
+    )
+
+    screenshots = []
+    for i, png_file in enumerate(png_files[:10], 1):  # Limit to 10 most recent
+        stat = png_file.stat()
+        timestamp = datetime.fromtimestamp(stat.st_mtime)
+
+        # Determine if this is one of the quick-access symlinks
+        quick_access = None
+        for j in range(1, 6):
+            symlink = Path.home() / f'img{j}.png' if j > 1 else Path.home() / 'img.png'
+            if symlink.exists() and symlink.resolve() == png_file:
+                quick_access = f"~/img{j}.png" if j > 1 else "~/img.png"
+                break
+
+        screenshots.append({
+            "index": i,
+            "filename": png_file.name,
+            "path": str(png_file),
+            "quick_access": quick_access,
+            "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            "size_kb": round(stat.st_size / 1024, 1)
+        })
+
+    return screenshots
+
+def main():
+    """List available screenshots."""
+    screenshots = list_screenshots()
+
+    if not screenshots:
+        print("No screenshots found.", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("To use screenshot integration:", file=sys.stderr)
+        print("1. Take a screenshot with Cmd+Shift+4 on macOS", file=sys.stderr)
+        print("2. Screenshots are automatically synced to /workspaces/.screenshots/", file=sys.stderr)
+        print("3. Recent screenshots are available as ~/img.png, ~/img2.png, etc.", file=sys.stderr)
+        sys.exit(1)
+
+    # Output: JSON array in command mode, formatted text otherwise
+    if os.getenv('CC') == '1':
+        print(json.dumps(screenshots))
+    else:
+        print(f"Found {len(screenshots)} recent screenshot(s):\n")
+        for ss in screenshots:
+            quick = f" -> {ss['quick_access']}" if ss['quick_access'] else ""
+            print(f"{ss['index']}. {ss['filename']}{quick}")
+            print(f"   {ss['timestamp']} ({ss['size_kb']} KB)")
+            print()
+
+if __name__ == "__main__":
+    main()

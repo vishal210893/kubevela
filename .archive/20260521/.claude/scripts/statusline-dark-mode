@@ -1,0 +1,30 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# command-name = "statusline:dark-mode"
+# description = "Switch statusline to dark terminal theme"
+# output-template = """
+# {{output}}
+# """
+# ///
+
+"""Set statusline theme to dark via dev.yaml."""
+
+import os
+import sys
+
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+from lib.devyaml import set as yaml_set
+
+
+def main():
+    yaml_set('statusline.theme', 'dark')
+    print("Statusline theme set to dark")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,131 @@
+$schema: "http://json-schema.org/draft-07/schema#"
+$id: harness-yaml-schema-v1
+title: .harness.yaml
+description: "Configuration file for the AI-assisted PR pipeline driven by ai-harness: assess-risk, code-review, and reviewer-brief. Single canonical schema (Draft-07 JSON Schema) for .harness.yaml -- used by /harness:validate, validate-harness-yaml.py, and the schema tests."
+type: object
+required: [version]
+additionalProperties: false
+
+properties:
+  version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    description: "Schema version in semver format (e.g. 1.0.0)."
+  assess-risk:
+    type: object
+    description: "Risk-classification stage. The four tier blocks live under 'categories'; ai-harness walks critical->high->medium->low to assign exactly one tier per PR."
+    additionalProperties: true
+    properties:
+      enabled:
+        type: boolean
+        description: "When false, classification still runs (review/brief need a tier) but no risk label or triage comment is applied."
+      categories:
+        type: object
+        description: "Per-tier risk classification config. Keys: low, medium, high, critical."
+        additionalProperties: false
+        properties:
+          low:
+            $ref: "#/definitions/tier"
+          medium:
+            $ref: "#/definitions/tier"
+          high:
+            $ref: "#/definitions/tier"
+          critical:
+            $ref: "#/definitions/tier"
+  low:
+    $ref: "#/definitions/tier"
+    description: "DEPRECATED: moved under assess-risk.categories.<tier>; top-level kept for backwards-compat during migration."
+  medium:
+    $ref: "#/definitions/tier"
+    description: "DEPRECATED: moved under assess-risk.categories.<tier>; top-level kept for backwards-compat during migration."
+  high:
+    $ref: "#/definitions/tier"
+    description: "DEPRECATED: moved under assess-risk.categories.<tier>; top-level kept for backwards-compat during migration."
+  critical:
+    $ref: "#/definitions/tier"
+    description: "DEPRECATED: moved under assess-risk.categories.<tier>; top-level kept for backwards-compat during migration."
+  code-review:
+    type: object
+    description: "Code review stage configuration: per-tier model selection and the system prompt sent to the reviewer."
+    additionalProperties: true
+    properties:
+      enabled:
+        type: boolean
+        description: "When false, no Claude code review runs on PR pushes."
+      models:
+        $ref: "#/definitions/tier-models"
+      max-turns:
+        $ref: "#/definitions/max-turns"
+      effort:
+        $ref: "#/definitions/effort"
+      prompt:
+        type: string
+        description: "System prompt for the code review action."
+  reviewer-brief:
+    type: object
+    description: "Reviewer-brief stage configuration: per-tier model selection and the prompt for the pr-pre-reviewer agent."
+    additionalProperties: true
+    properties:
+      enabled:
+        type: boolean
+        description: "When false, no reviewer brief is posted on PR pushes."
+      models:
+        $ref: "#/definitions/tier-models"
+      max-turns:
+        $ref: "#/definitions/max-turns"
+      effort:
+        $ref: "#/definitions/effort"
+      prompt:
+        type: string
+        description: "Prompt for the pr-pre-reviewer agent."
+
+definitions:
+  threshold-value:
+    description: "Non-negative integer threshold or the literal \"*\" meaning unlimited."
+    oneOf:
+      - type: integer
+        minimum: 0
+      - type: string
+        const: "*"
+  tier:
+    type: object
+    description: "Risk tier configuration. 'patterns' lists gitignore-style globs matched against changed file paths; optional 'max-lines'/'max-files' escalate to this tier when exceeded."
+    required: [patterns]
+    additionalProperties: false
+    properties:
+      patterns:
+        type: array
+        description: "Gitignore-style glob patterns for this tier."
+        items:
+          type: string
+      max-lines:
+        $ref: "#/definitions/threshold-value"
+      max-files:
+        $ref: "#/definitions/threshold-value"
+  model-string:
+    description: "Claude model identifier (e.g. claude-opus-4-8) or the literal \"skip\" to disable this stage for the given tier."
+    type: string
+    minLength: 1
+  tier-models:
+    type: object
+    description: "Per-tier model selection. 'default' is the fallback used by any tier that does not set its own model; individual tier keys override the default."
+    additionalProperties: false
+    properties:
+      default:
+        $ref: "#/definitions/model-string"
+      critical:
+        $ref: "#/definitions/model-string"
+      high:
+        $ref: "#/definitions/model-string"
+      medium:
+        $ref: "#/definitions/model-string"
+      low:
+        $ref: "#/definitions/model-string"
+  max-turns:
+    type: integer
+    minimum: 1
+    description: "Maximum agent turns for this stage in ai-harness. Defaults: 30 for code-review, 15 for reviewer-brief. Raise for very large diffs."
+  effort:
+    type: string
+    enum: [low, medium, high, xhigh, max]
+    description: "Reasoning effort for this stage in ai-harness, passed to Claude Code's --effort. One of: low, medium, high, xhigh, max. Defaults: high for code-review, low for reviewer-brief."

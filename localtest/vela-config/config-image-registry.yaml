@@ -1,0 +1,15 @@
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: demo-registry
+  namespace: default
+spec:
+  alias: Demo Registry Credentials
+  description: Credentials rendered by the demo-image-registry ConfigTemplate.
+  templateRef:
+    name: demo-image-registry
+    namespace: vela-system
+  properties:
+    registry: index.docker.io
+    username: example-user
+    password: example-token

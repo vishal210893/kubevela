@@ -1,0 +1,19 @@
+# Addon CR for testing Application self-heal of an addon-installed CRD (KEP-2.13).
+#
+# redis-operator is an experimental catalog addon. Its resources/crd.yaml is
+# wrapped by RenderApp into the single "redis-operator-resources" k8s-objects
+# component inside the owned Application "addon-redis-operator". The CRD is
+# therefore tracked by the Application's OWN ResourceTracker, not the addon
+# drift RT. Deleting it tests the Application controller's periodic self-heal.
+#
+# Prerequisites:
+#   - vela-core running with --feature-gates=AddonCRD=true
+#   - the "KubeVela" registry pointing at a source that serves redis-operator
+#   - skipVersionCheck: true when vela-core runs out-of-cluster
+apiVersion: core.oam.dev/v1beta1
+kind: Addon
+metadata:
+  name: redis-operator
+spec:
+  registry: catalog-exp
+  skipVersionCheck: true

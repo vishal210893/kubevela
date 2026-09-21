@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-ocm-hub-control-plane
+  namespace: vela-system
+spec:
+  components:
+    - name: ocm-hub-control-plane
+      type: addon
+      properties:
+        skipVersionValidation: true

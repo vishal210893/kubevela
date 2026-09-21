@@ -1,0 +1,78 @@
+# Runs zot inside the cluster instead of beside it. Requires a cluster that can
+# pull images: on the machine this was written for, the k3d node could not pull
+# even the pause image, failing with
+# "x509: certificate signed by unknown authority".
+#
+# Create the TLS secret from the certificate 01-gen-certs.sh issues, adding
+# zot.vela-system.svc to its SANs (it is already there):
+#
+#   kubectl -n vela-system create secret tls zot-tls \
+#     --cert=$SCRATCH/tls/tls.crt --key=$SCRATCH/tls/tls.key
+#
+# Then register the registry at oci://zot.vela-system.svc:5000/addons so the
+# in-cluster controller resolves it by service DNS.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zot-config
+  namespace: vela-system
+data:
+  config.json: |
+    {
+      "distSpecVersion": "1.1.0",
+      "storage": {"rootDirectory": "/var/lib/registry"},
+      "http": {"address": "0.0.0.0", "port": "5000",
+               "tls": {"cert": "/tls/tls.crt", "key": "/tls/tls.key"}},
+      "log": {"level": "info"}
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zot
+  namespace: vela-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zot
+  template:
+    metadata:
+      labels:
+        app: zot
+    spec:
+      containers:
+        - name: zot
+          # Match the node architecture; use zot-linux-amd64 on x86_64.
+          image: ghcr.io/project-zot/zot-linux-arm64:v2.1.2
+          args: ["serve", "/etc/zot/config.json"]
+          ports:
+            - containerPort: 5000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/zot
+            - name: tls
+              mountPath: /tls
+            - name: data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: config
+          configMap:
+            name: zot-config
+        - name: tls
+          secret:
+            secretName: zot-tls
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zot
+  namespace: vela-system
+spec:
+  selector:
+    app: zot
+  ports:
+    - port: 5000
+      targetPort: 5000

@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cue fmt *)",
+      "Bash(cue vet *)",
+      "Bash(export KUBECONFIG=/home/node/.claude/jobs/5d932380/tmp/merged-kubeconfig.yaml)",
+      "Bash(echo \"---extract worker kubeconfig---\")",
+      "Bash(echo \"written /tmp/worker.kubeconfig\")",
+      "WebSearch",
+      "Bash(export KUBECONFIG=/tmp/sess-kubeconfig.yaml)",
+      "Bash(echo \"=== is vela-core still up? ===\")",
+      "Bash(ss -ltnp)",
+      "mcp__github__get_pull_request",
+      "mcp__github__get_pull_request_files",
+      "Bash(wait)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "confluence",
+    "jira",
+    "devassistant",
+    "figma",
+    "github",
+    "guidewire-docs",
+    "guidewire-docs-staging",
+    "jutro-developer-assistant"
+  ],
+  "disabledMcpjsonServers": [
+    "confluence",
+    "jira",
+    "devassistant",
+    "figma",
+    "github",
+    "guidewire-docs",
+    "guidewire-docs-staging",
+    "jutro-developer-assistant"
+  ]
+}

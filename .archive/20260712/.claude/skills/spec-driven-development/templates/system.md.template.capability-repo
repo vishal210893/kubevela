@@ -1,0 +1,233 @@
+# System Architecture: {{REPO_NAME}}
+
+> Generated: {{DATE}}
+> Version: {{VERSION}}
+
+## 1. Introduction and Goals
+
+### 1.1 Purpose
+
+{{PURPOSE}}
+
+This repository uses a **capability-based architecture** where functionality is packaged into discrete, composable capabilities that are assembled into profiles.
+
+### 1.2 Quality Goals
+
+| Priority | Goal | Description |
+|----------|------|-------------|
+| 1 | Composability | Capabilities can be mixed and matched |
+| 2 | Discoverability | Easy to find and understand available features |
+| 3 | Maintainability | Changes to one capability don't affect others |
+
+## 2. Constraints
+
+### 2.1 Technical Constraints
+
+| Constraint | Description |
+|------------|-------------|
+| Build System | Capabilities merged via `npm run build` |
+| Directory Structure | Must follow `capabilities/<name>/` pattern |
+| Profile Assembly | Profiles inherit and compose capabilities |
+
+## 3. System Context
+
+### 3.1 Capability Architecture
+
+```
+                    ┌─────────────────────────┐
+                    │       PROFILES          │
+                    │  (User-facing bundles)  │
+                    └───────────┬─────────────┘
+                                │ compose
+        ┌───────────────────────┼───────────────────────┐
+        │                       │                       │
+        ▼                       ▼                       ▼
+┌───────────────┐       ┌───────────────┐       ┌───────────────┐
+│  Capability A │       │  Capability B │       │  Capability C │
+│  (feature)    │       │  (feature)    │       │  (feature)    │
+└───────────────┘       └───────────────┘       └───────────────┘
+```
+
+## 4. Solution Strategy
+
+The system uses a three-layer architecture:
+
+1. **Capabilities** - Self-contained feature packages
+2. **Profiles** - Compositions of capabilities for specific use cases
+3. **Build System** - Merges capabilities into deployable profiles
+
+## 5. Building Blocks
+
+### 5.1 Directory Structure
+
+```
+{{DIRECTORY_STRUCTURE}}
+```
+
+### 5.2 Capability Structure
+
+Each capability follows this structure:
+
+```
+capabilities/<name>/
+├── capability.yaml          # Metadata and configuration
+└── src/
+    ├── claude/              # Claude Code integration
+    │   ├── commands/        # Slash commands
+    │   └── skills/          # Conversational skills
+    ├── devcontainer/        # Container configuration
+    │   └── *.py             # Lifecycle scripts
+    └── install/             # Installation scripts
+```
+
+### 5.3 Capabilities
+
+| Capability | Purpose | Priority |
+|------------|---------|----------|
+{{CAPABILITIES_TABLE}}
+
+### 5.4 Profiles
+
+| Profile | Description | Capabilities |
+|---------|-------------|--------------|
+{{PROFILES_TABLE}}
+
+## 6. Runtime View
+
+### 6.1 Build Process
+
+```
+1. Read profile.yaml
+       │
+       ▼
+2. Resolve capability dependencies
+       │
+       ▼
+3. Merge capability contributions
+   ├── Claude commands/skills
+   ├── Devcontainer config
+   └── Lifecycle scripts
+       │
+       ▼
+4. Write to bld/<profile>/
+```
+
+### 6.2 Profile Installation
+
+```
+1. User runs: dev profile install <profile>
+       │
+       ▼
+2. Archive existing .devcontainer/ and .claude/
+       │
+       ▼
+3. Copy built profile to workspace
+       │
+       ▼
+4. User runs: dev rebuild (if container changes)
+```
+
+## 7. Deployment View
+
+### 7.1 Build & Release
+
+| Command | Purpose |
+|---------|---------|
+| `npm run build` | Build all profiles |
+| `npm run build:<profile>` | Build specific profile |
+| `npm test` | Run test suite |
+| `npm publish` | Publish to registry |
+
+### 7.2 User Installation
+
+```bash
+# Install CLI
+npm install -g {{PACKAGE_NAME}}
+
+# Initialize workspace
+dev init
+
+# Install profile
+dev profile install <profile>
+```
+
+## 8. Cross-Cutting Concepts
+
+### 8.1 Capability Contributions
+
+Capabilities contribute to these areas:
+
+| Area | Contribution Type | Merge Strategy |
+|------|------------------|----------------|
+| Commands | `.claude/commands/*.md` | Copy all |
+| Skills | `.claude/skills/*/SKILL.md` | Copy all |
+| Devcontainer | `devcontainer.json` fragments | Deep merge |
+| Lifecycle | `*-commands/*.py` | Priority sort & execute |
+
+### 8.2 Priority System
+
+Capabilities have priority values (0-100) that determine:
+- Merge order (higher priority wins conflicts)
+- Script execution order (sorted ascending)
+
+## 9. Architecture Decisions
+
+### ADR-1: Capability-Based Architecture
+
+**Status**: Accepted
+
+**Context**: Need to support multiple configurations without maintaining separate codebases.
+
+**Decision**: Use composable capabilities assembled into profiles.
+
+**Consequences**:
+- (+) Easy to add new features
+- (+) Users can customize via profile selection
+- (-) Build system complexity
+
+### ADR-2: Python Lifecycle Scripts
+
+**Status**: Accepted
+
+**Context**: Need reliable cross-platform lifecycle scripts.
+
+**Decision**: Use Python with `uv` for lifecycle scripts.
+
+**Consequences**:
+- (+) Consistent execution across platforms
+- (+) PEP 723 inline dependencies
+- (-) Python dependency required
+
+## 10. Quality Requirements
+
+### 10.1 Quality Tree
+
+```
+Quality
+├── Composability
+│   └── Capabilities must be independently usable
+├── Discoverability
+│   └── All commands documented in capability.yaml
+└── Reliability
+    └── Build must be idempotent
+```
+
+## 11. Risks and Technical Debt
+
+| Risk/Debt | Impact | Mitigation |
+|-----------|--------|------------|
+| Capability conflicts | Merge issues | Priority system |
+| Schema changes | Breaking updates | No backward compat (rebuild) |
+
+## 12. Glossary
+
+| Term | Definition |
+|------|------------|
+| Capability | Self-contained feature package |
+| Profile | Composition of capabilities |
+| Priority | Numeric value determining merge order |
+| Lifecycle Script | Python script run at container events |
+
+---
+
+*This document follows the [arc42](https://arc42.org/) template for software architecture documentation.*

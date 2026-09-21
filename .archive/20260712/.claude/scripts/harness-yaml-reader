@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""
+harness-yaml-reader - Extract key-value pairs from .harness.yaml.
+
+Reads a simple YAML file and extracts only the requested keys.
+Uses the same lightweight parsing approach as the inline workflow
+code it replaces (no yaml dependency needed).
+
+Usage:
+    harness-yaml-reader [path] key1 key2 ...
+
+    path     Path to the YAML file (default: .harness.yaml)
+    key1 ... Keys to extract from the file
+
+Output:
+    Prints key=value lines to stdout for each requested key.
+    Writes to $GITHUB_OUTPUT if that env var is set.
+    Prints diagnostics to stderr.
+
+Exit codes:
+    0  Success (missing keys produce empty values, not errors)
+    1  No keys requested
+"""
+
+import os
+import sys
+
+
+def parse_keys(path, keys):
+    """Parse a simple YAML file and return values for the requested keys.
+
+    Only extracts top-level scalar key: value pairs. Skips comments,
+    blank lines, and lines without a colon. This mirrors the original
+    inline parsing logic from the workflow.
+
+    Args:
+        path: Path to the YAML file.
+        keys: Set of key names to extract.
+
+    Returns:
+        Dict mapping each requested key to its value (empty string if
+        not found or file is missing).
+    """
+    vals = {k: "" for k in keys}
+    try:
+        with open(path) as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith("#") or ":" not in stripped:
+                    continue
+                k, _, v = stripped.partition(":")
+                k = k.strip()
+                v = v.strip()
+                if k in vals and v:
+                    vals[k] = v
+    except FileNotFoundError:
+        print(f"  warning: {path} not found, all keys will be empty", file=sys.stderr)
+    return vals
+
+
+def main():
+    args = sys.argv[1:]
+
+    # If the first arg looks like a file path (contains / or . or exists),
+    # treat it as the path; otherwise default to .harness.yaml.
+    path = ".harness.yaml"
+    keys = args
+    if args and ("/" in args[0] or "." in args[0]):
+        path = args[0]
+        keys = args[1:]
+
+    if not keys:
+        print("Error: at least one key name is required", file=sys.stderr)
+        print("Usage: harness-yaml-reader [path] key1 key2 ...", file=sys.stderr)
+        sys.exit(1)
+
+    vals = parse_keys(path, set(keys))
+
+    # Write to GITHUB_OUTPUT if available
+    gh_output = os.environ.get("GITHUB_OUTPUT", "")
+    if gh_output:
+        with open(gh_output, "a") as f:
+            for k in keys:
+                f.write(f"{k}={vals[k]}\n")
+
+    # Always print key=value to stdout
+    for k in keys:
+        print(f"{k}={vals[k]}")
+
+    # Diagnostics to stderr
+    for k in keys:
+        print(f"  {k}: {vals[k] or '(unset)'}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

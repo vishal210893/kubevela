@@ -1,0 +1,392 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "SpokeCluster Connect Mode",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "viewBox": [
+      1380,
+      720
+    ],
+    "views": [
+      {
+        "id": "connect-path",
+        "label": "Connect path",
+        "focus": [
+          "hub_api",
+          "reconciler",
+          "gateway_secret",
+          "cluster_gateway",
+          "spoke_api"
+        ],
+        "note": "One SpokeCluster becomes a routable spoke through the gateway Secret."
+      },
+      {
+        "id": "credential-materialization",
+        "label": "Credential materialization",
+        "focus": [
+          "reconciler",
+          "providers",
+          "kubeconfig_secret",
+          "aws_apis",
+          "cred_cache"
+        ],
+        "note": "How each credential arm is turned into an endpoint, CA, and token."
+      },
+      {
+        "id": "trust-crossings",
+        "label": "Trust crossings",
+        "focus": [
+          "webhooks",
+          "kubeconfig_secret",
+          "gateway_secret",
+          "aws_apis",
+          "spoke_api"
+        ],
+        "note": "Where the hub leaves its own namespace, account, or cluster."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "cli",
+      "type": "frontend",
+      "label": "vela spokes",
+      "sublabel": "shows spoke state",
+      "tag": "operator",
+      "pos": [
+        40,
+        358
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "webhooks",
+      "type": "security",
+      "label": "Admission webhooks",
+      "sublabel": "defaults and rejects specs",
+      "tag": "vela-cluster-core",
+      "pos": [
+        285,
+        118
+      ],
+      "size": [
+        180,
+        66
+      ]
+    },
+    {
+      "id": "cred_cache",
+      "type": "database",
+      "label": "Credential cache",
+      "sublabel": "avoids repeat cloud calls",
+      "tag": "15m TTL",
+      "pos": [
+        580,
+        118
+      ],
+      "size": [
+        190,
+        66
+      ]
+    },
+    {
+      "id": "gateway_secret",
+      "type": "database",
+      "label": "Gateway Secret",
+      "sublabel": "hands off connection facts",
+      "tag": "vela-system",
+      "pos": [
+        880,
+        118
+      ],
+      "size": [
+        180,
+        66
+      ]
+    },
+    {
+      "id": "hub_api",
+      "type": "cloud",
+      "label": "Hub API server",
+      "sublabel": "stores the SpokeCluster",
+      "tag": "hub",
+      "pos": [
+        285,
+        356
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "reconciler",
+      "type": "backend",
+      "label": "SpokeCluster reconciler",
+      "sublabel": "credential, register, probe",
+      "tag": "reconcileConnect",
+      "pos": [
+        580,
+        352
+      ],
+      "size": [
+        190,
+        76
+      ]
+    },
+    {
+      "id": "cluster_gateway",
+      "type": "external",
+      "label": "cluster-gateway",
+      "sublabel": "proxies hub to spoke",
+      "tag": "APIService",
+      "pos": [
+        880,
+        356
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "spoke_api",
+      "type": "external",
+      "label": "Spoke API server",
+      "sublabel": "answers healthz and reads",
+      "tag": "spoke",
+      "pos": [
+        1170,
+        356
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "kubeconfig_secret",
+      "type": "database",
+      "label": "Kubeconfig Secret",
+      "sublabel": "holds the kubeconfig",
+      "tag": "same namespace",
+      "pos": [
+        285,
+        610
+      ],
+      "size": [
+        180,
+        66
+      ]
+    },
+    {
+      "id": "providers",
+      "type": "backend",
+      "label": "Credential providers",
+      "sublabel": "builds one usable credential",
+      "tag": "kubeconfig | aws",
+      "pos": [
+        580,
+        608
+      ],
+      "size": [
+        190,
+        70
+      ]
+    },
+    {
+      "id": "aws_apis",
+      "type": "cloud",
+      "label": "AWS STS + EKS",
+      "sublabel": "issues the EKS token",
+      "tag": "per-spoke role",
+      "pos": [
+        1170,
+        608
+      ],
+      "size": [
+        180,
+        70
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Hub cluster",
+      "wraps": [
+        "webhooks",
+        "cred_cache",
+        "gateway_secret",
+        "hub_api",
+        "reconciler",
+        "cluster_gateway",
+        "kubeconfig_secret",
+        "providers"
+      ],
+      "pad": 24
+    },
+    {
+      "kind": "security-group",
+      "label": "vela-system gateway credentials",
+      "wraps": [
+        "gateway_secret"
+      ],
+      "pad": 14
+    },
+    {
+      "kind": "region",
+      "label": "Spoke cluster",
+      "wraps": [
+        "spoke_api"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "region",
+      "label": "AWS account of the spoke",
+      "wraps": [
+        "aws_apis"
+      ],
+      "pad": 18
+    }
+  ],
+  "connections": [
+    {
+      "from": "cli",
+      "to": "hub_api",
+      "label": "reads status"
+    },
+    {
+      "from": "hub_api",
+      "to": "webhooks",
+      "label": "admission on write",
+      "variant": "security"
+    },
+    {
+      "from": "hub_api",
+      "to": "reconciler",
+      "label": "watch on generation",
+      "variant": "emphasis"
+    },
+    {
+      "from": "reconciler",
+      "to": "cred_cache",
+      "label": "reuse until refresh",
+      "variant": "dashed"
+    },
+    {
+      "from": "reconciler",
+      "to": "providers",
+      "label": "materialize credential",
+      "variant": "emphasis",
+      "labelDy": 30
+    },
+    {
+      "from": "providers",
+      "to": "kubeconfig_secret",
+      "label": "reads secretRef"
+    },
+    {
+      "from": "providers",
+      "to": "aws_apis",
+      "label": "assume role, presign token",
+      "variant": "security"
+    },
+    {
+      "from": "reconciler",
+      "to": "gateway_secret",
+      "label": "writes owner-annotated",
+      "variant": "emphasis"
+    },
+    {
+      "from": "gateway_secret",
+      "to": "cluster_gateway",
+      "label": "routes by Secret name",
+      "labelDy": 30
+    },
+    {
+      "from": "reconciler",
+      "to": "cluster_gateway",
+      "label": "healthz via gateway",
+      "variant": "emphasis",
+      "labelDy": 26
+    },
+    {
+      "from": "cluster_gateway",
+      "to": "spoke_api",
+      "label": "proxies to endpoint",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Hub API server",
+      "items": [
+        "Holds the SpokeCluster objects you create. It is the one place the CLI and the controller agree on.",
+        "Every write goes through the webhooks first, so a bad spec never reaches the controller.",
+        "The controller writes its four conditions back here, and that is what vela spokes reads."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Admission webhooks",
+      "items": [
+        "Fill in the defaults and reject specs the connect path cannot honour.",
+        "A kubeconfig Secret in another namespace is refused here rather than failing later in the loop.",
+        "infraProvisioning, blueprintRef and rolloutStrategyRef are Phase 2 fields, so they are rejected while mode is connect."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "SpokeCluster reconciler",
+      "items": [
+        "The loop that does the work: get a credential, write the gateway Secret, probe the spoke, record what it found.",
+        "It stops at the first failure and says so in a condition, so a broken credential never reports Connected.",
+        "It asks to be woken after the probe interval, or sooner when the credential expires first."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Credential providers",
+      "items": [
+        "Turn whatever the spec declared into one usable set of facts: an endpoint, a CA, and either a token or a client certificate.",
+        "The kubeconfig provider reads a Secret. The AWS provider assumes the per-cluster role, describes the EKS cluster, and presigns a token.",
+        "The azure and gcp arms pass schema validation but no provider builds them, so those spokes never connect."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Credential cache",
+      "items": [
+        "Keeps the last materialized credential in memory so the controller does not call AWS on every probe.",
+        "An entry is dropped when the spec generation changes, when it nears its refresh deadline, or when the spoke answers 401.",
+        "It lives in the process, so a controller restart re-derives every credential."
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Gateway Secret",
+      "items": [
+        "The handoff point. The controller writes the connection details into vela-system and cluster-gateway reads them by Secret name.",
+        "An owner annotation records which SpokeCluster wrote it, so a Secret from a manual vela cluster join is left alone.",
+        "Deleting the SpokeCluster removes this Secret under detach and keeps it under orphan."
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "cluster-gateway and the spoke",
+      "items": [
+        "cluster-gateway proxies hub requests to the spoke API server, so the controller never dials the spoke itself.",
+        "The probe is a plain healthz call through that proxy; a pass also reads the version and nodes for the inventory.",
+        "TLS is verified against the endpoint host, so a kubeconfig needing a different server name is refused before any write."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+# Reproducible fixture for the Vela Config controller audit.
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: audit-system-default
+  namespace: vela-system
+spec:
+  scope: system
+  template: |
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "Secret"
+        metadata: {
+          name:      context.name
+          namespace: "template-attempted-other-namespace"
+        }
+        stringData: value: parameter.value
+      }
+      parameter: value: string
+    }
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-default-template-namespace
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-system-default
+  properties:
+    value: resolved-from-vela-system

@@ -1,0 +1,280 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Create new branch and push to remote"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/branch-create:*)"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "required-passthrough"
+# hint = "<name>"
+# description = "Branch name"
+#
+# [[tool.claude.argument]]
+# name = "spec"
+# type = "optional-passthrough"
+# hint = "--spec [project:]spec[:ctx1,ctx2]"
+# description = "Spec to create or associate with the branch, in composite format"
+#
+# [[tool.claude.argument]]
+# name = "impl"
+# type = "optional-passthrough"
+# hint = "[--impl]"
+# description = "Begin implementation immediately after branch creation"
+# flag = true
+#
+# [tool.claude.output]
+# prompt = "Confirm branch creation. Show what it branched from. Note if pushed to remote. If spec was associated or created, show spec status. If prefix was applied, show it. Remind user to rename session with: /rename <branch-name>. IMPORTANT: If impl_requested is true in the output, immediately begin implementing the feature described in the spec context - do not wait for user input."
+# examples = [
+#   "[OK] Created branch 'feature-auth' from origin/main\n[OK] Pushed to remote with upstream tracking\n\nTip: Rename this session to match: /rename feature-auth",
+#   "[OK] Created branch 'sclaussen/feature-auth' from origin/main (prefix: sclaussen)\n[OK] Pushed to remote with upstream tracking\n\nTip: Rename this session to match: /rename sclaussen/feature-auth",
+#   "[OK] Created branch 'feature-auth' from origin/main\n[OK] Pushed to remote with upstream tracking\n[OK] Created spec 'auth' and associated with branch\n\nTip: Rename this session to match: /rename feature-auth"
+# ]
+# ///
+
+import sys
+import os
+import argparse
+import subprocess
+from pathlib import Path
+
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    get_repo_url,
+    get_current_branch,
+    run_git,
+    output_result,
+    get_template_from_metadata,
+    branch_exists,
+    remote_branch_exists,
+    get_default_branch
+)
+from lib.devyaml import get as yaml_get
+
+
+def _get_repo_name():
+    """Extract repo name from origin remote URL."""
+    result = subprocess.run(
+        ['git', 'remote', 'get-url', 'origin'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return None
+    url = result.stdout.strip()
+    if not url:
+        return None
+    if url.endswith('.git'):
+        url = url[:-4]
+    url = url.rstrip('/')
+    name = url.split('/')[-1]
+    return name.lower() if name else None
+
+
+def get_aidev_config(key):
+    """Read a git workflow config value from dev.yaml."""
+    repo = _get_repo_name()
+    if not repo:
+        return None
+    value = yaml_get(f'git.{repo}.{key}')
+    return str(value) if value is not None else None
+
+
+def find_spec_script(script_name):
+    """Locate a spec script by checking common paths."""
+    candidates = [
+        os.path.join(bin_dir, script_name),
+        os.path.join(os.getenv('WSROOT', ''), '.claude', 'scripts', script_name),
+        os.path.abspath(os.path.join(bin_dir, '..', '..', '..', '..', 'spec', 'src', 'claude', 'scripts', script_name)),
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+def run_spec_script(script_name, composite_spec):
+    """Run a spec script with the composite spec argument."""
+    script_path = find_spec_script(script_name)
+    if not script_path:
+        return {'success': False, 'action': f'Script {script_name} not found'}
+
+    env = {**os.environ, 'CC': '1'}
+    result = subprocess.run([script_path, composite_spec], capture_output=True, text=True, env=env)
+
+    if result.returncode == 0:
+        action = 'created' if script_name == 'spec-create' else 'associated'
+        return {'success': True, 'action': action}
+    else:
+        return {'success': False, 'action': result.stderr.strip()}
+
+
+def spec_dir_exists(spec_name):
+    """Check if a spec directory already exists (via spec script)."""
+    script_path = find_spec_script('spec-list')
+    if not script_path:
+        return False
+    env = {**os.environ, 'CC': '1'}
+    result = subprocess.run([script_path], capture_output=True, text=True, env=env)
+    if result.returncode == 0:
+        import json
+        try:
+            data = json.loads(result.stdout)
+            specs = data.get('specs', [])
+            return any(s.get('name') == spec_name for s in specs)
+        except Exception:
+            pass
+    return False
+
+
+def parse_composite_spec(spec_arg):
+    """Parse [project:]name[:ctx1,ctx2] and return (project, name, ctx_refs)."""
+    if not spec_arg:
+        return None, None, []
+    parts = spec_arg.split(':')
+    if len(parts) == 1:
+        return None, parts[0], []
+    # Check if first part looks like a project (no digits only) or ctx list
+    # Format: [project:]name[:ctx1,ctx2]
+    # We use a simple heuristic: last part may be ctx (contains comma or known ctx names)
+    # project:name or name:ctx or project:name:ctx
+    if len(parts) == 2:
+        # Could be project:name or name:ctx
+        # If second part contains commas, treat as name:ctx
+        if ',' in parts[1]:
+            return None, parts[0], [r.strip() for r in parts[1].split(',') if r.strip()]
+        # Otherwise treat as project:name
+        return parts[0], parts[1], []
+    if len(parts) >= 3:
+        # project:name:ctx1,ctx2
+        ctx_refs = [r.strip() for r in parts[2].split(',') if r.strip()]
+        return parts[0], parts[1], ctx_refs
+    return None, spec_arg, []
+
+
+def main():
+    """Create new branch and push to remote."""
+    parser = argparse.ArgumentParser(description='Create new branch and push to remote')
+    parser.add_argument('name', help='Branch name')
+    parser.add_argument('--spec', default=None,
+                        help='Spec to associate in composite format: [project:]spec[:ctx1,ctx2]')
+    parser.add_argument('--impl', action='store_true',
+                        help='Begin implementation immediately after branch creation')
+
+    args = parser.parse_args()
+    branch = args.name
+
+    # Apply prefix
+    prefix = get_aidev_config('branch-prefix')
+    if prefix:
+        branch = f"{prefix}/{branch}"
+
+    default_branch = get_default_branch()
+
+    if branch_exists(branch):
+        from lib.gitlib import error
+        error(f"Branch '{branch}' already exists locally")
+        sys.exit(1)
+
+    repo_url = get_repo_url()
+
+    if remote_branch_exists(branch, repo_url):
+        from lib.gitlib import error
+        error(f"Branch '{branch}' already exists on remote")
+        sys.exit(1)
+
+    # Pull latest default branch
+    run_git(
+        ['pull', repo_url, default_branch],
+        operation_description=f"pull latest {default_branch}",
+        context=default_branch
+    )
+
+    # Create and checkout branch
+    run_git(
+        ['checkout', '-b', branch],
+        operation_description="create branch",
+        context=branch
+    )
+
+    # Push branch to remote
+    run_git(
+        ['push', repo_url, f'HEAD:refs/heads/{branch}'],
+        operation_description="push branch",
+        context=branch
+    )
+
+    # Ensure origin remote has full fetch refspec
+    run_git(
+        ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'],
+        operation_description="set full fetch refspec",
+        context='origin'
+    )
+
+    # Fetch to update local remote-tracking refs
+    run_git(
+        ['fetch', repo_url, f'{branch}:refs/remotes/origin/{branch}'],
+        operation_description="fetch remote tracking ref",
+        context=branch
+    )
+
+    # Set upstream tracking
+    run_git(
+        ['branch', '--set-upstream-to', f'origin/{branch}'],
+        operation_description="set upstream tracking",
+        context=branch
+    )
+
+    push_status = "[OK] Pushed to remote with upstream tracking"
+
+    # Handle --spec: create or associate spec
+    spec_status = None
+    spec_name = None
+    if args.spec:
+        project, spec_name, ctx_refs = parse_composite_spec(args.spec)
+        # Reconstruct composite for passing to spec scripts (they handle composite format)
+        composite = args.spec
+
+        if spec_dir_exists(spec_name):
+            result = run_spec_script('spec', composite)
+            if result['success']:
+                spec_status = f"[OK] Associated existing spec '{spec_name}' with branch"
+            else:
+                spec_status = f"[WARNING] Failed to associate spec: {result['action']}"
+        else:
+            result = run_spec_script('spec-create', composite)
+            if result['success']:
+                spec_status = f"[OK] Created spec '{spec_name}' and associated with branch"
+            else:
+                spec_status = f"[WARNING] Failed to create spec: {result['action']}"
+
+    # Build output
+    data = {
+        'branch': branch,
+        'base': f'origin/{default_branch}',
+        'push_status': push_status
+    }
+
+    if args.name != branch:
+        data['input_name'] = args.name
+
+    if prefix:
+        data['prefix_applied'] = prefix
+
+    if spec_status:
+        data['spec_status'] = spec_status
+        data['spec_name'] = spec_name
+
+    if args.impl:
+        data['impl_requested'] = True
+
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,344 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Run parallel brainstorming sessions with persona-driven agents"
+# model = "opus"
+# allowed-tools = ["Task", "Read", "Write", "Bash(script:spec-brainstorm)", "AskUserQuestion"]
+#
+# [[tool.claude.argument]]
+# name = "topic"
+# type = "optional-passthrough"
+# hint = "[topic]"
+# description = "The topic or question to brainstorm (if omitted, brainstorms around the current spec)"
+#
+# [[tool.claude.argument]]
+# name = "sessions"
+# type = "optional-passthrough"
+# hint = "--sessions N"
+# description = "Number of parallel brainstorming sessions (default: 3)"
+#
+# [[tool.claude.argument]]
+# name = "personas"
+# type = "optional-passthrough"
+# hint = "--personas N"
+# description = "Number of personas per session (default: 5)"
+#
+# [[tool.claude.argument]]
+# name = "keep"
+# type = "optional-passthrough"
+# hint = "--keep"
+# description = "Save each session's raw output to brainstorm-{persona}.md alongside the merged output"
+# flag = true
+#
+# [tool.claude.output]
+# prompt = """The script returned a JSON configuration for brainstorming. Follow these steps:
+#
+# ## Step 1: Parse Configuration
+#
+# Extract the fields from the JSON:
+# - `topic`: The brainstorm topic (may be null -- see Step 2)
+# - `session_count`: Number of parallel agents to spawn
+# - `personas_per_session`: Number of personas each agent should embody
+# - `output_path`: Where to write the final merged output (null = brainstorm.md in cwd)
+# - `spec`: Spec name from branch association (may be null)
+# - `context_paths`: Array of context references from branch association
+# - `available_agents`: List of agent names the LLM can choose from
+# - `keep`: If true, save each session's raw output to individual files
+#
+# ## Step 2: Handle Topic
+#
+# - If `topic` is provided: use it as the brainstorm topic
+# - If `topic` is null AND `spec` is set: read the spec documents (requirements.md, design.md, tasks.md)
+#   from the spec directory and brainstorm around the spec -- alternatives, extensions, gaps, and new ideas.
+#   Summarize the spec content as the "topic" for agents.
+# - If `topic` is null AND `spec` is null: ask the user for a topic using AskUserQuestion
+#
+# ## Step 3: Select Personas
+#
+# From `available_agents`, select personas for the sessions:
+#
+# - Read each persona file at `$WSROOT/.claude/skills/spec-driven-development/references/personas/{name}.md` to understand what they do
+# - For brainstorming, prefer creative/generative personas (visionary, contrarian, provocateur, strategist,
+#   historian, pragmatist, optimizer, analyst, user-advocate, synthesizer) but choose based on the topic
+# - Select `personas_per_session` personas for each session
+# - When `personas_per_session` = 1: select a DIFFERENT single persona per session to maximize diversity
+# - When `personas_per_session` > 1: each session gets the same set of personas for internal debate
+#
+# ## Step 4: Spawn Parallel Brainstorming Agents
+#
+# For EACH session, spawn a Task agent. Send ALL Task calls in a SINGLE message for maximum parallelism.
+#
+# For each Task agent:
+# - `subagent_type`: "general-purpose"
+# - `model`: "opus"
+# - Do NOT use `isolation: "worktree"` -- agents return their content as text, no file writes needed
+#
+# ### Single Persona (personas_per_session = 1):
+#
+# ```
+# {full content from the persona's .md file}
+#
+# ## Your Task
+#
+# Brainstorm the following topic from your persona's perspective:
+#
+# **Topic:** {topic}
+#
+# {if context_paths provided: "## Additional Context\n\n" + read each context path and include contents}
+#
+# Produce a comprehensive markdown document (1500-3000 words) with:
+# 1. **Perspective Summary** - Your persona's high-level take (2-3 paragraphs)
+# 2. **Key Ideas** - 3-5 concrete ideas, each with title, description, strengths, and risks
+# 3. **Connections** - How this relates to broader patterns and adjacent domains
+# 4. **Recommendations** - Your top 3 ranked recommendations
+#
+# Return the full markdown content as your response. Do NOT write any files.
+# ```
+#
+# ### Multi-Persona Debate (personas_per_session > 1):
+#
+# ```
+# You are facilitating an internal brainstorming debate. Channel EACH of the
+# following personas in sequence, letting each respond to and build on the others.
+#
+# {for each selected persona: full content from persona .md file}
+#
+# ## Your Task
+#
+# Brainstorm the following topic by cycling through each persona:
+#
+# **Topic:** {topic}
+#
+# {if context_paths provided: "## Additional Context\n\n" + read each context path and include contents}
+#
+# For EACH persona in order:
+# 1. Adopt that persona's cognitive lens fully
+# 2. Generate their unique perspective (ideas, concerns, recommendations)
+# 3. Have them respond to points raised by previous personas
+#
+# Produce a synthesized document (2000-4000 words) with:
+# 1. **Session Synthesis** - Themes from the internal debate
+# 2. **Per-Persona Contributions** - Each persona's key ideas (labeled)
+# 3. **Points of Agreement** - Where personas converged
+# 4. **Points of Tension** - Where personas disagreed and why
+# 5. **Ranked Recommendations** - Emerging from the multi-perspective debate
+#
+# Return the full markdown content as your response. Do NOT write any files.
+# ```
+#
+# ## Step 5: Collect Outputs
+#
+# After ALL agents complete, collect the returned text from each agent.
+#
+# ## Step 6: Synthesize Merged Document
+#
+# Write the final merged document:
+#
+# ```markdown
+# # Brainstorm: {topic}
+#
+# > Generated by {N} parallel sessions, {M} personas per session.
+#
+# ## Executive Summary
+# {2-3 paragraphs synthesizing key themes across ALL sessions.
+#  Identify strongest ideas, important trade-offs, areas of agreement/disagreement.}
+#
+# ## Recommendations
+# {Top 5-8 ranked recommendations with persona support notes}
+#
+# ---
+#
+# ## Session 1
+# {full session output}
+#
+# ---
+#
+# ## Session 2
+# {full session output}
+#
+# (repeat for all sessions)
+# ```
+#
+# ## Step 7: Write Output
+#
+# - If `output_path` is provided: write there (create parent dirs if needed)
+# - Otherwise: write to `brainstorm.md` in the current working directory
+# - If `keep` is true: ALSO write each session's raw output to a separate file alongside the merged
+#   output. Name each file `brainstorm-{persona}.md` where `{persona}` is the primary persona name
+#   for that session (e.g., `brainstorm-visionary.md`, `brainstorm-critic.md`). For multi-persona
+#   sessions, use the first persona name in the set.
+#
+# ## Step 8: Report
+#
+# Tell the user: session count, personas used, output path, and 2-3 sentence theme overview.
+# If `keep` is true, also list the per-session files written.
+# """
+# examples = [
+#   "Spawning 3 brainstorming agents (3x5 grid)...\n\n[Spawns 3 parallel Task agents]\n\nAll sessions complete. Writing merged output to brainstorm.md\n\n3 sessions x 5 personas | Key themes: separation of concerns + incremental migration + plugin distribution"
+# ]
+# ///
+
+"""
+spec-brainstorm - Run parallel brainstorming sessions with persona-driven agents
+
+Spawns N parallel agents, each embodying one or more personas, to independently
+brainstorm a topic. The orchestrating LLM selects
+personas from the available agent pool. Merges all outputs into a synthesized
+document with summary and recommendations.
+
+Usage:
+    spec-brainstorm [topic] [--sessions N] [--personas N] [--keep]
+
+Arguments:
+    topic               The topic to brainstorm (optional; if omitted, brainstorms around current spec)
+    --sessions N        Number of parallel sessions (default: 3)
+    --personas N        Number of personas per session (default: 5)
+    --keep              Save each session's raw output to brainstorm-{persona}.md
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+# Add script directory to path for speclib imports
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+def resolve_spec_path(spec_name):
+    """Resolve the output path for a spec, using speclib."""
+    try:
+        from lib.speclib import doc_root
+        root = doc_root()
+        if root:
+            return str(root / 'specs' / spec_name)
+    except ImportError:
+        pass
+    return None
+
+
+def get_available_agents():
+    """List available persona names from skill references."""
+    wsroot = os.environ.get('WSROOT', '')
+    if not wsroot:
+        # Try git toplevel
+        try:
+            result = subprocess.run(
+                ['git', 'rev-parse', '--show-toplevel'],
+                capture_output=True, text=True, check=True
+            )
+            wsroot = result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return []
+
+    personas_dir = os.path.join(
+        wsroot, '.claude', 'skills', 'spec-driven-development',
+        'references', 'personas'
+    )
+    if not os.path.isdir(personas_dir):
+        return []
+
+    agents = []
+    for entry in sorted(os.listdir(personas_dir)):
+        if entry.endswith('.md'):
+            agents.append(entry[:-3])
+    return agents
+
+
+def get_associated_spec():
+    """Get the spec associated with the current branch, if any."""
+    try:
+        from lib.speclib import get_associated_spec as _get_spec, get_current_branch
+        branch = get_current_branch()
+        if branch:
+            return _get_spec(branch)
+    except ImportError:
+        pass
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('topic', nargs='*', help='The topic to brainstorm (optional)')
+    parser.add_argument('--sessions', type=int, default=3,
+                       help='Number of parallel sessions (default: 3)')
+    parser.add_argument('--personas', type=int, default=5,
+                       help='Number of personas per session (default: 5)')
+    parser.add_argument('--keep', action='store_true',
+                       help='Save each session output to brainstorm-{persona}.md')
+    args = parser.parse_args()
+
+    cc_mode = os.getenv('CC') == '1'
+
+    # Join multi-word topic (supports multi-line via Shift+Enter)
+    topic = ' '.join(args.topic) if args.topic else None
+
+    # Resolve spec from branch association
+    spec_name = get_associated_spec()
+
+    # Resolve output path
+    output_path = None
+    if spec_name:
+        spec_dir = resolve_spec_path(spec_name)
+        if spec_dir:
+            output_path = os.path.join(spec_dir, 'brainstorm.md')
+
+    # Resolve context paths from branch association
+    context_paths = []
+    try:
+        from lib.speclib import resolve_context_path, get_contexts, get_current_branch
+        branch = get_current_branch()
+        if branch:
+            refs = get_contexts(branch)
+            for ref in refs:
+                path = resolve_context_path(ref)
+                context_paths.append({'ref': ref, 'path': str(path), 'exists': path.exists()})
+    except ImportError:
+        pass
+
+    # Get available agents
+    available_agents = get_available_agents()
+
+    # Build result
+    result = {
+        'status': 'ready',
+        'command': 'brainstorm',
+        'topic': topic,
+        'session_count': args.sessions,
+        'personas_per_session': args.personas,
+        'output_path': output_path,
+        'spec': spec_name,
+        'context_paths': context_paths,
+        'available_agents': available_agents,
+        'keep': args.keep,
+    }
+
+    if cc_mode:
+        print(json.dumps(result))
+    else:
+        print("Brainstorm Configuration")
+        print("=" * 60)
+        print(f"Topic: {topic or '(spec-based brainstorm)'}")
+        print(f"Sessions: {args.sessions}")
+        print(f"Personas per session: {args.personas}")
+        print(f"Grid: {args.sessions}x{args.personas}")
+        if spec_name:
+            print(f"Spec: {spec_name}")
+        if output_path:
+            print(f"Output: {output_path}")
+        else:
+            print("Output: brainstorm.md (current directory)")
+        if context_paths:
+            print(f"Context: {', '.join(c['ref'] for c in context_paths)}")
+        if available_agents:
+            print(f"Available agents: {', '.join(available_agents)}")
+
+
+if __name__ == '__main__':
+    main()

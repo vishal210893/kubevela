@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: audit-app-broken
+  namespace: default
+spec:
+  components:
+    - name: cfg
+      type: audit-broken-compile
+      properties:
+        name: audit-broken-cm
+        left:  ["a=1", "b=2"]
+        right: ["c=3"]

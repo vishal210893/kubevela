@@ -1,0 +1,12 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: regex-notmatch-invalid
+  namespace: default
+spec:
+  components:
+    - name: regex-notmatch-invalid
+      type: regex-notmatch
+      properties:
+        appName: hello
+        env: dev

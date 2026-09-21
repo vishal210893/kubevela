@@ -1,0 +1,11 @@
+# Minimal Addon CR — pinned mode.
+# An exact semver tag pins the version: the controller installs exactly this
+# version and never upgrades it on its own. Recommended for GitOps.
+apiVersion: core.oam.dev/v1beta1
+kind: Addon
+metadata:
+  name: velaux
+spec:
+  version: "v1.2.0"
+  # Protect (default): deleting this CR is blocked while installed resources exist.
+  deletionPolicy: Protect

@@ -1,0 +1,51 @@
+# =============================================================================
+# Auth matrix #3 — Opaque Secret with base64 username/password
+#
+# The Opaque dispatcher (auth.go:350-401) accepts a free-form Secret with
+# the same `username`/`password` keys as basic-auth, plus token / TLS keys
+# / insecureSkipTLS / insecurePlainHTTP. Useful when you can't or don't want
+# to pin a typed Secret (e.g. SealedSecrets, sops-encoded, GitOps shims that
+# strip the type).
+#
+# Fill in password.data with base64 of your PAT:
+#   echo -n 'dckr_pat_<your-pat>' | base64
+# =============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: arc-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dockerhub-creds-opaque
+  namespace: arc-system
+type: Opaque
+data:
+  username: dmlzaGFsMjEwODkz                    # base64("vishal210893")
+  password: ZGNrcl9wYXRfTHE2OExlNWgyclUtQVVCSjlnZmJhdVFQTnZZ          # base64("dckr_pat_...")
+---
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: oci-auth-opaque
+  namespace: arc-system
+spec:
+  components:
+    - name: arc-crds
+      type: helmchart
+      properties:
+        chart:
+          source: oci://registry-1.docker.io/vishal210893/arc-crds
+          version: "0.1.0"
+          auth:
+            secretRef:
+              name: dockerhub-creds-opaque
+        release:
+          name: arc-crds-opaque
+          namespace: arc-system
+        options:
+          createNamespace: true
+          includeCRDs: true
+          skipTests: true

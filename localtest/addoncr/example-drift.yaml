@@ -1,0 +1,28 @@
+# Addon CR for manually testing drift detection (KEP-2.13).
+#
+# Uses the "example" addon from the LOCAL MOCK registry (e2e/addon/mock), which
+# installs:
+#   - the owned Application  addon-example (vela-system)
+#   - a ComponentDefinition  helm-example  (vela-system)   <- an auxiliary
+#   - an args Secret         addon-secret-example
+# All three are recorded in the addon-owned drift ResourceTracker
+# "addon-example-drift" and healed from there on reconcile, with no registry fetch.
+#
+# Prerequisites (see DRIFT_TESTING.md):
+#   - vela-core running with --feature-gates=AddonCRD=true
+#   - mock registry server running (go run ./e2e/addon/mock) on 127.0.0.1:9098
+#   - vela-addon-registry ConfigMap pointing "KubeVela" at the mock (OSS endpoint)
+#
+# skipVersionCheck: true is required when vela-core runs out-of-cluster (no
+# vela-core Deployment for the version check to read). parameters.example is
+# required by the example addon's parameter.cue (no default).
+apiVersion: core.oam.dev/v1beta1
+kind: Addon
+metadata:
+  name: example
+spec:
+  version: "1.0.0"
+  registry: KubeVela
+  skipVersionCheck: true
+  parameters:
+    example: "drift-test"

@@ -1,0 +1,26 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+#
+# [tool.claude]
+# description = "Scan merged PRs for unresolved med/low review issues and open follow-up PRs"
+# model = "opus"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/harness-code-review-retro *)"]
+#
+# [[tool.claude.argument]]
+# name = "days"
+# type = "optional"
+# hint = "[--days N] [--dry-run] [--severity med|low|both]"
+# description = "Days to look back (default: 7). Use --dry-run to preview. Use --severity to filter by severity."
+# ///
+"""Code-review retro: open follow-up PRs for unresolved med/low issues. TODO: implement."""
+import sys
+
+def main():
+    print("harness:code-review-retro: not yet implemented", file=sys.stderr)
+    sys.exit(1)
+
+if __name__ == "__main__":
+    main()

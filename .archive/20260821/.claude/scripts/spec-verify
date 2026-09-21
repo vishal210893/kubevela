@@ -1,0 +1,272 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Verify implementation against specification"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-verify)", "Read", "Glob", "Grep"]
+#
+# [tool.claude.output]
+# prompt = """Perform multi-dimensional specification verification using the gathered context.
+#
+# Analyze four dimensions in order:
+#
+# 1. TASK COMPLETION
+#    - Use tasks_summary from script output (completed/total counts, incomplete items)
+#    - List each incomplete task
+#    - Flag CRITICAL if any incomplete task is a blocker for other tasks (check BlockedBy references)
+#    - Flag INFO for incomplete tasks that don't block anything
+#
+# 2. REQUIREMENTS TRACEABILITY
+#    - Read each EARS criterion from requirements content (look for WHEN/IF/WHILE/THE SYSTEM SHALL patterns)
+#    - For each requirement, scan changed_files and diff_content for evidence of implementation
+#    - Flag WARNING for requirements with no implementation evidence in changed files
+#    - Flag CRITICAL for requirements explicitly marked as critical/P0 with no implementation
+#    - If no requirements.md exists, skip this dimension and note it
+#
+# 3. DESIGN COHERENCE
+#    - Read architecture decisions, technology choices, and file structure expectations from design content
+#    - Compare against changed_files and file_tree for consistency
+#    - Flag WARNING for design decisions not reflected in code (e.g., design says "Redis" but no Redis usage found)
+#    - If no design.md exists, skip this dimension and note it
+#
+# 4. CROSS-ARTIFACT CONSISTENCY
+#    - Check that requirements reference tasks and vice versa
+#    - Check that design decisions are reflected in task structure
+#    - Flag WARNING for orphaned requirements (no matching task) or orphaned tasks (no requirement backing)
+#    - If any doc is missing, note which cross-references cannot be checked
+#
+# Severity levels:
+#   CRITICAL - Blocks progress or indicates missing core functionality
+#   WARNING - Partial implementation, design drift, or gaps that should be addressed
+#   INFO - Suggestions, minor inconsistencies, potential improvements
+#
+# Output format (use exactly this structure):
+#
+# ```
+# # Verification Report: <spec_name>
+#
+# ## Summary
+# - Tasks: N/M complete (K remaining)
+# - Requirements traceability: N/M verified (K findings)
+# - Design coherence: N findings
+# - Cross-artifact consistency: PASS/N findings
+#
+# ## Findings
+#
+# ### CRITICAL: <identifier> - <title>
+# <description of the gap with specific evidence>
+#
+# ### WARNING: <identifier> - <title>
+# <description of the gap with specific evidence>
+#
+# ### INFO: <identifier> - <title>
+# <description>
+# ```
+#
+# If all dimensions pass with no findings, output:
+# ```
+# # Verification Report: <spec_name>
+#
+# ## Summary
+# - Tasks: M/M complete
+# - Requirements traceability: PASS
+# - Design coherence: PASS
+# - Cross-artifact consistency: PASS
+#
+# All checks passed. Implementation aligns with specification.
+# ```
+#
+# Be specific in findings - quote the relevant requirement text, design decision, or task description.
+# Reference file paths from changed_files when noting missing implementations."""
+# examples = [
+#   "# Verification Report: auth-feature\n\n## Summary\n- Tasks: 7/10 complete (3 remaining)\n- Requirements traceability: 8/10 verified (2 WARNINGS)\n- Design coherence: 1 WARNING\n- Cross-artifact consistency: PASS\n\n## Findings\n\n### WARNING: REQ-003 (Rate Limiting) - No implementation found\nRequirement: \"WHEN client exceeds 100 requests/minute THE SYSTEM SHALL return HTTP 429\"\nNo matching implementation detected in changed files.\n\n### WARNING: Design Decision \"Redis for session storage\" - Not reflected\ndesign.md specifies Redis. Implementation uses in-memory storage."
+# ]
+# ///
+
+"""
+Gather context for specification verification.
+
+Collects spec documents, git diff output, and file listings for the LLM
+to perform multi-dimensional verification analysis.
+"""
+
+import sys
+import os
+import json
+import re
+import subprocess
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import require_associated_spec, spec_path, get_git_root
+
+
+def get_default_branch():
+    """Get the default branch name (main or master)."""
+    result = subprocess.run(
+        ['git', 'symbolic-ref', 'refs/remotes/origin/HEAD'],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        return result.stdout.strip().split('/')[-1]
+
+    result = subprocess.run(
+        ['git', 'rev-parse', '--verify', 'main'],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        return 'main'
+
+    result = subprocess.run(
+        ['git', 'rev-parse', '--verify', 'master'],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        return 'master'
+
+    return 'main'
+
+
+def parse_tasks(content):
+    """Parse task checkboxes from content. Returns completed, total, and incomplete items."""
+    completed = 0
+    total = 0
+    incomplete_items = []
+
+    for line in content.split('\n'):
+        if re.match(r'\s*- \[x\]', line, re.IGNORECASE):
+            completed += 1
+            total += 1
+        elif re.match(r'\s*- \[ \]', line):
+            total += 1
+            task_text = re.sub(r'^\s*- \[ \]\s*', '', line).strip()
+            incomplete_items.append(task_text)
+
+    return completed, total, incomplete_items
+
+
+def get_changed_files(default_branch):
+    """Get list of changed files vs default branch."""
+    result = subprocess.run(
+        ['git', 'diff', '--name-only', f'origin/{default_branch}...HEAD'],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        return [f for f in result.stdout.strip().split('\n') if f]
+
+    # Fallback: diff against origin/default_branch without ...HEAD
+    result = subprocess.run(
+        ['git', 'diff', '--name-only', f'origin/{default_branch}'],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        return [f for f in result.stdout.strip().split('\n') if f]
+
+    return []
+
+
+def get_diff_content(default_branch):
+    """Get actual diff content vs default branch."""
+    result = subprocess.run(
+        ['git', 'diff', f'origin/{default_branch}...HEAD'],
+        capture_output=True
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.decode('utf-8', errors='replace')
+
+    result = subprocess.run(
+        ['git', 'diff', f'origin/{default_branch}'],
+        capture_output=True
+    )
+    if result.returncode == 0:
+        return result.stdout.decode('utf-8', errors='replace')
+
+    return ''
+
+
+def get_file_tree(git_root):
+    """Get project file tree listing."""
+    result = subprocess.run(
+        ['git', 'ls-files'],
+        capture_output=True, text=True,
+        cwd=str(git_root)
+    )
+    if result.returncode == 0:
+        return result.stdout
+    return ''
+
+
+def main():
+    spec_name, branch = require_associated_spec()
+
+    path = spec_path(spec_name)
+    if not path.exists():
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': f"Spec '{spec_name}' not found", 'spec_name': spec_name}))
+        else:
+            print(f"Error: Spec '{spec_name}' not found at {path}/", file=sys.stderr)
+        sys.exit(1)
+
+    git_root = get_git_root()
+    default_branch = get_default_branch()
+
+    # Read spec documents
+    docs = {}
+    for doc_name in ['requirements', 'design', 'tasks']:
+        doc_file = path / f'{doc_name}.md'
+        docs[doc_name] = {
+            'exists': doc_file.exists(),
+            'content': doc_file.read_text() if doc_file.exists() else None
+        }
+
+    # Parse tasks if tasks.md exists
+    tasks_summary = {'completed': 0, 'total': 0, 'incomplete_items': []}
+    if docs['tasks']['exists']:
+        completed, total, incomplete = parse_tasks(docs['tasks']['content'])
+        tasks_summary = {
+            'completed': completed,
+            'total': total,
+            'incomplete_items': incomplete
+        }
+
+    # Get git diff information
+    changed_files = get_changed_files(default_branch)
+    diff_content = get_diff_content(default_branch)
+
+    # Truncate diff if too large (keep first 50k chars for LLM context)
+    if len(diff_content) > 50000:
+        diff_content = diff_content[:50000] + '\n\n... (diff truncated, showing first 50000 chars)'
+
+    # Get file tree
+    file_tree = get_file_tree(git_root)
+
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(path),
+        'branch': branch,
+        'default_branch': default_branch,
+        'docs': docs,
+        'tasks_summary': tasks_summary,
+        'changed_files': changed_files,
+        'diff_content': diff_content,
+        'file_tree': file_tree
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Verification context for spec '{spec_name}'")
+        print(f"  Branch: {branch}")
+        print(f"  Default branch: {default_branch}")
+        print(f"  Docs: requirements={'yes' if docs['requirements']['exists'] else 'no'}, "
+              f"design={'yes' if docs['design']['exists'] else 'no'}, "
+              f"tasks={'yes' if docs['tasks']['exists'] else 'no'}")
+        print(f"  Tasks: {tasks_summary['completed']}/{tasks_summary['total']} complete")
+        print(f"  Changed files: {len(changed_files)}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,109 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Reset all branch-scoped spec settings (project, spec, context)"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-clear *)"]
+#
+# [tool.claude.output]
+# prompt = "Confirm what was cleared. Show the reset summary."
+# examples = [
+#   "Reset branch 'feature-auth'\n\n  Cleared spec: feature-auth\n  Cleared project: platform\n  Cleared contexts: steering, auth\n\nBranch now uses default settings.",
+#   "Nothing to reset on branch 'main' (no branch overrides set)"
+# ]
+# ///
+
+"""
+Reset all branch-scoped spec settings: project override, spec association,
+and context list. The branch reverts to repo defaults.
+
+Equivalent to `/spec -:-:-`
+
+Idempotent: Yes (safe to run if nothing is set)
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent / 'lib'))
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_current_branch, get_project, get_repo_name,
+    get_associated_spec, get_contexts, get_branch_project,
+    in_git_repo, disassociate_spec, remove_branch_project,
+    set_contexts,
+)
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    repo = get_repo_name()
+
+    # Gather current state
+    spec_name = get_associated_spec(branch)
+    contexts = get_contexts(branch)
+
+    old_project = get_branch_project(branch)
+    has_project_override = old_project is not None
+
+    # Clear everything
+    cleared_spec = False
+    cleared_project = False
+    cleared_contexts = []
+
+    if spec_name:
+        disassociate_spec(branch)
+        cleared_spec = True
+
+    if has_project_override:
+        remove_branch_project(branch)
+        cleared_project = True
+
+    if contexts:
+        cleared_contexts = contexts[:]
+        set_contexts([], branch)
+
+    # Build result
+    data = {
+        'branch': branch,
+        'cleared_spec': spec_name if cleared_spec else None,
+        'cleared_project': old_project if cleared_project else None,
+        'cleared_contexts': cleared_contexts,
+        'had_overrides': cleared_spec or cleared_project or bool(cleared_contexts),
+        'fallback_project': get_project(branch),
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if not data['had_overrides']:
+            print(f"Nothing to reset on branch '{branch}' (no branch overrides set)")
+        else:
+            print(f"Reset branch '{branch}'")
+            print()
+            if cleared_spec:
+                print(f"  Cleared spec: {spec_name}")
+            if cleared_project:
+                print(f"  Cleared project: {old_project}")
+            if cleared_contexts:
+                print(f"  Cleared contexts: {', '.join(cleared_contexts)}")
+            print()
+            print("Branch now uses default settings.")
+
+
+if __name__ == "__main__":
+    main()

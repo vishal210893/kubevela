@@ -1,0 +1,1 @@
+{"name":"app-wait-fail","services":{"app-basic2":{"type":"webservice","image":"nginx:fail","ports":[{port: 80, expose: true}]}}}

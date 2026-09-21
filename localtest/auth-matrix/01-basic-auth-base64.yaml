@@ -1,0 +1,54 @@
+# =============================================================================
+# Auth matrix #1 — basic-auth Secret with base64 `data:` field
+#
+# Same OCI pull from private Docker Hub repo as the original test, but the
+# Secret values are supplied via `data:` (base64) instead of `stringData:`.
+# Verifies that the controller is indifferent to which Secret field is used.
+#
+# BEFORE APPLYING, fill in the password.data value:
+#
+#   echo -n 'dckr_pat_<your-pat>' | base64
+#   # e.g. -> ZGNrcl9wYXRfTHE2OExlNWgyclUtQVVCSjlnZmJhdVFQTnZZ
+#
+# The username "vishal210893" is already base64-encoded below
+# (echo -n vishal210893 | base64 = dmlzaGFsMjEwODkz).
+# =============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: arc-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dockerhub-creds-basic-data
+  namespace: arc-system
+type: kubernetes.io/basic-auth
+data:
+  username: dmlzaGFsMjEwODkz                    # base64("vishal210893")
+  password: ZGNrcl9wYXRfTHE2OExlNWgyclUtQVVCSjlnZmJhdVFQTnZZ           # base64("dckr_pat_...")
+---
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: oci-auth-basic-data
+  namespace: arc-system
+spec:
+  components:
+    - name: arc-crds
+      type: helmchart
+      properties:
+        chart:
+          source: oci://registry-1.docker.io/vishal210893/arc-crds
+          version: "0.1.0"
+          auth:
+            secretRef:
+              name: dockerhub-creds-basic-data
+        release:
+          name: arc-crds-basic-data
+          namespace: arc-system
+        options:
+          createNamespace: true
+          includeCRDs: true
+          skipTests: true

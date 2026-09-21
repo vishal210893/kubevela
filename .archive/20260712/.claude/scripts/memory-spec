@@ -1,0 +1,271 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml"]
+#
+# [tool.claude]
+# description = "Analyze the specs repo and update the ## Specs and ## Contexts sections of steering/memory.md"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/memory-spec *)", "Read"]
+#
+# [tool.claude.output]
+# prompt = """Use the JSON inventory to update ## Contexts and ## Specs in steering/memory.md:
+#
+# 0. Boilerplate check:
+#    - Read the file at `memory_file`. If it does not start with `# Steering Memory`,
+#      prepend this exact boilerplate before all sections:
+#
+#      # Steering Memory
+#      <!-- Always injected at session start. Scan sections to find context to load. -->
+#      <!-- Auto-updated: ## Contexts and ## Specs by memory-spec; ## dev2 by memory-code. -->
+#
+#      **Load ctx:** `@<spec_root>/ctx/<name>/<file>.md`
+#      **Load spec:** `<spec_root>/specs/<name>/`
+#      **Associate ctx with branch:** `/spec:ctx` | `~/.dev/dev.yaml → spec.<repo>.branches.<branch>.ctx`
+#
+#      ---
+#
+# 1. Format ## Contexts as a table (omit section entirely if no contexts):
+#    - Comment line first: `<!-- Updated by memory-spec workflow. Do not edit manually. -->`
+#    - Table columns: context | load when | last modified
+#      - "load when": use the `description` field from JSON; if empty, use '-'
+#    - Sort alphabetically by context name
+#
+# 2. Format ## Specs as a dense table:
+#    - Comment line first: `<!-- Updated by memory-spec workflow. Do not edit manually. -->`
+#    - Header: **snapshot**: <ISO-8601-date> | <N> specs | <N> contexts
+#    - Table columns: spec | branch | docs | last modified
+#      - branch: comma-separated associations or '-'
+#      - docs: R=requirements.md, D=design.md, T=tasks.md (letters for files that exist)
+#    - Sort alphabetically by spec name
+#
+# 3. Section-isolation protocol:
+#    - Find ## Contexts heading; find next ## heading (or EOF); replace only that range
+#    - Find ## Specs heading; find next ## heading (or EOF); replace only that range
+#    - If a heading is absent, append at end
+#    - Do NOT touch any other section (especially ## dev2)
+#
+# 4. Report:
+#    [OK] Updated ## Specs and ## Contexts in <path>
+#      specs: <N> total (<N> with branches)
+#      contexts: <N>"""
+# examples = [
+#   "[OK] Updated ## Specs and ## Contexts in /workspaces/src/specs/dev/steering/memory.md\n  specs: 14 total (8 with branches)\n  contexts: 3"
+# ]
+# ///
+"""
+memory-spec - Collect specs and contexts inventory as JSON.
+
+Walks the specs repo directory and lists all specs with name, branch
+association, and last git-commit date, plus all context directories.
+Claude formats this into the ## Specs and ## Contexts sections of
+steering/memory.md.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def get_wsroot():
+    """Detect workspace root from WSROOT env or git."""
+    wsroot = os.environ.get('WSROOT')
+    if wsroot:
+        return Path(wsroot)
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--show-toplevel'],
+            capture_output=True, text=True, check=True
+        )
+        return Path(result.stdout.strip())
+    except subprocess.CalledProcessError:
+        print('Error: not in a git repository', file=sys.stderr)
+        sys.exit(1)
+
+
+def get_spec_root():
+    """Resolve spec root from ~/.dev/dev.yaml."""
+    import yaml
+
+    config_path = Path.home() / '.dev' / 'dev.yaml'
+    spec_repo_dir = '$WSROOT/specs'
+    project = None
+
+    if config_path.exists():
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+        spec_section = config.get('spec', {})
+        for repo_name, repo_config in spec_section.items():
+            if isinstance(repo_config, dict):
+                spec_repo_dir = repo_config.get('spec-repo-directory', spec_repo_dir)
+                project = repo_config.get('project')
+                break
+
+    wsroot = get_wsroot()
+    spec_repo_dir = spec_repo_dir.replace('$WSROOT', str(wsroot))
+
+    if not project:
+        project = wsroot.name
+
+    return Path(spec_repo_dir), project
+
+
+def get_spec_repo_path(spec_repo_dir):
+    """Get the top-level specs repo directory (parent of project dirs)."""
+    return Path(spec_repo_dir)
+
+
+def get_last_modified(spec_repo_dir, rel_path):
+    """Get last git commit date for a path using git -C."""
+    try:
+        result = subprocess.run(
+            ['git', '-C', str(spec_repo_dir), 'log', '-1',
+             '--format=%aI', '--', str(rel_path)],
+            capture_output=True, text=True, check=True
+        )
+        date_str = result.stdout.strip()
+        if date_str:
+            return date_str[:10]
+    except subprocess.CalledProcessError:
+        pass
+    return 'unknown'
+
+
+def get_branch_associations():
+    """Read branch-spec associations from dev.yaml."""
+    import yaml
+
+    config_path = Path.home() / '.dev' / 'dev.yaml'
+    if not config_path.exists():
+        return {}
+
+    with open(config_path) as f:
+        config = yaml.safe_load(f) or {}
+
+    associations = {}
+    spec_section = config.get('spec', {})
+    for repo_name, repo_config in spec_section.items():
+        if not isinstance(repo_config, dict):
+            continue
+        branches = repo_config.get('branches', {})
+        for branch, branch_config in branches.items():
+            if isinstance(branch_config, dict):
+                spec = branch_config.get('spec')
+                if spec:
+                    associations.setdefault(spec, []).append(branch)
+            elif isinstance(branch_config, str):
+                associations.setdefault(branch_config, []).append(branch)
+
+    return associations
+
+
+def list_specs(spec_root, spec_repo_dir, project):
+    """List all specs with metadata."""
+    specs_dir = spec_root / 'specs'
+    if not specs_dir.is_dir():
+        return []
+
+    associations = get_branch_associations()
+    specs = []
+
+    for d in sorted(specs_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        name = d.name
+        rel_path = f'{project}/specs/{name}'
+        last_modified = get_last_modified(spec_repo_dir, rel_path)
+        branches = associations.get(name, [])
+
+        has_reqs = (d / 'requirements.md').exists()
+        has_design = (d / 'design.md').exists()
+        has_tasks = (d / 'tasks.md').exists()
+
+        specs.append({
+            'name': name,
+            'branches': branches,
+            'last_modified': last_modified,
+            'has_requirements': has_reqs,
+            'has_design': has_design,
+            'has_tasks': has_tasks,
+        })
+
+    return specs
+
+
+def extract_ctx_description(ctx_dir):
+    """Extract first non-empty line after H1 heading from the primary .md file."""
+    name = ctx_dir.name
+    primary_doc = ctx_dir / f'{name}.md'
+    if not primary_doc.exists():
+        md_files = sorted(ctx_dir.glob('*.md'))
+        if not md_files:
+            return ''
+        primary_doc = md_files[0]
+    try:
+        lines = primary_doc.read_text(encoding='utf-8').splitlines()
+    except OSError:
+        return ''
+    after_h1 = False
+    for line in lines:
+        if not after_h1:
+            if line.startswith('# '):
+                after_h1 = True
+            continue
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ''
+
+
+def list_contexts(spec_root, spec_repo_dir, project):
+    """List all context directories."""
+    ctx_dir = spec_root / 'ctx'
+    if not ctx_dir.is_dir():
+        return []
+
+    contexts = []
+    for d in sorted(ctx_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        name = d.name
+        rel_path = f'{project}/ctx/{name}'
+        last_modified = get_last_modified(spec_repo_dir, rel_path)
+        file_count = sum(1 for _ in d.rglob('*') if _.is_file())
+        description = extract_ctx_description(d)
+        contexts.append({
+            'name': name,
+            'last_modified': last_modified,
+            'file_count': file_count,
+            'description': description,
+        })
+
+    return contexts
+
+
+def main():
+    spec_repo_dir_path, project = get_spec_root()
+    spec_root = spec_repo_dir_path / project
+
+    if not spec_root.is_dir():
+        print(json.dumps({
+            'error': f'Spec root not found: {spec_root}',
+            'spec_root': str(spec_root),
+        }))
+        sys.exit(1)
+
+    inventory = {
+        'spec_root': str(spec_root),
+        'spec_repo_dir': str(spec_repo_dir_path),
+        'project': project,
+        'memory_file': str(spec_root / 'steering' / 'memory.md'),
+        'specs': list_specs(spec_root, spec_repo_dir_path, project),
+        'contexts': list_contexts(spec_root, spec_repo_dir_path, project),
+    }
+
+    json.dump(inventory, sys.stdout, indent=2)
+    print()
+
+
+if __name__ == '__main__':
+    main()

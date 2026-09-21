@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GWCP-108610 - Description, explained</title>
+<style>
+:root{
+  --bg:#fbfaf8; --panel:#ffffff; --ink:#1b1b1f; --muted:#5b5f68; --line:#e3e1dc;
+  --accent:#8a5a2b; --accent-soft:#f4ece2; --code-bg:#f5f3ef; --quote:#f7f4ee;
+  --hub:#2f6f7d; --spoke:#7d552f; --warn:#8a2b2b; --warn-soft:#faeeee;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#16161a; --panel:#1d1d22; --ink:#e9e7e3; --muted:#a0a2ab; --line:#2f2f37;
+    --accent:#d9a066; --accent-soft:#2a221a; --code-bg:#232329; --quote:#212026;
+    --hub:#6fb8c8; --spoke:#d9a066; --warn:#e08b8b; --warn-soft:#2b1c1c;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#16161a; --panel:#1d1d22; --ink:#e9e7e3; --muted:#a0a2ab; --line:#2f2f37;
+  --accent:#d9a066; --accent-soft:#2a221a; --code-bg:#232329; --quote:#212026;
+  --hub:#6fb8c8; --spoke:#d9a066; --warn:#e08b8b; --warn-soft:#2b1c1c;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 var(--sans);
+  padding:0 16px; padding-block:0}
+.wrap{max-width:860px;margin:0 auto;padding-block:48px 96px}
+header.masthead{border-bottom:1px solid var(--line);padding-bottom:22px;margin-bottom:34px}
+.kicker{font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+h1{font-size:clamp(26px,4.4vw,38px);line-height:1.18;margin:14px 0 10px;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:15px;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.tag{font:500 12px/1 var(--mono);padding:6px 9px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:var(--panel)}
+h2{font-size:23px;margin:52px 0 6px;letter-spacing:-.01em;scroll-margin-top:20px}
+h3{font-size:17px;margin:30px 0 6px}
+h4{font-size:15px;margin:22px 0 4px;color:var(--muted);font-weight:600}
+p{margin:12px 0}
+a{color:var(--accent)}
+.lede{font-size:17px;color:var(--ink)}
+.rule{height:1px;background:var(--line);border:0;margin:44px 0}
+blockquote.src{background:var(--quote);border-left:3px solid var(--accent);margin:16px 0;
+  padding:14px 18px;border-radius:0 8px 8px 0;font-size:15px;color:var(--ink)}
+blockquote.src p{margin:8px 0}
+code{font:13px/1.5 var(--mono);background:var(--code-bg);padding:2px 5px;border-radius:4px}
+pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+  overflow-x:auto;margin:16px 0}
+pre code{background:none;padding:0;font-size:13px;line-height:1.55}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:18px 0}
+.card h4{margin-top:0}
+.anchor{font:12px/1.5 var(--mono);color:var(--muted)}
+.anchor b{color:var(--ink);font-weight:600}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 12px/1.4 var(--mono);text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+td code{white-space:nowrap}
+.flag{background:var(--warn-soft);border:1px solid var(--warn);border-radius:12px;padding:16px 18px;margin:20px 0}
+.flag h4{color:var(--warn);margin-top:0}
+ol,ul{padding-left:22px}
+li{margin:7px 0}
+details{margin:14px 0;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:0 16px}
+details[open]{padding-bottom:10px}
+summary{cursor:pointer;padding:12px 0;font:600 14px/1.4 var(--sans);color:var(--muted)}
+figure{margin:24px 0}
+figcaption{font-size:13px;color:var(--muted);margin-top:10px}
+svg{max-width:100%;height:auto;display:block}
+.toc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+.toc ol{margin:6px 0 0;padding-left:20px}
+.toc a{text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.footnote{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div class="kicker">Epic walkthrough, part 1 of N</div>
+  <h1>GWCP-108610, the Description section explained</h1>
+  <p class="sub">[Sestiere] KubeVela, Cluster Infrastructure Abstraction KEP, Provision Mode, KV OSS</p>
+  <div class="meta">
+    <span class="tag">Epic - Open - High</span>
+    <span class="tag">Component: Atmos KubeVela</span>
+    <span class="tag">KEP: design/vela-core/kep-cluster-infrastructure.md</span>
+    <span class="tag">Branch: feat/module-component-v3</span>
+  </div>
+</header>
+
+<div class="toc">
+  <strong>What is in this document</strong>
+  <ol>
+    <li><a href="#orientation">Orientation, in one paragraph</a></li>
+    <li><a href="#p1">Paragraph 1: what is being built and in what order</a></li>
+    <li><a href="#p2">Paragraph 2: why Crossplane, and what already exists</a></li>
+    <li><a href="#p3">Paragraph 3: what "bare minimum" means</a></li>
+    <li><a href="#p4">Paragraph 4: the hub is not in scope</a></li>
+    <li><a href="#model">The mental model, drawn</a></li>
+    <li><a href="#glossary">Every term in the Description</a></li>
+    <li><a href="#conflicts">Conflicts, gaps and assumptions</a></li>
+  </ol>
+</div>
+
+<h2 id="orientation">Orientation, in one paragraph</h2>
+<p class="lede">KubeVela today can deploy workloads to a cluster that somebody else already built. This epic is about the opposite direction: you write one Kubernetes object, apply it to a hub cluster, and an EKS cluster appears in AWS, wired up and registered, with no Terraform run and no runbook. The specification for that already exists as a KEP. None of it has been implemented. The epic's job is to implement the first slice of it and prove the slice against a real AWS account.</p>
+
+<h3>Where this sits relative to what already shipped</h3>
+<p>Two earlier pieces of work matter here. Revelstoke shipped the <code>SpokeCluster</code> kind with a <code>mode</code> field that accepts only <code>connect</code>, so KubeVela can take over a cluster that exists. GWCP-108609 extended that to Atmos. This epic opens the <code>provision</code> value of that same field, which is the mode that creates a cluster rather than adopting one.</p>
+
+<hr class="rule">
+
+<h2 id="p1">Paragraph 1: what is being built and in what order</h2>
+
+<blockquote class="src">
+<p>Land the Provision slice (KEP Mode 1: Provision, Create New Cluster) of the Cluster Infrastructure Abstraction KEP in KubeVela OSS, and prove it by standing up a bare-minimum Atmos EKS cluster from a <code>SpokeCluster</code> CR. Provision is the mode that <em>creates</em> a cluster, and it is the seam Revelstoke deliberately left closed: GWCP-102121's webhook and GWCP-105243's CEL rules reject <code>mode: provision</code> today. This epic opens it.</p>
+<p>The order of work follows the KEP's lifecycle phases. <code>infraProvisioning</code> runs <strong>on the hub</strong>, against cloud APIs, before the spoke exists, it provisions the prerequisites (VPC, subnets, NAT/IGW, IAM roles and OIDC, Route53 zone where needed) and then the EKS cluster itself, publishing outputs (<code>vpcId</code>, <code>privateSubnets</code>, <code>clusterEndpoint</code>, <code>oidcProviderArn</code>) that downstream planes consume. Only once the cluster exists do the spoke-reconciled phases run: <code>clusterInit</code> (foundational layer), <code>planeProvisioning</code> (the dispatched blueprint's planes), and <code>healthValidation</code>. Prereq infrastructure is modelled as a <code>scope: shared</code> ClusterPlane so a second cluster in the same region consumes the existing VPC/IAM outputs instead of re-creating them; the per-cluster EKS plane is <code>scope: perCluster</code> and imports those outputs via <code>inputs.fromPlane</code>.</p>
+</blockquote>
+
+<h3>"The seam Revelstoke deliberately left closed"</h3>
+<p>A seam is a place in the code that was shaped for a future change but left switched off. The <code>mode</code> field is one. The API already has three legal-looking values in the design, but validation only lets <code>connect</code> through. Two mechanisms do that rejection, and both have to be relaxed by this epic:</p>
+<table>
+  <tr><th>Mechanism</th><th>Where it runs</th><th>What it does today</th><th>Ticket</th></tr>
+  <tr><td>Validating admission webhook</td><td>A pod in the hub cluster, called by the API server before the object is stored</td><td>Rejects any mode other than connect, with a message</td><td>GWCP-102121</td></tr>
+  <tr><td>CEL validation rules on the CRD</td><td>Inside the API server itself, compiled from the CRD schema</td><td>Same restriction, enforced without a webhook being reachable</td><td>GWCP-105243</td></tr>
+</table>
+<p>Both exist because a partially implemented mode is worse than an absent one. A user who applies <code>mode: provision</code> against today's controller would get an object that is accepted and then silently does nothing. Rejecting it at admission means the API never lies about what it can do.</p>
+
+<h3>The lifecycle phases, and why the order is the plan</h3>
+<p>The KEP splits the life of a managed cluster into four phases. The important property is not the names, it is <em>where each phase is reconciled</em>, because that determines what has to exist before it can run.</p>
+
+<table>
+  <tr><th>Phase</th><th>Runs on</th><th>Acts on</th><th>Examples from the KEP</th></tr>
+  <tr><td><code>infraProvisioning</code></td><td>Hub</td><td>Cloud provider APIs</td><td>VPC, IAM roles, DNS zones</td></tr>
+  <tr><td><code>clusterInit</code></td><td>Spoke</td><td>The spoke cluster</td><td>CNI, base controllers and operators, Helm runtime, base CRDs</td></tr>
+  <tr><td><code>planeProvisioning</code></td><td>Spoke</td><td>The spoke cluster</td><td>Cilium, cert-manager, ingress, monitoring agents</td></tr>
+  <tr><td><code>healthValidation</code></td><td>Spoke, read by the hub on demand</td><td>The spoke cluster</td><td>Validation apps, smoke tests, readiness checks</td></tr>
+</table>
+
+<p class="anchor"><b>KEP anchor:</b> lines 3906-3919 (execution model table), 4237-4320 (phase definitions and the deletion order).</p>
+
+<p>Only the first phase can run before the cluster exists, which is exactly why provision mode is harder than connect mode. In connect mode all four phases have a live API server to talk to from the first reconcile. In provision mode the hub has to talk to AWS, not to Kubernetes, for the entire first phase, because there is no spoke API server to talk to yet. The KEP states this directly: "Runs on the hub; no spoke exists yet."</p>
+
+<p>The ordering claim in the epic is therefore a claim about dependencies, not about taste. You cannot install a CNI into a cluster that has not been created. You cannot create an EKS cluster without subnet IDs. So the work has to be built in the order the dependencies run, and the epic's thin slices follow that order: slice 1 stops at prerequisites, slice 2 adds the cluster itself.</p>
+
+<h3>Outputs, and why they are the load-bearing idea</h3>
+<p>An output is a value one piece of infrastructure publishes after it is created, which another piece then reads as an input. The four named in the epic are the handoff points between the shared prerequisite layer and the cluster layer:</p>
+<table>
+  <tr><th>Output</th><th>Produced by</th><th>Consumed by</th></tr>
+  <tr><td><code>vpcId</code></td><td>The VPC component in the shared plane</td><td>The EKS cluster component</td></tr>
+  <tr><td><code>privateSubnets</code></td><td>The subnet components in the shared plane</td><td>EKS control plane and node group placement</td></tr>
+  <tr><td><code>oidcProviderArn</code></td><td>The IAM component in the shared plane</td><td>IRSA on the new cluster</td></tr>
+  <tr><td><code>clusterEndpoint</code></td><td>The EKS component</td><td>The gateway registration that hands off to connect mode</td></tr>
+</table>
+<p>In the KEP the plumbing for this is explicit. A plane declares what it publishes under <code>outputs[].valueFrom</code>, naming a component and a field path inside that component's own status. A consuming plane declares <code>inputs[]</code> with <code>fromPlane</code> and <code>output</code>, naming the plane and the output it wants.</p>
+
+<pre><code># Shared plane publishes
+outputs:
+  - name: vpcId
+    valueFrom:
+      component: vpc
+      fieldPath: outputs.vpc_id
+
+# Per-cluster plane consumes
+inputs:
+  - name: vpcId
+    fromPlane: shared-vpc-us-east-1
+    output: vpcId</code></pre>
+<p class="anchor"><b>KEP anchor:</b> lines 6516-6600, Use Case 5, multi-cluster shared VPC.</p>
+
+<h3>scope: shared against scope: perCluster</h3>
+<p>Every ClusterPlane carries a scope. It answers one question: when two clusters both reference this plane, do they get one copy of the infrastructure or two?</p>
+<ul>
+  <li><code>scope: shared</code> means one copy. The first cluster to reference it causes the infrastructure to be created. The second consumes the outputs of what already exists. A VPC, its NAT gateways and the IAM baseline belong here, because three clusters in one region sharing one VPC is the normal production layout and re-creating it per cluster wastes address space and money.</li>
+  <li><code>scope: perCluster</code> means one copy each. The EKS control plane and its node group belong here, because "share the cluster between clusters" is meaningless.</li>
+</ul>
+<p>The KEP also restricts who may consume a shared plane, through <code>sharedWith.clusterSelector</code>, which is an ordinary label selector matched against the SpokeCluster. A production VPC can be declared shareable only with clusters labelled for that region and environment.</p>
+
+<div class="card">
+  <h4>A detail worth internalising early: a ClusterPlane does nothing on its own</h4>
+  <p>The KEP is emphatic that a ClusterPlane is a template, not a self-reconciling object. Creating one validates the schema and may cut a revision. It creates no cloud resources. Infrastructure appears only when a SpokeCluster references a blueprint that contains the plane. The KEP calls this the pull model, and the reason given is that it leaves no orphaned infrastructure, since every real resource traces back to a SpokeCluster that asked for it.</p>
+  <p class="anchor"><b>KEP anchor:</b> lines 1045-1080.</p>
+</div>
+
+<hr class="rule">
+
+<h2 id="p2">Paragraph 2: why Crossplane, and what already exists</h2>
+
+<blockquote class="src">
+<p>The provisioning backend is Crossplane, wired through <code>ClusterProviderDefinition.spec.schematic.crossplane.compositionRef</code>. The KEP is explicitly backend-agnostic (Crossplane, CAPI, tf-controller, ACK, KRO), and Crossplane is the right choice for Atmos because the substrate is already there: <code>atmos-crossplane-providers</code> ships and enables <code>provider-aws-ec2</code>, <code>provider-aws-iam</code>, <code>provider-aws-eks</code> and <code>provider-aws-route53</code> today, all IRSA-bound via <code>aws.iamRoleArn</code>, and <code>CCS-atmos-oam-library</code> already carries 12 Crossplane compositions with <code>vcluster</code> as a cluster-shaped precedent (XRD + claim + Ginkgo suite). The new work is the XRDs and Compositions for the shared VPC/IAM prereq plane and the bare-minimum EKS plane, not a new provider family.</p>
+</blockquote>
+
+<h3>What backend-agnostic actually means here</h3>
+<p>The KEP is careful about KubeVela's role. It says, in the positioning box near the top, that KubeVela does not provision clusters directly, and that provisioning is delegated to CAPI, Crossplane, Terraform, KRO or cloud-native operators. KubeVela's contribution is composition, ordering, rollout and ownership across those tools.</p>
+<p class="anchor"><b>KEP anchor:</b> lines 120-135, The Approach, and the delegation table at 95-119.</p>
+
+<p><code>ClusterProviderDefinition</code> is where that pluggability is expressed. It is a CRD whose <code>schematic</code> field has one arm per backend, and the KEP shows Crossplane, Terraform and a native controller as alternatives in the same object:</p>
+
+<pre><code>spec:
+  provider: aws
+  schematic:
+    crossplane:
+      compositionRef:
+        name: eks-cluster-composition
+    # terraform:
+    #   moduleSource: "terraform-aws-modules/eks/aws"
+    # native:
+    #   controllerImage: "kubevela/cluster-provider-aws:v1.0.0"</code></pre>
+<p class="anchor"><b>KEP anchor:</b> lines 4353-4440, including the <code>aws-eks</code>, <code>gcp-gke</code>, <code>azure-aks</code> and <code>kind</code> examples.</p>
+
+<p>The epic keeps all the arms in the schema and implements only the Crossplane one. That is a deliberate trade: the extension point stays visible to the upstream community and to future GKE or CAPI work, while the delivery risk stays bounded to a single backend.</p>
+
+<h3>The rest of that CRD, which the epic also names</h3>
+<p>Three more fields on <code>ClusterProviderDefinition</code> appear in the epic's What section and are worth defining now, because they carry weight in the acceptance criteria:</p>
+<table>
+  <tr><th>Field</th><th>What it holds</th><th>Why the epic cares</th></tr>
+  <tr><td><code>defaults</code></td><td>Provider-level defaults such as Kubernetes version, instance type, node counts, VPC CIDR</td><td>Lets a SpokeCluster stay short, since a user supplies credentials, region and a blueprint and nothing else</td></tr>
+  <tr><td><code>capabilities</code></td><td>A list of things the provider supports, for example private endpoint, managed node groups, spot instances</td><td>Declares what the backend can do without the controller hard-coding AWS knowledge</td></tr>
+  <tr><td><code>statusMappings</code></td><td>Translation from backend-specific states into the standard phase machine</td><td>EKS says <code>CREATING</code>, <code>ACTIVE</code>, <code>FAILED</code>. KubeVela has to say Provisioning, Ready, Failed. This field is the dictionary</td></tr>
+</table>
+
+<h3>The Atmos substrate argument</h3>
+<p>The second half of the paragraph is a cost argument rather than a design one. Four AWS Crossplane providers are already installed and enabled in Atmos, bound to AWS through IRSA. They currently back data-service compositions such as S3, EFS, Aurora and OpenSearch. Nothing has yet pointed them at the infrastructure that a cluster is made of. The claim is that the missing pieces are two compositions, not a new platform.</p>
+<p>The <code>vcluster</code> precedent is doing specific work in this argument. It is an existing composition in the same library that produces something cluster-shaped, and it comes with the structure the new work is expected to copy: an XRD, a claim, and a Ginkgo suite that exercises it.</p>
+
+<h4>Crossplane vocabulary, since the paragraph leans on it</h4>
+<table>
+  <tr><th>Term</th><th>Meaning</th></tr>
+  <tr><td>Provider</td><td>A Crossplane package that teaches the cluster to manage one cloud API family. <code>provider-aws-ec2</code> brings CRDs for VPCs, subnets and route tables</td></tr>
+  <tr><td>Managed resource</td><td>One Kubernetes object that maps to one cloud resource, reconciled by a provider</td></tr>
+  <tr><td>XRD (CompositeResourceDefinition)</td><td>The schema of a custom abstraction you are inventing, for example "an EKS cluster with these five knobs"</td></tr>
+  <tr><td>Composition</td><td>The implementation behind an XRD, expanding one abstract object into many managed resources</td></tr>
+  <tr><td>Claim</td><td>The namespaced object a user creates to get an instance of the XRD</td></tr>
+  <tr><td>IRSA</td><td>IAM Roles for Service Accounts. AWS permissions attached to a Kubernetes service account through OIDC, so no static keys are stored</td></tr>
+</table>
+
+<hr class="rule">
+
+<h2 id="p3">Paragraph 3: what "bare minimum" means</h2>
+
+<blockquote class="src">
+<p>"Bare minimum" is a deliberate constraint: private API endpoint, IRSA enabled, one small system managed node group, and the access wiring the hub needs to reach it. No Atmos NG add-on stack, no Flux bootstrap, no full component set. The cluster must come up <code>Ready</code>, be reachable, and hand off cleanly to the Connect-mode gateway registration built in Revelstoke (GWCP-100435) and extended to Atmos in GWCP-108609, provision ends where connect begins, reusing the same cluster-gateway Secret contract rather than inventing a second one.</p>
+</blockquote>
+
+<p>This paragraph is the scope fence. Each item in the list is there because leaving it out would make the demo dishonest, and everything not in the list is excluded because it would grow the work without proving anything new.</p>
+<table>
+  <tr><th>Included</th><th>Why it cannot be dropped</th></tr>
+  <tr><td>Private API endpoint</td><td>A public endpoint would be a different network design from the one Atmos runs, so a public-endpoint demo would not prove hub-to-spoke reachability</td></tr>
+  <tr><td>IRSA enabled</td><td>Requires the OIDC provider from the prerequisite plane, so it proves the output wiring end to end</td></tr>
+  <tr><td>One small system managed node group</td><td>A cluster with no nodes is not reachable in a useful sense, and node groups are the component that has to wait for <code>ACTIVE</code>, which is the ordering guarantee being tested</td></tr>
+  <tr><td>Access wiring for the hub</td><td>Either an EKS access entry or an aws-auth mapping. Without it the hub has an endpoint it is not authorised to use</td></tr>
+</table>
+
+<h3>"Provision ends where connect begins"</h3>
+<p>This is the most important sentence in the paragraph. Connect mode already knows how to register a cluster: it writes a Secret in a particular shape, with particular labels, which cluster-gateway reads in order to proxy requests. Everything downstream depends on that Secret and nothing else: <code>vela cluster list</code>, topology policies on an Application, read-through to spoke resources.</p>
+<p>So provision mode is not asked to invent registration. It is asked to produce the same Secret, with the difference that the values inside it are derived from plane outputs (endpoint, CA, region) rather than pasted in by a human as a kubeconfig. The acceptance criterion attached to this is that an Application with a topology policy targeting the new cluster by name deploys through the existing gateway with no modification.</p>
+<p>The KEP supports this framing in its backward-compatibility appendix, which discusses referencing existing cluster-gateway Secrets rather than replacing the mechanism.</p>
+<p class="anchor"><b>KEP anchor:</b> lines 7911-7945, Appendix A.</p>
+
+<hr class="rule">
+
+<h2 id="p4">Paragraph 4: the hub is not in scope</h2>
+
+<blockquote class="src">
+<p>The hub is <strong>not</strong> in scope to provision. Per the KEP's own prerequisite, KubeVela does not bootstrap the hub, an existing Atmos PD cluster running <code>vela-cluster-core</code> plus Crossplane serves as the management cluster. Rollout engine, drift detection, health providers, decommissioning workflow, maintenance windows and plane/blueprint revision publishing all remain in the parent KEP.</p>
+</blockquote>
+
+<p>The first half is not a scoping preference, it is a constraint inherited from the KEP. The prerequisites table states that the hub cluster is bootstrapped by the platform team using Terraform, eksctl, the cloud console, CAPI or anything else, and the note underneath is unambiguous: "KubeVela does NOT bootstrap the hub cluster."</p>
+<p class="anchor"><b>KEP anchor:</b> lines 182-194.</p>
+<p>There is no chicken-and-egg problem to solve, in other words. Something has to run the controller that creates clusters, and that something is created the old way, once.</p>
+
+<p>The second half lists the parts of the KEP that stay on the shelf. The KEP is large, roughly eight thousand lines, and it specifies a full fleet-management product. This epic implements the creation path only. What is deferred:</p>
+<table>
+  <tr><th>Deferred capability</th><th>What it would have added</th></tr>
+  <tr><td>Rollout engine (<code>ClusterRollout</code>, <code>ClusterRolloutStrategy</code>)</td><td>Progressive, wave-based infrastructure changes across a fleet with checkpoints</td></tr>
+  <tr><td>Drift detection (<code>ClusterDriftReport</code>, <code>ClusterDriftException</code>)</td><td>Noticing and remediating when a cluster stops matching its blueprint</td></tr>
+  <tr><td>Observability providers and the health hierarchy</td><td>Aggregated health from components up to fleet level</td></tr>
+  <tr><td>Decommissioning workflow</td><td>Staged teardown with rollback checkpoints, as distinct from the plain reverse-order cleanup this epic does implement</td></tr>
+  <tr><td>Maintenance windows</td><td>Enforcing when changes are allowed to run</td></tr>
+  <tr><td>Revision publishing (<code>publishVersion</code>, draft mode, diff and rollback)</td><td>Versioned, diffable, rollback-able planes and blueprints</td></tr>
+</table>
+
+<hr class="rule">
+
+<h2 id="model">The mental model, drawn</h2>
+
+<figure>
+<svg viewBox="0 0 820 470" role="img" aria-label="Hub and spoke diagram showing infraProvisioning on the hub against AWS APIs, and the three spoke-reconciled phases">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace,Menlo,monospace" font-size="12">
+
+    <rect x="14" y="14" width="360" height="300" rx="12" fill="none" stroke="var(--hub)" stroke-width="1.5"/>
+    <text x="30" y="38" fill="var(--hub)" font-size="13" font-weight="700">HUB CLUSTER (already exists, not provisioned by KubeVela)</text>
+
+    <rect x="32" y="54" width="150" height="46" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="44" y="73" fill="var(--ink)">SpokeCluster CR</text>
+    <text x="44" y="90" fill="var(--muted)" font-size="11">mode: provision</text>
+
+    <rect x="206" y="54" width="150" height="46" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="218" y="73" fill="var(--ink)">vela-cluster-core</text>
+    <text x="218" y="90" fill="var(--muted)" font-size="11">reconciler</text>
+    <path d="M186 77 H200" stroke="var(--muted)" fill="none" marker-end="url(#ar)" color="var(--muted)"/>
+
+    <rect x="32" y="120" width="324" height="82" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+    <text x="44" y="140" fill="var(--accent)" font-weight="700">infraProvisioning (phase 1, hub)</text>
+    <text x="44" y="159" fill="var(--ink)" font-size="11">shared plane: VPC, subnets, NAT/IGW, IAM, OIDC, Route53</text>
+    <text x="44" y="176" fill="var(--ink)" font-size="11">perCluster plane: EKS control plane, system node group</text>
+    <text x="44" y="193" fill="var(--muted)" font-size="11">no spoke connectivity needed, nothing to talk to yet</text>
+
+    <rect x="32" y="218" width="324" height="76" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="44" y="238" fill="var(--ink)" font-weight="700">Crossplane on the hub</text>
+    <text x="44" y="256" fill="var(--muted)" font-size="11">provider-aws-ec2 / -iam / -eks / -route53</text>
+    <text x="44" y="273" fill="var(--muted)" font-size="11">XRD + Composition per plane, IRSA bound</text>
+    <path d="M194 206 V214" stroke="var(--muted)" fill="none" marker-end="url(#ar)" color="var(--muted)"/>
+
+    <rect x="430" y="14" width="376" height="128" rx="12" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="446" y="38" fill="var(--muted)" font-size="13" font-weight="700">AWS ACCOUNT</text>
+    <text x="446" y="62" fill="var(--ink)" font-size="11">VPC, 3-AZ subnets, NAT, IGW, route tables</text>
+    <text x="446" y="82" fill="var(--ink)" font-size="11">IAM roles, instance profile, OIDC provider</text>
+    <text x="446" y="102" fill="var(--ink)" font-size="11">EKS cluster (private endpoint, IRSA)</text>
+    <text x="446" y="122" fill="var(--ink)" font-size="11">one managed node group</text>
+    <path d="M360 250 C400 250 400 90 424 82" stroke="var(--accent)" fill="none" marker-end="url(#ar)" color="var(--accent)"/>
+    <text x="368" y="176" fill="var(--accent)" font-size="10">cloud API calls</text>
+
+    <rect x="430" y="168" width="376" height="240" rx="12" fill="none" stroke="var(--spoke)" stroke-width="1.5"/>
+    <text x="446" y="192" fill="var(--spoke)" font-size="13" font-weight="700">SPOKE CLUSTER (exists only after phase 1)</text>
+
+    <rect x="448" y="208" width="340" height="52" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="460" y="228" fill="var(--ink)" font-weight="700">clusterInit (phase 2, spoke)</text>
+    <text x="460" y="247" fill="var(--muted)" font-size="11">CNI, base operators, Helm runtime, base CRDs</text>
+
+    <rect x="448" y="270" width="340" height="52" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="460" y="290" fill="var(--ink)" font-weight="700">planeProvisioning (phase 3, spoke)</text>
+    <text x="460" y="309" fill="var(--muted)" font-size="11">the dispatched blueprint's planes</text>
+
+    <rect x="448" y="332" width="340" height="52" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="460" y="352" fill="var(--ink)" font-weight="700">healthValidation (phase 4, spoke)</text>
+    <text x="460" y="371" fill="var(--muted)" font-size="11">hub reads the verdict by pull, never by push</text>
+
+    <path d="M618 262 V266" stroke="var(--muted)" fill="none" marker-end="url(#ar)" color="var(--muted)"/>
+    <path d="M618 324 V328" stroke="var(--muted)" fill="none" marker-end="url(#ar)" color="var(--muted)"/>
+
+    <rect x="14" y="330" width="360" height="78" rx="12" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="30" y="352" fill="var(--ink)" font-weight="700">Handoff to connect mode</text>
+    <text x="30" y="371" fill="var(--muted)" font-size="11">endpoint + CA + region from plane outputs</text>
+    <text x="30" y="389" fill="var(--muted)" font-size="11">written as the same cluster-gateway Secret</text>
+    <path d="M374 366 H424 V300" stroke="var(--spoke)" fill="none" marker-end="url(#ar)" color="var(--spoke)"/>
+
+    <text x="14" y="440" fill="var(--muted)" font-size="11">Teardown runs the same list upwards: healthValidation, planeProvisioning, clusterInit, infraProvisioning.</text>
+    <text x="14" y="458" fill="var(--muted)" font-size="11">Shared planes only decrement a consumer count, so their resources survive while another cluster still uses them.</text>
+  </g>
+</svg>
+<figcaption>The split that explains most of the epic's difficulty: phase 1 talks to AWS from the hub because no spoke exists, phases 2 to 4 talk to Kubernetes from inside the spoke.</figcaption>
+</figure>
+
+<hr class="rule">
+
+<h2 id="glossary">Every term in the Description</h2>
+
+<h3>Objects</h3>
+<table>
+  <tr><th>Term</th><th>Meaning in this epic</th></tr>
+  <tr><td><code>SpokeCluster</code></td><td>The hub-side handle for one managed cluster. Carries <code>mode</code>, and in provision mode also the cloud provider, credentials, region and the blueprint to use</td></tr>
+  <tr><td><code>Cluster</code></td><td>The spoke-side object that <code>vela-cluster-core</code> reconciles locally. Holds the three spoke phases</td></tr>
+  <tr><td><code>ClusterPlane</code></td><td>A composable infrastructure layer, usually owned by one team. A template until a blueprint pulls it in</td></tr>
+  <tr><td><code>ClusterBlueprint</code></td><td>An ordered composition of planes, with <code>dependsOn</code> between them</td></tr>
+  <tr><td><code>ClusterProviderDefinition</code></td><td>How to provision on a given cloud: which backend, which composition, what defaults, how to read its status</td></tr>
+</table>
+
+<h3>Fields and mechanisms</h3>
+<table>
+  <tr><th>Term</th><th>Meaning</th></tr>
+  <tr><td><code>spec.mode</code></td><td>provision, adopt or connect. The discriminator that decides which phases run</td></tr>
+  <tr><td><code>spec.infraProvisioning.blueprintRef</code></td><td>The blueprint reconciled on the hub before the spoke exists</td></tr>
+  <tr><td><code>scope</code></td><td>shared or perCluster. Decides whether two clusters get one copy of the infrastructure or two</td></tr>
+  <tr><td><code>sharedWith.clusterSelector</code></td><td>Label selector limiting which SpokeClusters may consume a shared plane</td></tr>
+  <tr><td><code>inputs[].fromPlane</code> / <code>output</code></td><td>Import of a named output published by another plane</td></tr>
+  <tr><td><code>outputs[].valueFrom</code></td><td>Publication of a value read out of a named component's status field path</td></tr>
+  <tr><td><code>dependsOn</code></td><td>Ordering between components inside a plane, and between planes inside a blueprint</td></tr>
+  <tr><td><code>status.consumers</code></td><td>The list of SpokeClusters currently using a shared plane</td></tr>
+  <tr><td><code>cluster.oam.dev/shared-plane-consumer-check</code></td><td>Finalizer that refuses deletion of a shared plane while consumers remain</td></tr>
+  <tr><td>Feature gate</td><td>A boolean flag on the controller that keeps an unfinished capability off by default. The epic proposes <code>EnableClusterProvisioning</code> alongside the existing <code>EnableSpokeClusterCRD</code></td></tr>
+  <tr><td>CEL rule</td><td>Validation expression compiled into the CRD, enforced by the API server itself</td></tr>
+  <tr><td>Validating webhook</td><td>An HTTP callout the API server makes before persisting an object, which can reject it</td></tr>
+</table>
+
+<h3>AWS and Crossplane</h3>
+<table>
+  <tr><th>Term</th><th>Meaning</th></tr>
+  <tr><td>NAT / IGW</td><td>NAT gateway for outbound traffic from private subnets, internet gateway for public subnets</td></tr>
+  <tr><td>OIDC provider</td><td>The identity provider registration in IAM that makes IRSA possible</td></tr>
+  <tr><td>IRSA</td><td>IAM Roles for Service Accounts, pod-level AWS credentials without static keys</td></tr>
+  <tr><td>Managed node group</td><td>EKS-managed EC2 worker nodes, as opposed to self-managed or Fargate</td></tr>
+  <tr><td><code>kubernetes.io/role/elb</code>, <code>internal-elb</code></td><td>Subnet tags that tell the AWS load balancer controller where public and internal load balancers may be placed</td></tr>
+  <tr><td>Access entry / aws-auth</td><td>The two ways of granting a principal Kubernetes RBAC identity on an EKS cluster</td></tr>
+  <tr><td>Composition, XRD, claim</td><td>Crossplane's abstraction stack, described in the table above</td></tr>
+</table>
+
+<h3>Programme names that appear without explanation</h3>
+<table>
+  <tr><th>Name</th><th>What it refers to</th></tr>
+  <tr><td>Revelstoke</td><td>The earlier release train that delivered connect mode: the SpokeCluster kind, its webhook, its CEL rules and gateway registration</td></tr>
+  <tr><td>Sestiere</td><td>The release train this epic belongs to</td></tr>
+  <tr><td>Atmos, Atmos NG</td><td>The Guidewire platform whose clusters are the target, and its next-generation cluster stack</td></tr>
+  <tr><td>Atmos PD cluster</td><td>An existing Atmos cluster that serves as the hub</td></tr>
+  <tr><td><code>ccs-atmos</code>, <code>ccs-atmos-provisioner</code></td><td>The Terraform-based path that creates Atmos clusters today</td></tr>
+  <tr><td><code>CCS-atmos-oam-library</code></td><td>The repository holding existing Crossplane compositions, where the new XRDs and Compositions will live</td></tr>
+  <tr><td>Pod Gokarna</td><td>The team authoring the CRDs, controllers and compositions</td></tr>
+</table>
+
+<hr class="rule">
+
+<h2 id="conflicts">Conflicts, gaps and assumptions</h2>
+
+<div class="flag">
+  <h4>1. The KEP names the provision blueprint field in two different places</h4>
+  <p>The Mode 1 section shows a top-level <code>spec.blueprintRef</code> and <code>spec.provider</code> on the SpokeCluster (KEP lines 3931-3960). The lifecycle phases section shows <code>spec.infraProvisioning.blueprintRef</code> alongside a separate top-level <code>spec.blueprintRef</code>, and uses <code>spec.credential</code> rather than <code>spec.provider</code> (KEP lines 4243-4270). The epic follows the second shape for <code>infraProvisioning</code> and the first for <code>provider</code>. Someone has to decide which is authoritative before the API types are written, because both shapes cannot ship.</p>
+</div>
+
+<div class="flag">
+  <h4>2. The epic puts EKS creation inside infraProvisioning, which the KEP's own table does not say</h4>
+  <p>The epic's first paragraph says infraProvisioning provisions the prerequisites "and then the EKS cluster itself". The KEP's execution model table lists only shared cloud infrastructure, that is VPC, IAM and DNS, under infraProvisioning. The KEP's phase notes do support the epic's reading indirectly, since they say that for mode provision "the cluster was already created during infraProvisioning on the hub", but the summary table and the phase description are not consistent with each other. This matters for where the per-cluster EKS plane is reconciled.</p>
+</div>
+
+<div class="flag">
+  <h4>3. Shared-plane semantics are described at two levels and the epic mixes them</h4>
+  <p>The KEP describes sharing both at plane level (<code>scope: shared</code> on a ClusterPlane, with <code>status.consumers</code>) and at blueprint level (two SpokeClusters referencing the same <code>infraProvisioning.blueprintRef</code>). The epic's acceptance criteria assert consumer tracking on the plane, while its scenario 6 asserts that referencing the same blueprint causes no re-reconciliation. Both are in the KEP, and the KEP says the blueprint-level behaviour is implemented by the plane-level mechanism. Worth confirming that the implementation keeps one source of truth rather than two counters.</p>
+</div>
+
+<h3>Questions to settle before implementation starts</h3>
+<ol>
+  <li>Which field shape wins for provision mode, <code>spec.provider</code> plus a top-level <code>blueprintRef</code>, or <code>spec.credential</code> plus <code>infraProvisioning.blueprintRef</code>? Upstream review will ask.</li>
+  <li>Is the per-cluster EKS plane part of the infraProvisioning blueprint, or a separate blueprint reconciled on the hub? The epic implies the former.</li>
+  <li>Does the new feature gate cover the provision mode only, or the three new CRDs as well? A provision-gated mode with ungated ClusterPlane CRDs would let someone create planes that nothing can consume.</li>
+  <li>Where does the hub get its authorisation to the new cluster, an EKS access entry created by the composition or an aws-auth mapping applied afterwards? The second needs API access that the first is supposed to grant, so the ordering has to be explicit.</li>
+</ol>
+
+<hr class="rule">
+<p class="footnote">Next parts of this walkthrough: the Why section and its four arguments, the What section item by item, the acceptance criteria, then the ten BDD scenarios and the three thin slices. This document is updated as each section is covered.</p>
+
+</div>
+</body>
+</html>

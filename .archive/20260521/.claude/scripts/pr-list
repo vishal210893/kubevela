@@ -1,0 +1,60 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "List all pull requests"
+# model = "haiku"
+# context = "fork"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/pr-list)"]
+#
+# [tool.claude.output]
+# prompt = "List all PRs. Show number, title, author, status. Format for scanning."
+# examples = [
+#   "#123  Add authentication     johndoe  open\n#122  Fix login bug         janedoe  open"
+# ]
+# ///
+
+import sys
+import os
+import subprocess
+
+# Import gitlib
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.gitlib import (
+    error, output_result, get_template_from_metadata
+)
+
+
+def main():
+    # List all pull requests
+    result = subprocess.run(['gh', 'pr', 'list'], capture_output=True, text=True)
+
+    if result.returncode != 0:
+        error("Failed to list pull requests", command=['gh', 'pr', 'list'], stderr_output=result.stderr)
+        sys.exit(result.returncode)
+
+    pr_list_raw = result.stdout.strip()
+
+    # Format output with # prefix for PR numbers
+    # gh pr list format: NUMBER\tTITLE\tBRANCH\tSTATE\tDATE
+    # We want: #NUMBER\tTITLE\tBRANCH\tSTATE\tDATE
+    lines = pr_list_raw.split('\n')
+    formatted_lines = []
+    for line in lines:
+        if line.strip():
+            # Add # prefix to PR number (first column)
+            formatted_lines.append('#' + line)
+    pr_list = '\n'.join(formatted_lines)
+
+    # Output result
+    data = {
+        "pr_list": pr_list
+    }
+
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

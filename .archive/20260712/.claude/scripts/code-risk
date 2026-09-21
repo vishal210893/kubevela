@@ -1,0 +1,350 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+#
+# [tool.claude]
+# description = "Classify changes by risk tier using the same algorithm as CI"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/code-risk *)"]
+#
+# [[tool.claude.argument]]
+# name = "pr-number"
+# type = "optional-passthrough"
+# hint = "[pr-number] [--action] [--all]"
+# description = "PR number to classify (omit for local branch changes). Use --action to re-trigger the advanced code review in CI. Use --action --all to re-trigger it for all open non-draft PRs."
+#
+# [[tool.claude.argument]]
+# name = "action"
+# type = "optional-passthrough"
+# hint = "[--action]"
+# description = "Re-trigger the advanced code review in CI instead of classifying locally"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "action"
+# type = "optional-passthrough"
+# hint = "[--action]"
+# description = "Re-trigger the advanced code review in CI instead of classifying locally"
+# flag = true
+#
+# [tool.claude.output]
+# prompt = """Parse the JSON output and present the risk classification:
+# - Tier (LOW/MEDIUM/HIGH/CRITICAL) with score
+# - Total lines changed and file count
+# - Files grouped by risk tier (low/medium/high/critical)
+# - Any unmatched files: these are checked-in files with no matching pattern in
+#   .harness.yaml. Everything in the repo is relevant -- .gitignore is what removes
+#   noise. Unmatched files default to high risk. Use /code:setup to add glob
+#   patterns to .harness.yaml so they are classified at the correct tier.
+# - Custom script results if any ran (abstain = script found no reason to
+#   change the tier; a tier value = script overrides to that tier)"""
+# examples = [
+#   "Risk: HIGH (score: 63) (local changes)\nReason: score 63: base=63 (high), size=+0, scripts=+0\nLines: 150, Files: 5\n\n  high:\n    .github/workflows/pr.yaml\n  low:\n    docs/guide.md\n\nScripts: (none configured)"
+# ]
+# ///
+"""
+code-risk - Classify changes by risk tier.
+
+Runs the same classification algorithm as harness-code-risk.yaml
+against local branch changes or a specific pull request.
+
+Usage:
+    code-risk [PR-NUMBER] [--action] [--all]
+
+Options:
+    --action        Re-trigger the advanced code review for the given PR. The
+                    review (risk tiering + Claude review + reviewer brief) runs
+                    in gwre-pdo/ai-harness via the advanced-code-review dispatch
+                    that caller-advanced-code-review.yaml fires server-side.
+    --all           With --action, re-trigger for all open non-draft PRs
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+# Import shared classification module
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from code_risk import (
+    TIER_ORDER,
+    TIER_RANK,
+    classify,
+    load_config,
+    parse_simple_yaml,
+    run_custom_scripts,
+)
+
+
+def run(cmd, **kwargs):
+    """Run a command and return stripped stdout."""
+    result = subprocess.run(
+        cmd, shell=True, capture_output=True, text=True, **kwargs
+    )
+    return result.stdout.strip()
+
+
+def find_repo_root():
+    """Find the git repository root."""
+    root = run("git rev-parse --show-toplevel")
+    if not root:
+        print("Error: not in a git repository", file=sys.stderr)
+        sys.exit(1)
+    return root
+
+
+def get_default_branch():
+    """Determine the default branch (main or master)."""
+    result = run("git rev-parse --verify --quiet refs/heads/main")
+    if result:
+        return "main"
+    result = run("git rev-parse --verify --quiet refs/heads/master")
+    if result:
+        return "master"
+    return "main"
+
+
+def get_changed_files(default_branch):
+    """Get list of changed files: committed on branch + uncommitted."""
+    files = set()
+
+    merge_base = run(f"git merge-base {default_branch} HEAD")
+    if merge_base:
+        committed = run(f"git diff --name-only {merge_base}...HEAD")
+        if committed:
+            files.update(committed.splitlines())
+
+    uncommitted = run("git diff --name-only HEAD")
+    if uncommitted:
+        files.update(uncommitted.splitlines())
+
+    untracked = run("git ls-files --others --exclude-standard")
+    if untracked:
+        files.update(untracked.splitlines())
+
+    return sorted(f for f in files if f)
+
+
+def get_diff_stats(default_branch):
+    """Get total lines changed and file count."""
+    merge_base = run(f"git merge-base {default_branch} HEAD")
+    total_lines = 0
+    total_files = 0
+
+    if merge_base:
+        stat = run(f"git diff --shortstat {merge_base}...HEAD")
+        lines, count = parse_shortstat(stat)
+        total_lines += lines
+        total_files += count
+
+    stat = run("git diff --shortstat HEAD")
+    lines, count = parse_shortstat(stat)
+    total_lines += lines
+
+    return total_lines, total_files
+
+
+def get_pr_changed_files(pr_number):
+    """Get changed files from a PR via gh CLI."""
+    output = run(f"gh pr diff {pr_number} --name-only")
+    if not output:
+        print(
+            f"Error: could not get diff for PR #{pr_number}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return sorted(f for f in output.splitlines() if f)
+
+
+def get_pr_diff_stats(pr_number):
+    """Get PR stats via gh CLI (additions + deletions, file count)."""
+    output = run(
+        f"gh pr view {pr_number}"
+        f" --json additions,deletions,changedFiles"
+    )
+    if not output:
+        return 0, 0
+    data = json.loads(output)
+    total_lines = data.get("additions", 0) + data.get("deletions", 0)
+    total_files = data.get("changedFiles", 0)
+    return total_lines, total_files
+
+
+def parse_shortstat(stat):
+    """Parse git diff --shortstat output for lines and files."""
+    if not stat:
+        return 0, 0
+    lines = 0
+    files = 0
+    m = re.search(r"(\d+) files? changed", stat)
+    if m:
+        files = int(m.group(1))
+    m = re.search(r"(\d+) insertions?", stat)
+    if m:
+        lines += int(m.group(1))
+    m = re.search(r"(\d+) deletions?", stat)
+    if m:
+        lines += int(m.group(1))
+    return lines, files
+
+
+def main():
+    pr_number = None
+    action_mode = "--action" in sys.argv
+    all_mode = "--all" in sys.argv
+    for arg in sys.argv[1:]:
+        if not arg.startswith("-") and arg.isdigit():
+            pr_number = arg
+            break
+
+    if all_mode and not action_mode:
+        print("Error: --all requires --action", file=sys.stderr)
+        sys.exit(1)
+
+    if action_mode and all_mode:
+        # Fetch all open non-draft PR numbers and trigger workflow for each
+        result = subprocess.run(
+            "gh pr list --state open --json number,isDraft"
+            " -q '.[] | select(.isDraft == false) | .number'",
+            shell=True, capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            print(f"Error: failed to list PRs: {result.stderr.strip()}", file=sys.stderr)
+            sys.exit(1)
+        pr_numbers = [n.strip() for n in result.stdout.strip().splitlines() if n.strip()]
+        if not pr_numbers:
+            print("No open non-draft PRs found.")
+            return
+        triggered = 0
+        failed = 0
+        for num in pr_numbers:
+            # Review (incl. risk tiering) runs in gwre-pdo/ai-harness, started
+            # by the advanced-code-review repository dispatch that
+            # caller-advanced-code-review.yaml fires server-side. Re-trigger it
+            # via that workflow's workflow_dispatch entry.
+            trigger = subprocess.run(
+                f"gh workflow run caller-advanced-code-review.yaml --ref main -f pr_number={num}",
+                shell=True, capture_output=True, text=True,
+            )
+            if trigger.returncode != 0:
+                print(f"  [FAIL] PR #{num}: {trigger.stderr.strip()}", file=sys.stderr)
+                failed += 1
+            else:
+                print(f"  [OK] Triggered for PR #{num}")
+                triggered += 1
+        print(f"\nTriggered {triggered} advanced code review(s) for {len(pr_numbers)} open non-draft PR(s).", end="")
+        if failed:
+            print(f" ({failed} failed)", end="")
+        print()
+        return
+
+    if action_mode:
+        if not pr_number:
+            print("Error: --action requires a PR number", file=sys.stderr)
+            sys.exit(1)
+        # Review (incl. risk tiering) runs in gwre-pdo/ai-harness, started by the
+        # advanced-code-review repository dispatch that
+        # caller-advanced-code-review.yaml fires server-side. Re-trigger it via
+        # that workflow's workflow_dispatch entry.
+        result = subprocess.run(
+            f"gh workflow run caller-advanced-code-review.yaml --ref main -f pr_number={pr_number}",
+            shell=True, capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print(f"Error: failed to trigger workflow: {result.stderr.strip()}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Re-triggered advanced code review for PR #{pr_number} -- results will appear on the PR (posted by ai-harness).")
+        return
+
+    repo_root = find_repo_root()
+    pr_yaml_path = Path(repo_root) / ".harness.yaml"
+    if not pr_yaml_path.exists():
+        print("Error: .harness.yaml not found. Run /code:setup to create one.", file=sys.stderr)
+        sys.exit(1)
+    config = load_config(str(pr_yaml_path))
+
+    if pr_number:
+        files = get_pr_changed_files(pr_number)
+        total_lines, total_files = get_pr_diff_stats(pr_number)
+    else:
+        default_branch = get_default_branch()
+        files = get_changed_files(default_branch)
+        total_lines, _ = get_diff_stats(default_branch)
+        total_files = len(files)
+
+    if not files:
+        data = {
+            "tier": "low",
+            "score": 0,
+            "reason": "No changes detected",
+            "total_lines": 0,
+            "total_files": 0,
+            "files": {},
+            "scripts": [],
+        }
+        if pr_number:
+            data["pr_number"] = pr_number
+        if os.getenv("CC") == "1":
+            print(json.dumps(data))
+        else:
+            print("No changes detected")
+        return
+
+    if not total_files:
+        total_files = len(files)
+
+    script_results = run_custom_scripts(config, files, repo_root, pr_number)
+
+    tier, score, per_file_tiers = classify(
+        changed_files=files,
+        config=config,
+        line_count=total_lines,
+        file_count=total_files,
+        script_results=script_results,
+    )
+
+    # Group files by tier for display
+    file_breakdown = {}
+    for f, t in per_file_tiers.items():
+        file_breakdown.setdefault(t, []).append(f)
+
+    reason = f"score {score}: {tier}"
+
+    data = {
+        "tier": tier,
+        "score": score,
+        "reason": reason,
+        "total_lines": total_lines,
+        "total_files": total_files,
+        "files": file_breakdown,
+        "scripts": script_results,
+    }
+    if pr_number:
+        data["pr_number"] = pr_number
+
+    if os.getenv("CC") == "1":
+        print(json.dumps(data))
+    else:
+        source = f"PR #{pr_number}" if pr_number else "local changes"
+        print(f"Risk: {tier.upper()} (score: {score}) ({source})")
+        print(f"Reason: {reason}")
+        print(f"Lines: {total_lines}, Files: {total_files}")
+        print()
+        for t in TIER_ORDER + ["unmatched"]:
+            if file_breakdown.get(t):
+                print(f"  {t}:")
+                for f in sorted(file_breakdown[t]):
+                    print(f"    {f}")
+        if script_results:
+            print()
+            print("  Scripts:")
+            for sr in script_results:
+                print(f"    {sr['script']}: {sr['result']}")
+
+
+if __name__ == "__main__":
+    main()

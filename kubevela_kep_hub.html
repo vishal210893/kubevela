@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KubeVela Cluster Infrastructure - Knowledge Hub</title>
+    
+    <!-- Google Fonts: Roboto & Material Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    
+    <!-- Mermaid.js for Diagrams -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+
+    <style>
+        :root {
+            /* Material Design Color Palette */
+            --primary: #3f51b5; /* Indigo 500 */
+            --primary-dark: #303f9f;
+            --primary-light: #c5cae9;
+            --accent: #ff4081; /* Pink A200 */
+            
+            --bg-color: #f5f5f6;
+            --surface: #ffffff;
+            --error: #b00020;
+            
+            --text-high: rgba(0, 0, 0, 0.87);
+            --text-med: rgba(0, 0, 0, 0.60);
+            --text-disabled: rgba(0, 0, 0, 0.38);
+            
+            --divider: rgba(0, 0, 0, 0.12);
+            
+            /* Elevations */
+            --shadow-1: 0 2px 1px -1px rgba(0,0,0,.2), 0 1px 1px 0 rgba(0,0,0,.14), 0 1px 3px 0 rgba(0,0,0,.12);
+            --shadow-2: 0 3px 1px -2px rgba(0,0,0,.2), 0 2px 2px 0 rgba(0,0,0,.14), 0 1px 5px 0 rgba(0,0,0,.12);
+            --shadow-3: 0 3px 3px -2px rgba(0,0,0,.2), 0 3px 4px 0 rgba(0,0,0,.14), 0 1px 8px 0 rgba(0,0,0,.12);
+            --shadow-4: 0 2px 4px -1px rgba(0,0,0,.2), 0 4px 5px 0 rgba(0,0,0,.14), 0 1px 10px 0 rgba(0,0,0,.12);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-high);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            line-height: 1.6;
+        }
+
+        /* ----- SIDEBAR NAV ----- */
+        .sidebar {
+            width: 280px;
+            background-color: var(--surface);
+            box-shadow: var(--shadow-4);
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+        }
+
+        .sidebar-header {
+            height: 64px;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            border-bottom: 1px solid var(--divider);
+            color: var(--primary);
+        }
+
+        .sidebar-header .material-icons {
+            margin-right: 12px;
+            font-size: 28px;
+        }
+
+        .sidebar-header h2 {
+            font-size: 1.25rem;
+            font-weight: 500;
+        }
+
+        .nav-list {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+            list-style: none;
+        }
+
+        .nav-item {
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            color: var(--text-high);
+            font-weight: 500;
+            font-size: 0.95rem;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        .nav-item .material-icons {
+            margin-right: 32px;
+            color: var(--text-med);
+        }
+
+        .nav-item:hover {
+            background-color: rgba(63, 81, 181, 0.08);
+            color: var(--primary);
+        }
+
+        .nav-item:hover .material-icons {
+            color: var(--primary);
+        }
+
+        .nav-item.active {
+            color: var(--primary);
+            background-color: rgba(63, 81, 181, 0.12);
+        }
+        
+        .nav-item.active .material-icons {
+            color: var(--primary);
+        }
+
+        /* ----- MAIN CONTENT ----- */
+        .main-container {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        /* App Bar */
+        .app-bar {
+            height: 64px;
+            background-color: var(--primary);
+            color: white;
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            box-shadow: var(--shadow-2);
+            z-index: 10;
+        }
+
+        .app-bar h1 {
+            font-size: 1.25rem;
+            font-weight: 500;
+            letter-spacing: 0.0125em;
+        }
+
+        /* Content Area */
+        .content-area {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 32px;
+            scroll-behavior: smooth;
+        }
+
+        .section-container {
+            max-width: 960px;
+            margin: 0 auto;
+            display: none;
+            animation: fadeUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .section-container.active {
+            display: block;
+        }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ----- TYPOGRAPHY ----- */
+        .display-1 {
+            font-size: 2.125rem;
+            font-weight: 400;
+            margin-bottom: 24px;
+            color: var(--text-high);
+            letter-spacing: 0.00735em;
+        }
+
+        .headline {
+            font-size: 1.5rem;
+            font-weight: 400;
+            margin: 32px 0 16px;
+            color: var(--primary-dark);
+        }
+
+        .subtitle {
+            font-size: 1rem;
+            font-weight: 400;
+            color: var(--text-med);
+            margin-bottom: 24px;
+            letter-spacing: 0.00937em;
+        }
+
+        .body-text {
+            font-size: 1rem;
+            font-weight: 400;
+            color: var(--text-high);
+            margin-bottom: 16px;
+            letter-spacing: 0.03125em;
+        }
+
+        /* ----- MATERIAL CARDS ----- */
+        .card {
+            background-color: var(--surface);
+            border-radius: 8px;
+            box-shadow: var(--shadow-1);
+            padding: 24px;
+            margin-bottom: 24px;
+            transition: box-shadow 0.3s;
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-3);
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 500;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .card-title .material-icons {
+            margin-right: 8px;
+            color: var(--primary);
+        }
+
+        /* ----- INFO BANNERS ----- */
+        .banner {
+            display: flex;
+            align-items: flex-start;
+            padding: 16px;
+            border-radius: 8px;
+            margin: 24px 0;
+            background-color: #e8eaf6; /* Indigo 50 */
+            border-left: 4px solid var(--primary);
+        }
+        
+        .banner.warning {
+            background-color: #fff8e1; /* Amber 50 */
+            border-left-color: #ffc107;
+        }
+        
+        .banner .material-icons {
+            margin-right: 16px;
+            color: var(--primary);
+        }
+        
+        .banner.warning .material-icons {
+            color: #ff9800;
+        }
+
+        .banner-content p {
+            margin: 0 0 8px 0;
+            font-size: 0.95rem;
+        }
+        .banner-content p:last-child {
+            margin: 0;
+        }
+
+        /* ----- CODE & YAML BLOCKS ----- */
+        pre.code-block {
+            background-color: #263238; /* Blue Grey 900 */
+            color: #eceff1;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.875rem;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+            margin: 16px 0;
+        }
+        
+        code.inline {
+            background-color: rgba(63, 81, 181, 0.08);
+            color: var(--primary-dark);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+
+        /* ----- ACCORDIONS (DEEP DIVES) ----- */
+        .accordion {
+            border: 1px solid var(--divider);
+            border-radius: 8px;
+            margin: 16px 0;
+            overflow: hidden;
+            background: var(--surface);
+        }
+
+        .accordion-header {
+            padding: 16px 24px;
+            background-color: #fafafa;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 500;
+            color: var(--primary-dark);
+            user-select: none;
+            transition: background-color 0.2s;
+        }
+
+        .accordion-header:hover {
+            background-color: #f5f5f5;
+        }
+
+        .accordion-header .material-icons {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .accordion.open .accordion-header .material-icons {
+            transform: rotate(180deg);
+        }
+
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .accordion.open .accordion-content {
+            max-height: 2000px; /* arbitrary large value */
+        }
+        
+        .accordion-inner {
+            padding: 24px;
+            border-top: 1px solid var(--divider);
+        }
+
+        /* ----- MERMAID DIAGRAMS ----- */
+        .mermaid-container {
+            background: white;
+            border: 1px solid var(--divider);
+            border-radius: 8px;
+            padding: 24px;
+            margin: 24px 0;
+            display: flex;
+            justify-content: center;
+            overflow-x: auto;
+            box-shadow: var(--shadow-1);
+        }
+        
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <span class="material-icons">hub</span>
+            <h2>KubeVela Hub</h2>
+        </div>
+        <ul class="nav-list">
+            <li class="nav-item active" onclick="switchSection('s-intro', this)">
+                <span class="material-icons">explore</span>
+                The Orchestration Gap
+            </li>
+            <li class="nav-item" onclick="switchSection('s-crds', this)">
+                <span class="material-icons">view_in_ar</span>
+                Core Abstractions
+            </li>
+            <li class="nav-item" onclick="switchSection('s-ownership', this)">
+                <span class="material-icons">account_tree</span>
+                Ownership & GitOps
+            </li>
+            <li class="nav-item" onclick="switchSection('s-lifecycle', this)">
+                <span class="material-icons">autorenew</span>
+                Cluster Lifecycle
+            </li>
+            <li class="nav-item" onclick="switchSection('s-rollout', this)">
+                <span class="material-icons">waves</span>
+                Fleet Rollouts
+            </li>
+            <li class="nav-item" onclick="switchSection('s-observability', this)">
+                <span class="material-icons">policy</span>
+                Drift & Health
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-container">
+        <header class="app-bar">
+            <h1 id="app-bar-title">The Orchestration Gap</h1>
+        </header>
+
+        <main class="content-area">
+            
+            <!-- SECTION 1: INTRODUCTION -->
+            <section id="s-intro" class="section-container active">
+                <h2 class="display-1">Why do we need Cluster Infrastructure Orchestration?</h2>
+                <p class="subtitle">A human-friendly explanation of the problem KubeVela is solving.</p>
+                
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">lightbulb</span> The Core Problem</h3>
+                    <p class="body-text">
+                        KubeVela is incredible at deploying applications (via the <code class="inline">Application</code> CRD). However, those applications assume the cluster they land on is already fully prepared. They assume networking (CNI, Ingress), security (OPA, Cert-Manager), and observability (Prometheus, Loki) are already perfectly configured.
+                    </p>
+                    <p class="body-text">
+                        <strong>But who sets up the cluster?</strong> Usually, platform teams stitch together a fragile mess of Terraform scripts, Helm charts, and manual kubectl commands. There is no standard, composable way to declare: <em>"A production cluster requires this specific networking setup, this security setup, and this cloud VPC."</em>
+                    </p>
+                </div>
+
+                <div class="banner warning">
+                    <span class="material-icons">warning</span>
+                    <div class="banner-content">
+                        <p><strong>Crucial Distinction:</strong> KubeVela does <strong>not</strong> provision machines or cloud resources directly. It delegates to tools like Cluster API (CAPI), Crossplane, or Terraform.</p>
+                        <p>KubeVela's job is <strong>Orchestration</strong>: Composing these tools together, enforcing team ownership boundaries, and safely rolling changes across a fleet of clusters.</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">architecture</span> The Hub-Spoke Architecture</h3>
+                    <p class="body-text">
+                        To manage a fleet, we use a Hub-Spoke model. You manually create one "Hub" cluster using whatever tool you like. You install KubeVela on it. From that moment on, all declarative state for your infrastructure lives on the Hub. The Hub pushes actual infrastructure components out to the Spoke clusters.
+                    </p>
+                    <div class="mermaid-container">
+                        <div class="mermaid">
+                        graph TD
+                            subgraph Hub ["Management Hub (Single Pane of Glass)"]
+                                CC[Cluster Controller]
+                                BC[Blueprint Controller]
+                                State[(Desired Declarative State)]
+                            end
+
+                            subgraph Spokes ["Workload Clusters"]
+                                S1[Prod-East Cluster]
+                                S2[Prod-West Cluster]
+                                S3[Staging Cluster]
+                            end
+
+                            Hub == "Orchestrates & Monitors" ==> S1
+                            Hub == "Orchestrates & Monitors" ==> S2
+                            Hub == "Orchestrates & Monitors" ==> S3
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECTION 2: CORE CRDS -->
+            <section id="s-crds" class="section-container">
+                <h2 class="display-1">The Core Abstractions</h2>
+                <p class="subtitle">How we define infrastructure using Planes, Blueprints, and Clusters.</p>
+
+                <p class="body-text">Think of building a cluster like building a house. A <strong>ClusterPlane</strong> is a specific system (plumbing, electrical). A <strong>ClusterBlueprint</strong> is the architectural diagram connecting those systems. The <strong>Cluster</strong> is the actual house.</p>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">layers</span> 1. ClusterPlane</h3>
+                    <p class="body-text">A composable infrastructure layer owned by a specific team. For example, the networking team owns the Networking Plane (Ingress, CNI). A plane is just a <strong>template</strong>; creating one does not spin up any infrastructure.</p>
+                    
+                    <div class="accordion">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>Deep Dive: ClusterPlane YAML & Versioning</span>
+                            <span class="material-icons">expand_more</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-inner">
+                                <p class="body-text">Planes use semantic versioning. Adding the <code class="inline">plane.oam.dev/publishVersion</code> annotation takes an immutable snapshot, creating a <code class="inline">ClusterPlaneRevision</code>.</p>
+                                <pre class="code-block">
+apiVersion: core.oam.dev/v1beta1
+kind: ClusterPlane
+metadata:
+  name: networking
+  annotations:
+    plane.oam.dev/publishVersion: "2.3.1"
+spec:
+  components:
+    - name: cilium
+      type: helm-release
+      properties:
+        chart: cilium
+        version: "1.14.4"
+    - name: ingress-nginx
+      type: helm-release
+      dependsOn: [cilium] # Waits for CNI
+      properties:
+        chart: ingress-nginx
+                                </pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">map</span> 2. ClusterBlueprint</h3>
+                    <p class="body-text">A complete cluster specification. It composes multiple <code class="inline">ClusterPlanes</code> together and defines their dependency order. Blueprints are immutable once published.</p>
+                    
+                    <div class="accordion">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>Deep Dive: Blueprint Resolution & SemVer</span>
+                            <span class="material-icons">expand_more</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-inner">
+                                <p class="body-text">Blueprints support Semantic Versioning constraints (e.g., <code class="inline">>= 2.0.0</code>) for Planes. The controller automatically resolves this to the newest matching <code class="inline">ClusterPlaneRevision</code>.</p>
+                                <pre class="code-block">
+apiVersion: core.oam.dev/v1beta1
+kind: ClusterBlueprint
+metadata:
+  name: production-standard
+spec:
+  planes:
+    - name: networking
+      ref:
+        name: networking
+        version: ">= 2.0.0" # SemVer Constraint
+    - name: security
+      ref:
+        name: security
+        version: "1.8.0"
+                                </pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">dns</span> 3. Cluster</h3>
+                    <p class="body-text">The first-class representation of the actual managed cluster. It points to a Blueprint, manages connectivity credentials, and holds the actual, aggregated status of everything running inside it.</p>
+                    <div class="mermaid-container">
+                        <div class="mermaid">
+                        erDiagram
+                            Cluster {
+                                string name
+                                string mode
+                            }
+                            ClusterBlueprint {
+                                string name
+                            }
+                            ClusterPlane {
+                                string name
+                                string scope
+                            }
+                            
+                            Cluster }o--|| ClusterBlueprint : "spec.blueprintRef"
+                            ClusterBlueprint ||--o{ ClusterPlane : "composes"
+                            Cluster ||--o{ ClusterPlane : "reconciles actual state"
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECTION 3: OWNERSHIP & GITOPS -->
+            <section id="s-ownership" class="section-container">
+                <h2 class="display-1">Controller Ownership & GitOps</h2>
+                <p class="subtitle">How reconciliation works without infinite loops.</p>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">sync</span> Pull-Based Reconciliation</h3>
+                    <p class="body-text">A massive architectural decision in KubeVela: <strong>Planes and Blueprints are templates.</strong> Creating them does <em>nothing</em>.</p>
+                    <p class="body-text">Infrastructure is only created when a <strong>Cluster</strong> references a Blueprint. This is a pull model. The ClusterController reads the blueprint, resolves the planes, and pushes the resources to the actual cluster.</p>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">block</span> Circular Reference Prevention</h3>
+                    <p class="body-text">In Kubernetes, if Controller A modifies Controller B's spec, and Controller B modifies Controller A's spec based on status, you get an infinite loop that crashes the API server. KubeVela prevents this via strict ownership.</p>
+                    
+                    <div class="banner">
+                        <span class="material-icons">info</span>
+                        <div class="banner-content">
+                            <p><strong>The Golden Rule:</strong> Controllers NEVER modify `spec` fields they don't own. <code>Cluster.spec.blueprintRef</code> is owned strictly by the User or a GitOps tool (like ArgoCD). The Controllers only ever write to <code>status</code> fields.</p>
+                        </div>
+                    </div>
+
+                    <div class="mermaid-container">
+                        <div class="mermaid">
+                        sequenceDiagram
+                            participant User as GitOps / ArgoCD
+                            participant CC as ClusterController
+                            participant RO as RolloutStrategy
+                            
+                            User->>CC: Commits new spec.blueprintRef
+                            Note over CC: Detects Desired != Actual Status
+                            CC->>RO: Query: "Can I update now?"
+                            
+                            alt Rollout Denies
+                                RO-->>CC: "Wait, Maintenance Window closed."
+                                Note over CC: Requeues, does NOT update spec
+                            else Rollout Approves
+                                RO-->>CC: "Approved for Wave 1"
+                                CC->>CC: Applies Blueprint to Spoke Cluster
+                                CC->>CC: Updates cluster.status.blueprint
+                            end
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECTION 4: LIFECYCLE & ROLLOUT -->
+            <section id="s-lifecycle" class="section-container">
+                <h2 class="display-1">Cluster Lifecycle & Fleet Rollouts</h2>
+                <p class="subtitle">Managing clusters from birth to death, safely across a fleet.</p>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">published_with_changes</span> Lifecycle Modes</h3>
+                    <p class="body-text">A cluster can exist in three modes:</p>
+                    <ol style="margin-left: 24px; color: var(--text-high); font-size: 1rem; line-height: 1.8;">
+                        <li><strong>Provision:</strong> KubeVela uses a tool (like Crossplane) to provision the actual cloud VPC and Kubernetes API from scratch.</li>
+                        <li><strong>Adopt:</strong> You hand KubeVela a kubeconfig to an existing cluster, and it takes over managing the infrastructure inside it.</li>
+                        <li><strong>Connect:</strong> KubeVela just connects to the cluster to deploy app workloads, but does not manage the base infrastructure.</li>
+                    </ol>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">tsunami</span> Wave-Based Fleet Rollouts</h3>
+                    <p class="body-text">When you update a Blueprint (say, upgrading your CNI version), you don't want all 50 of your production clusters to update instantly. What if it breaks? KubeVela uses a <code>ClusterRolloutStrategy</code> to gate updates.</p>
+
+                    <div class="mermaid-container">
+                        <div class="mermaid">
+                        graph LR
+                            B[New Blueprint version applied to Git] --> W1[Wave 1: Dev Clusters<br/>Wait 10 mins]
+                            W1 -- Health OK --> W2[Wave 2: Staging<br/>Wait 1 Hour]
+                            W2 -- Health OK --> W3[Wave 3: Prod Canary<br/>Verify SLOs]
+                            W3 -- Metrics OK --> W4[Wave 4: Rest of Prod]
+                            
+                            W3 -. SLO Breach .-> R[Auto-Rollback Status]
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">event</span> Maintenance Windows</h3>
+                    <p class="body-text">Even if a rollout wave is active, a specific cluster might have a strict maintenance window (e.g., "Only update Saturday 2 AM - 6 AM"). The ClusterController computes this dynamically and will generate a <code>ClusterRolloutCheckpoint</code>, pausing the update for that specific cluster until the window opens.</p>
+                </div>
+            </section>
+
+            <!-- SECTION 5: OBSERVABILITY -->
+            <section id="s-observability" class="section-container">
+                <h2 class="display-1">Drift Detection & Observability</h2>
+                <p class="subtitle">Keeping reality in sync with your declarative state.</p>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">policy</span> Drift Detection</h3>
+                    <p class="body-text">What happens if a developer manually edits a Deployment inside a production Spoke cluster using <code>kubectl</code>? The cluster has "drifted" from the Blueprint.</p>
+                    <p class="body-text">The ClusterController continuously polls the Spoke clusters. If it detects drift, it updates the Cluster's <code>status.drift</code> field and generates a <code>ClusterDriftReport</code>.</p>
+                    
+                    <div class="accordion">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>Deep Dive: Drift Exceptions</span>
+                            <span class="material-icons">expand_more</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-inner">
+                                <p class="body-text">Sometimes drift is expected (e.g., an HPA scaling replicas up and down). You can define a <code>ClusterDriftException</code> to tell KubeVela to ignore changes to specific fields.</p>
+                                <pre class="code-block">
+apiVersion: core.oam.dev/v1beta1
+kind: ClusterDriftException
+metadata:
+  name: ignore-hpa-replicas
+spec:
+  target:
+    kind: Deployment
+    name: ingress-nginx-controller
+  ignoreFields:
+    - "spec.replicas"
+                                </pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title"><span class="material-icons">monitor_heart</span> Health Aggregation</h3>
+                    <p class="body-text">How do you know if a Cluster is healthy? KubeVela aggregates health from the bottom up:</p>
+                    <ul style="margin-left: 24px; font-size: 1rem; color: var(--text-high); line-height: 1.8;">
+                        <li><strong>Component Health:</strong> Probes standard Kubernetes objects (Pods Ready, Services running).</li>
+                        <li><strong>Plane Health:</strong> Aggregates the health of all components inside that plane.</li>
+                        <li><strong>Cluster Health:</strong> Aggregates the health of all Planes. If one plane is degraded, the whole cluster is marked Degraded.</li>
+                    </ul>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script>
+        // Initialize Mermaid
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+
+        // Navigation Switcher
+        function switchSection(sectionId, element) {
+            // Update Active Class on Nav
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            element.classList.add('active');
+
+            // Update App Bar Title
+            const title = element.innerText.trim();
+            document.getElementById('app-bar-title').innerText = title;
+
+            // Hide all sections, show target
+            document.querySelectorAll('.section-container').forEach(sec => sec.classList.remove('active'));
+            document.getElementById(sectionId).classList.add('active');
+        }
+
+        // Accordion Toggle
+        function toggleAccordion(element) {
+            const accordion = element.parentElement;
+            accordion.classList.toggle('open');
+        }
+    </script>
+</body>
+</html>

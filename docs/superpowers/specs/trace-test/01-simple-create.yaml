@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trace-test
+---
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: trace-simple
+  namespace: trace-test
+spec:
+  components:
+    - name: hello-web
+      type: webservice
+      properties:
+        image: nginx:1.21

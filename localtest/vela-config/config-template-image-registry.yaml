@@ -1,0 +1,47 @@
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: demo-image-registry
+  namespace: vela-system
+spec:
+  alias: Demo Image Registry
+  description: Store image registry credentials as a dockerconfigjson Secret.
+  scope: namespace
+  sensitive: true
+  template: |
+    import (
+        "encoding/base64"
+        "encoding/json"
+    )
+
+    template: {
+        output: {
+            apiVersion: "v1"
+            kind:       "Secret"
+            metadata: {
+                name:      context.name
+                namespace: context.namespace
+            }
+            type: "kubernetes.io/dockerconfigjson"
+            stringData: {
+                ".dockerconfigjson": json.Marshal({
+                    auths: {
+                        "\(parameter.registry)": {
+                            username: parameter.username
+                            password: parameter.password
+                            auth:     base64.Encode(null, parameter.username + ":" + parameter.password)
+                        }
+                    }
+                })
+            }
+        }
+
+        parameter: {
+            // +usage=The image registry URL, for example index.docker.io
+            registry: *"index.docker.io" | string
+            // +usage=The username used to log in to the registry
+            username: string
+            // +usage=The password or access token for the registry
+            password: string
+        }
+    }

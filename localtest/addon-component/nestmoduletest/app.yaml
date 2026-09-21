@@ -1,0 +1,12 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: outer-app
+  namespace: default
+spec:
+  components:
+    - name: my-addon
+      type: addon
+      properties:
+        addon: nest-module-poc
+        registry: my-addons

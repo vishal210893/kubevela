@@ -1,0 +1,83 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Push current branch to remote"
+# model = "haiku"
+# context = "fork"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/git-push:*)"]
+#
+# [tool.claude.output]
+# prompt = "Confirm push succeeded. Show branch and remote."
+# examples = [
+#   "[OK] Pushed 'feature-auth' to origin"
+# ]
+# ///
+
+"""Push current branch to remote."""
+
+import sys
+import os
+import argparse
+from pathlib import Path
+
+# Load shared library
+_script_dir = Path(__file__).parent
+exec(open(_script_dir / 'lib/gitlib.py').read())
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    args = parser.parse_args()
+
+    # Get repo info
+    repo_url = get_repo_url()
+    branch = get_current_branch()
+
+    # Check for detached HEAD
+    if branch == 'HEAD':
+        error("cannot push: detached HEAD state (not on a branch)")
+        sys.exit(1)
+
+    # Push to remote
+    run_git(
+        ['push', repo_url, f'HEAD:refs/heads/{branch}'],
+        operation_description="push branch",
+        context=branch
+    )
+
+    # Ensure origin remote has full fetch refspec (narrow clones only fetch main)
+    run_git(
+        ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'],
+        operation_description="set full fetch refspec",
+        context='origin'
+    )
+
+    # Fetch to update local remote-tracking refs
+    run_git(
+        ['fetch', repo_url, f'{branch}:refs/remotes/origin/{branch}'],
+        operation_description="fetch remote tracking ref",
+        context=branch
+    )
+
+    # Set upstream tracking
+    run_git(
+        ['branch', '--set-upstream-to', f'origin/{branch}'],
+        operation_description="set upstream tracking",
+        context=branch
+    )
+
+    # Output result
+    result = {
+        "branch": branch,
+        "remote": "origin",
+        "message": f"[OK] Pushed '{branch}' to origin"
+    }
+
+    template = get_template_from_metadata()
+    output_result(result, template)
+
+
+if __name__ == "__main__":
+    main()

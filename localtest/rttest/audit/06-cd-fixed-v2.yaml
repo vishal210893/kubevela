@@ -1,0 +1,33 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: audit-merge
+  namespace: vela-system
+spec:
+  workload:
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+  schematic:
+    cue:
+      template: |
+        import (
+          "list"
+          "strings"
+        )
+
+        output: {
+          apiVersion: "v1"
+          kind:       "ConfigMap"
+          metadata: name: parameter.name
+          data: {
+            allLabels:        strings.Join(list.Concat([parameter.left, parameter.right]), ",")
+            cdRevisionMarker: "v2-AFTER-AUTOUPDATE"
+            cdRevisionNote:   "this field did not exist in v1"
+          }
+        }
+        parameter: {
+          name:  string
+          left:  [...string]
+          right: [...string]
+        }

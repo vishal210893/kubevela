@@ -20,13 +20,17 @@ package addon
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 
 	"github.com/kubevela/pkg/cue/cuex/providers"
 	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
 	"github.com/kubevela/pkg/util/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/klog/v2"
 
 	"github.com/oam-dev/kubevela/pkg/addon/service/api"
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/validation"
@@ -90,11 +94,25 @@ func Render(ctx context.Context, params *RenderParams) (*RenderReturns, error) {
 	if err != nil {
 		return nil, err
 	}
+	klog.InfoS("addon rendered", "addon", p.Addon, "registry", res.Registry,
+		"resolvedVersion", res.ResolvedVersion, "digest", applicationDigest(res.Application))
 	return &RenderReturns{Returns: ResultVars{
 		ResolvedVersion: res.ResolvedVersion,
 		Registry:        res.Registry,
 		Application:     res.Application,
 	}}, nil
+}
+
+// applicationDigest is a short fingerprint of a rendered Application, for
+// telling one render's output from another's in a log without printing the
+// whole manifest. Two renders that agree here produced the same Application.
+func applicationDigest(app map[string]interface{}) string {
+	b, err := json.Marshal(app)
+	if err != nil {
+		return "unmarshalable"
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
 }
 
 // placeholderReturns is what Render yields under a validation-only context: a

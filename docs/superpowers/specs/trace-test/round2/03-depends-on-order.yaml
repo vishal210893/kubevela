@@ -1,0 +1,29 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: wf-depends-on
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-depends-on-fixed
+spec:
+  components:
+    - name: db
+      type: worker
+      properties:
+        image: redis:7
+    - name: app
+      type: webservice
+      properties:
+        image: nginx:1.21
+  workflow:
+    steps:
+      - name: deploy-db
+        type: apply-component
+        properties:
+          component: db
+      - name: deploy-app
+        type: apply-component
+        dependsOn:
+          - deploy-db
+        properties:
+          component: app

@@ -1,0 +1,124 @@
+@startuml microservice-event-driven
+!theme plain
+title E-Commerce Order Processing - Event-Driven Architecture
+
+skinparam sequence {
+  ArrowColor #333333
+  LifeLineBorderColor #333333
+  ParticipantBorderColor #333333
+  ParticipantBackgroundColor #FEFECE
+  DatabaseBackgroundColor #E8F5E9
+  QueueBackgroundColor #E3F2FD
+}
+
+actor Customer
+
+box "Frontend" #E3F2FD
+  participant "Web App" as App
+end box
+
+box "Order Domain" #FFF3E0
+  participant "Order Service" as Orders
+  database "Order DB" as OrderDB
+end box
+
+queue "Kafka" as Bus #E3F2FD
+
+box "Payment Domain" #F3E5F5
+  participant "Payment Service" as Payment
+  database "Payment DB" as PayDB
+end box
+
+box "Inventory Domain" #E8F5E9
+  participant "Inventory Service" as Inventory
+  database "Inventory DB" as InvDB
+end box
+
+box "Notification Domain" #FFF9C4
+  participant "Notification Service" as Notify
+  queue "Email Queue" as EmailQ
+end box
+
+== Order Placement ==
+
+Customer -> App: submit order
+App -> Orders ++: POST /orders {items, paymentInfo}
+Orders -> OrderDB: INSERT order (status=PENDING)
+OrderDB --> Orders: orderId
+
+Orders ->> Bus: publish OrderCreated\n{orderId, items, payment}
+
+Orders --> App --: 202 Accepted {orderId}
+App --> Customer: "Order received, processing..."
+
+== Payment Processing ==
+
+Bus ->> Payment ++: consume OrderCreated
+Payment -> PayDB: createPaymentRecord(orderId)
+Payment -> Payment: chargeCard(paymentInfo)
+
+alt payment successful
+  Payment -> PayDB: updateStatus(CHARGED)
+  Payment ->> Bus: publish PaymentCompleted\n{orderId, transactionId}
+  deactivate Payment
+else payment failed
+  Payment -> PayDB: updateStatus(FAILED)
+  Payment ->> Bus: publish PaymentFailed\n{orderId, reason}
+  deactivate Payment
+
+  note over Bus #FFAAAA
+    PaymentFailed triggers
+    order cancellation
+  end note
+
+  Bus ->> Orders ++: consume PaymentFailed
+  Orders -> OrderDB: updateStatus(CANCELLED)
+  deactivate Orders
+
+  Bus ->> Notify ++: consume PaymentFailed
+  Notify ->> EmailQ: enqueue paymentFailedEmail
+  deactivate Notify
+end
+
+== Fulfillment (Parallel Processing) ==
+
+par inventory and notification
+  Bus ->> Inventory ++: consume PaymentCompleted
+  Inventory -> InvDB: reserveStock(items)
+
+  loop for each item
+    Inventory -> InvDB: UPDATE stock SET reserved=reserved+qty
+  end
+
+  alt all items in stock
+    Inventory ->> Bus: publish InventoryReserved\n{orderId, items}
+  else insufficient stock
+    Inventory ->> Bus: publish InventoryInsufficient\n{orderId, missingItems}
+  end
+  deactivate Inventory
+and
+  Bus ->> Notify ++: consume PaymentCompleted
+  Notify ->> EmailQ: enqueue orderConfirmationEmail
+  Notify --> Customer: send order confirmation
+  deactivate Notify
+end
+
+== Order Confirmation ==
+
+Bus ->> Orders ++: consume InventoryReserved
+Orders -> OrderDB: updateStatus(CONFIRMED)
+Orders -> OrderDB: setEstimatedShipDate()
+deactivate Orders
+
+... shipping partner picks up order ...
+
+Bus ->> Notify ++: consume OrderShipped
+Notify --> Customer: send shipping notification
+deactivate Notify
+
+note over Bus
+  All events are persisted in Kafka
+  with 7-day retention for replay
+end note
+
+@enduml

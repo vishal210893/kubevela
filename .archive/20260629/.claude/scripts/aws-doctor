@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# aws-doctor -- verify forwarded AWS credentials still work.
+#
+# The aws capability is a passive pass-through: it mounts ~/.aws and forwards
+# AWS_PROFILE. SSO sessions expire silently -- the credential files are still
+# present, so nothing looks wrong, but `aws sts get-caller-identity` (and any
+# Bedrock call, e.g. the one /review depends on) starts failing with an expired
+# token. This doctor makes one cheap STS call and, on failure, prints a
+# WARNING/impact/fix guide pointing at `aws sso login`.
+#
+# AWS is optional in this profile, so an UNCONFIGURED environment (no profile,
+# no ~/.aws) is an advisory warning (exit 0) -- it should not nag users who do
+# not use AWS. A CONFIGURED-but-rejected credential is a real failure (exit 1).
+#
+# It NEVER prints credentials or the STS identity. Read-only (no --fix): re-auth
+# is a host-side action the user must take, so we guide rather than act.
+#
+# Usage:   aws-doctor [--format text|json]
+# Exit:    0 = ok / not configured, 1 = configured but credentials rejected,
+#          2 = usage error.
+#
+# Test hook: AWS_DOCTOR_BIN overrides the CLI binary (default `aws`).
+#
+# Doctor contract (shared with mcp-github-doctor, ccbridge-doctor,
+# zshenv-secrets-doctor): a *-doctor script in ~/.claude/scripts/ that exits
+# 0/1/2 and prints findings as WARNING/impact/fix triplets; the profile-doctor
+# aggregator runs all of them.
+
+set -uo pipefail
+
+SECTION=aws
+FORMAT=text
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --format) FORMAT="${2:-text}"; shift; [ $# -gt 0 ] && shift ;;
+        --format=*) FORMAT="${1#*=}"; shift ;;
+        -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Unknown argument: $1 (try --help)" >&2; exit 2 ;;
+    esac
+done
+case "$FORMAT" in text|json) ;; *) echo "Invalid --format: $FORMAT" >&2; exit 2 ;; esac
+
+AWS_BIN="${AWS_DOCTOR_BIN:-aws}"
+PROFILE="${AWS_PROFILE:-}"
+
+PROBLEMS=0
+JSON_ROWS=""
+note() { # <status: ok|warn|problem> <key> <single-line message...>
+    local s="$1" k="$2"; shift 2
+    local msg="$*" em
+    [ "$s" = problem ] && PROBLEMS=$((PROBLEMS + 1))
+    em="${msg//\\/\\\\}"; em="${em//\"/\\\"}"
+    JSON_ROWS="${JSON_ROWS:+$JSON_ROWS,}{\"section\":\"$SECTION\",\"status\":\"$s\",\"key\":\"$k\",\"message\":\"$em\"}"
+}
+say() { [ "$FORMAT" = text ] && printf '%s\n' "$*" >&2 || true; }
+guide() { # <what> <impact> <fix>
+    [ "$FORMAT" = text ] || return 0
+    printf '  WARNING: %s\n' "$1" >&2
+    printf '           impact: %s\n' "$2" >&2
+    printf '           fix:    %s\n' "$3" >&2
+}
+
+say "aws doctor -- are the forwarded AWS credentials valid?"
+
+configured=0
+{ [ -n "$PROFILE" ] || [ -f "$HOME/.aws/credentials" ] || [ -f "$HOME/.aws/config" ]; } && configured=1
+
+login_hint="aws sso login"
+[ -n "$PROFILE" ] && login_hint="aws sso login --profile $PROFILE"
+
+if [ "$configured" = 0 ]; then
+    note warn unconfigured "no AWS_PROFILE and no ~/.aws -- AWS is not configured (optional in this profile)."
+    guide "AWS is not configured (no AWS_PROFILE, no ~/.aws)." \
+          "Anything that uses AWS -- notably /review via Bedrock -- will not work until configured." \
+          "On the HOST: 'aws configure sso', 'export AWS_PROFILE=<name>', then restart the container. Skip if you do not use AWS."
+elif ! command -v "$AWS_BIN" >/dev/null 2>&1; then
+    note warn cli_missing "AWS is configured but the aws CLI is not on PATH."
+    guide "The aws CLI is not installed though AWS credentials are configured." \
+          "AWS commands and Bedrock-backed features cannot run." \
+          "Rebuild the container so the image provisions the aws CLI."
+else
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 15 "$AWS_BIN" sts get-caller-identity >/dev/null 2>&1; rc=$?
+    else
+        "$AWS_BIN" sts get-caller-identity >/dev/null 2>&1; rc=$?
+    fi
+    if [ "$rc" -eq 0 ]; then
+        note ok creds_ok "aws sts get-caller-identity succeeds${PROFILE:+ (profile $PROFILE)}."
+    elif [ "$rc" -eq 124 ]; then
+        note problem sts_timeout "aws sts get-caller-identity timed out."
+        guide "STS call timed out (network / SSO endpoint unreachable)." \
+              "AWS and Bedrock calls will hang or fail until connectivity is restored." \
+              "Check VPN / network, then retry; re-auth on the host with: $login_hint"
+    else
+        note problem creds_invalid "aws sts get-caller-identity failed (rc=$rc) -- credentials rejected/expired."
+        guide "AWS credentials are present but rejected (likely an expired SSO session)." \
+              "Bedrock-backed /review and any AWS command fail with an auth error." \
+              "Re-authenticate on the HOST: $login_hint -- then restart the container so refreshed tokens are picked up."
+    fi
+fi
+
+if [ "$FORMAT" = json ]; then
+    ok=true; [ "$PROBLEMS" -gt 0 ] && ok=false
+    printf '{"schema_version":1,"doctor":"%s","problems":%s,"ok":%s,"checks":[%s]}\n' \
+        "$SECTION" "$PROBLEMS" "$ok" "$JSON_ROWS"
+else
+    if [ "$PROBLEMS" -eq 0 ]; then
+        say "[OK] AWS credentials valid (or AWS not configured -- advisory above)."
+    else
+        say "[PROBLEM] AWS has $PROBLEMS issue(s) above -- AWS/Bedrock access will fail until fixed."
+    fi
+fi
+
+[ "$PROBLEMS" -eq 0 ] || exit 1
+exit 0

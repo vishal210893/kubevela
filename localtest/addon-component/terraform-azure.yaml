@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-terraform-azure
+  namespace: vela-system
+spec:
+  components:
+    - name: terraform-azure
+      type: addon
+      properties:
+        skipVersionValidation: true

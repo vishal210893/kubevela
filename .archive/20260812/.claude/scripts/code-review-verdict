@@ -1,0 +1,48 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+
+"""
+code-review-verdict - Extract CLAUDE_VERDICT from a bot comment body
+
+Reads stdin, strips Unicode whitespace, and matches the strict pattern
+^CLAUDE_VERDICT: (APPROVE|REQUEST_CHANGES)$ on each line. Prints the
+last match found (rejects mid-comment injections).
+
+Used by harness-code-review.yaml to determine the formal GitHub review decision
+from Claude's analysis comment.
+
+Usage:
+    echo "$BODY" | ./code-review-verdict
+"""
+
+import re
+import sys
+import unicodedata
+
+
+def main():
+    verdict = ""
+    for line in sys.stdin:
+        # Strip Unicode whitespace and control characters
+        clean = "".join(
+            c
+            for c in line
+            if c == " "
+            or (
+                unicodedata.category(c)[0] != "Z"
+                and unicodedata.category(c) != "Cf"
+                and c not in "\t\n\r"
+            )
+        )
+        clean = clean.strip()
+        m = re.match(r"^CLAUDE_VERDICT: (APPROVE|REQUEST_CHANGES)$", clean)
+        if m:
+            verdict = m.group(1)
+    print(verdict)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# mcp-github-doctor -- verify the GitHub MCP server will actually work.
+#
+# The mcp-github capability wires the server's token from ${GH_TOKEN}. If that
+# var is unset/empty the server still starts -- but ANONYMOUS: public repos
+# resolve, private gwre-pdo calls just return "Not Found" with no error. This
+# doctor checks the token the MCP would use end to end (present -> authenticates
+# -> has repo/read:org scopes -> reaches a private gwre-pdo repo -> SSO
+# authorized) and, on any failure, prints a WARNING / impact / fix guide.
+#
+# It NEVER prints the token value. Read-only (no --fix): the remediation is a
+# host-side credential change the user must make, so we guide rather than act.
+#
+# Usage:   mcp-github-doctor [--format text|json]
+# Exit:    0 = github MCP will work, 1 = one or more problems, 2 = usage error.
+#
+# Doctor contract (shared with ccbridge-doctor, zshenv-secrets-doctor): a
+# *-doctor script in ~/.claude/scripts/ that exits 0/1/2 and prints findings as
+# WARNING/impact/fix triplets; the profile-doctor aggregator runs all of them.
+
+set -uo pipefail
+
+FORMAT=text
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --format) FORMAT="${2:-text}"; shift; [ $# -gt 0 ] && shift ;;
+        --format=*) FORMAT="${1#*=}"; shift ;;
+        -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Unknown argument: $1 (try --help)" >&2; exit 2 ;;
+    esac
+done
+case "$FORMAT" in text|json) ;; *) echo "Invalid --format: $FORMAT" >&2; exit 2 ;; esac
+
+API=https://api.github.com
+ORG_PROBE=gwre-pdo/ispl-pl      # a private repo that proves org + SSO access
+SECRETS="$HOME/.zshenv.secrets"
+
+PROBLEMS=0
+# checks[] rows for --format json: "status<TAB>key<TAB>message"
+CHECKS=""
+note() { # <status> <key> <message...>
+    local s="$1" k="$2"; shift 2
+    CHECKS="${CHECKS}${s}	${k}	$*
+"
+    [ "$s" = problem ] && PROBLEMS=$((PROBLEMS + 1))
+}
+say() { [ "$FORMAT" = text ] && printf '%s\n' "$*" >&2 || true; }
+guide() { # <what> <impact> <fix>
+    [ "$FORMAT" = text ] || return 0
+    printf '  WARNING: %s\n' "$1" >&2
+    printf '           impact: %s\n' "$2" >&2
+    printf '           fix:    %s\n' "$3" >&2
+}
+
+say "mcp-github doctor -- does the GitHub MCP server have a working token?"
+
+# Resolve the token the MCP would use: ${GH_TOKEN}, from the environment or
+# (if a non-interactive shell did not load it) the secrets file the loader
+# sources. We never echo it.
+TOK="${GH_TOKEN:-}"
+TOK_SRC=environment
+if [ -z "$TOK" ] && [ -f "$SECRETS" ]; then
+    # shellcheck disable=SC1090
+    . "$SECRETS" 2>/dev/null || true
+    TOK="${GH_TOKEN:-}"
+    [ -n "$TOK" ] && TOK_SRC="~/.zshenv.secrets"
+fi
+
+if [ -z "$TOK" ]; then
+    note problem gh_token_unset "GH_TOKEN is unset -- the github MCP starts anonymous (public repos only)."
+    GH_HINT=""
+    if command -v gh >/dev/null 2>&1 && gh auth token >/dev/null 2>&1; then
+        GH_HINT=" Your gh CLI is authenticated but the MCP reads GH_TOKEN, not the gh token store, so wiring them together fixes it:"
+    fi
+    guide "GH_TOKEN is unset; the GitHub MCP will run unauthenticated (private gwre-pdo calls return Not Found)." \
+          "Claude cannot read private repos/PRs/issues through the MCP." \
+          "Add GH_TOKEN to ~/.zshenv.secrets, then FULLY restart Claude Code (a /mcp reconnect is not enough -- the server inherits the parent process env).${GH_HINT}
+                   echo 'export GH_TOKEN=\"\$(gh auth token 2>/dev/null)\"' >> ~/.zshenv.secrets   # tracks your gh login
+                   (or a literal PAT with repo + read:org, SSO-authorized for gwre-pdo)
+                   See the gh capability setup for the PAT / 'gh auth login --insecure-storage' details."
+else
+    note ok gh_token_present "GH_TOKEN resolved from ${TOK_SRC}."
+    # --- authenticate ---
+    hdr="$(curl -fsS --connect-timeout 5 --max-time 15 -D - -o /dev/null -H "Authorization: Bearer $TOK" -H "Accept: application/vnd.github+json" "$API/user" 2>/dev/null)"
+    rc=$?
+    if [ $rc -ne 0 ] || ! printf '%s' "$hdr" | grep -qiE '^HTTP/[0-9.]+ 200'; then
+        note problem auth_failed "GH_TOKEN does not authenticate (GET /user did not return 200)."
+        guide "The GitHub MCP token is present but rejected by the API (likely expired or malformed)." \
+              "All MCP GitHub calls fail." \
+              "Regenerate the token: 'gh auth login --insecure-storage' (or a new PAT), update ~/.zshenv.secrets, fully restart Claude Code."
+    else
+        login="$(printf '%s' "$hdr" | grep -iE '^x-github-user|^github-authentication' | head -1)"  # informational only
+        scopes="$(printf '%s' "$hdr" | grep -iE '^x-oauth-scopes:' | sed -E 's/^[^:]*:[[:space:]]*//I; s/\r//')"
+        note ok auth_ok "GH_TOKEN authenticates with the GitHub API."
+        # --- scopes ---
+        miss=""
+        printf '%s' "$scopes" | grep -qiE '(^|,| )repo( |,|$)' || miss="repo"
+        printf '%s' "$scopes" | grep -qiE 'read:org|admin:org' || miss="${miss:+$miss, }read:org"
+        if [ -n "$miss" ]; then
+            note warn scopes_missing "token may be missing scopes: $miss (have: ${scopes:-none reported})"
+            guide "GitHub token is missing scope(s): $miss." \
+                  "Org membership / private repo reads can fail." \
+                  "Recreate the token with 'repo' and 'read:org' scopes; update ~/.zshenv.secrets; restart Claude Code."
+        else
+            note ok scopes_ok "token has repo + read:org scopes."
+        fi
+        # --- private gwre-pdo access + SSO ---
+        phdr="$(curl -fsS --connect-timeout 5 --max-time 15 -D - -o /dev/null -H "Authorization: Bearer $TOK" -H "Accept: application/vnd.github+json" "$API/repos/$ORG_PROBE" 2>/dev/null)"
+        if printf '%s' "$phdr" | grep -qiE '^HTTP/[0-9.]+ 200'; then
+            note ok private_ok "reaches a private gwre-pdo repo ($ORG_PROBE)."
+        else
+            sso="$(printf '%s' "$phdr" | grep -iE '^x-github-sso:' | sed -E 's/^[^:]*:[[:space:]]*//I; s/\r//')"
+            note problem private_blocked "cannot read private gwre-pdo repo $ORG_PROBE (the MCP will see 'Not Found')."
+            if printf '%s' "$sso" | grep -qiE 'required|authorize'; then
+                guide "Token is not SSO-authorized for the gwre-pdo org." \
+                      "Every private gwre-pdo repo/PR/issue returns Not Found through the MCP." \
+                      "Authorize the token for SSO: GitHub Settings -> Developer settings -> the token -> Configure SSO -> Authorize for gwre-pdo. Then restart Claude Code. (Header: ${sso:-x-github-sso})"
+            else
+                guide "Token authenticates but cannot see private gwre-pdo repos." \
+                      "Private repo/PR/issue reads via the MCP return Not Found." \
+                      "Confirm the token has 'repo' scope AND is SSO-authorized for gwre-pdo (GitHub token settings -> Configure SSO)."
+            fi
+        fi
+    fi
+fi
+
+# --- gh CLI cross-check -------------------------------------------------------
+# The github MCP reads GH_TOKEN; the `gh` CLI authenticates separately (it reads
+# ~/.config/gh/hosts.yml, and also honors GH_TOKEN when set). Many workflow
+# scripts (/ispl-prs, /aidev-prs, PLBot triggers, raw `gh api` calls) drive the
+# CLI, so its auth is its own failure surface even when the MCP token is fine.
+# Advisory (warn): reported, but the MCP verdict drives the exit code.
+GH_BIN="${MCP_GITHUB_DOCTOR_GH_BIN:-gh}"
+if ! command -v "$GH_BIN" >/dev/null 2>&1; then
+    note warn gh_cli_missing "the gh CLI is not on PATH (gh-based workflow scripts cannot run)."
+elif "$GH_BIN" auth status >/dev/null 2>&1; then
+    note ok gh_cli_ok "the gh CLI is authenticated (gh-based workflow scripts will work)."
+else
+    note warn gh_cli_unauth "the gh CLI is NOT authenticated (separate auth path from the MCP token)."
+    guide "The gh CLI has no working auth -- it reads ~/.config/gh/hosts.yml (and honors GH_TOKEN when set)." \
+          "gh-CLI-based workflows (/ispl-prs, /aidev-prs, PLBot triggers, raw gh api calls) fail even when the MCP token works." \
+          "Run 'gh auth login --insecure-storage' on the host (macOS Keychain is unreadable from the container), or export GH_TOKEN (gh also honors it), then fully restart."
+fi
+
+if [ "$FORMAT" = json ]; then
+    rows="$(printf '%s' "$CHECKS" | awk -F'\t' 'NF>=2{
+        gsub(/\\/,"\\\\",$3); gsub(/"/,"\\\"",$3);
+        printf "%s{\"section\":\"mcp-github\",\"status\":\"%s\",\"key\":\"%s\",\"message\":\"%s\"}", (n++?",":""), $1,$2,$3
+    }')"
+    ok=true; [ "$PROBLEMS" -gt 0 ] && ok=false
+    printf '{"schema_version":1,"doctor":"mcp-github","problems":%s,"ok":%s,"checks":[%s]}\n' "$PROBLEMS" "$ok" "$rows"
+else
+    if [ "$PROBLEMS" -eq 0 ]; then
+        say "[OK] github MCP token works (authenticated, scoped, private gwre-pdo reachable)."
+    else
+        say "[PROBLEM] github MCP has $PROBLEMS issue(s) above -- private GitHub access will be degraded until fixed."
+    fi
+fi
+
+[ "$PROBLEMS" -eq 0 ] || exit 1
+exit 0

@@ -1,0 +1,368 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Poll PR status until checks complete"
+# model = "sonnet"
+# allowed-tools = [
+#   "Bash(capabilities/git/src/claude/scripts/pr-poll:*)",
+#   "Bash(npm test:*)",
+#   "Bash(git add:*)",
+#   "Bash(git commit:*)",
+#   "Bash(git push:*)",
+#   "Bash(gh run view:*)",
+#   "Read",
+#   "Edit",
+#   "Glob",
+#   "Grep"
+# ]
+#
+# [[tool.claude.argument]]
+# name = "pr-number"
+# type = "optional-llm-generated"
+# hint = "[pr-number]"
+# description = "PR number to poll (inferred from current branch if not provided)"
+#
+# [tool.claude.argument.llm-generation]
+# context-commands = ["git branch --show-current", "gh pr list --head $(git branch --show-current) --json number -q '.[0].number'"]
+# prompt = """Determine the PR number to poll.
+# If there's a PR for the current branch, use that number.
+# If no PR exists, report that no PR was found."""
+#
+# [[tool.claude.argument]]
+# name = "admin-auto-merge"
+# type = "optional-passthrough"
+# hint = "[--admin-auto-merge]"
+# description = "Merge with admin authority when checks pass (bypasses branch protection, implies --delete-branch)"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "delete-branch"
+# type = "optional-passthrough"
+# hint = "[--delete-branch]"
+# description = "Delete branch after successful merge (implied by --admin-auto-merge)"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "fix"
+# type = "optional-passthrough"
+# hint = "[--fix]"
+# description = "Auto-fix CI failures (up to 20 attempts). When CI fails, analyze errors, apply fixes, verify locally, and push."
+# flag = true
+#
+# [tool.claude.output]
+# prompt = """Format the polling result based on the status:
+# - If all checks passed: show success, review status, mergeable status, and suggest /pr:merge
+# - If checks failed: show ERROR ANALYSIS with check name, error summary, root cause, and recommendation
+# - If admin merge succeeded: show "[OK] Merged PR #N with admin authority"
+# - If admin merge failed: show the error and suggest /pr:merge as fallback
+# - If --fix was used and succeeded: show fix summary with attempt count
+#
+# IMPORTANT: If --fix is provided and CI fails, enter the autonomous fix loop:
+# 1. Analyze failed checks from the output (logs, affected files, error type)
+# 2. Read affected files and make code changes to fix issues
+# 3. Run failing tests locally: npm test -- <pattern> (verify before pushing)
+# 4. If local tests pass: git add -A && git commit -m "fix: address CI failure (attempt N)" && git push
+# 5. Poll again by re-running this command
+# 6. Repeat until success or max attempts (20) reached
+# 7. Report what was fixed in each attempt"""
+# examples = [
+#   "[OK] All checks passed! (1m 30s)\n\nPR #123 is ready to merge\nReviews: [OK] Approved (2)\nMergeable: [OK] Yes\n\nRun `/pr:merge 123` to merge now",
+#   "[OK] All checks passed! (1m 30s)\n[OK] Merged PR #123 with admin authority",
+#   "[--] CI/CD failed (2m 15s)\n\nERROR ANALYSIS\n━━━━━━━━━━━━━━━━━━━━━━━━\n\nCheck: CI/CD\nError: Test failed\n\nRoot cause:\n  Assertion error in test_user_count\n\nRecommendation:\n  Fix the failing test",
+#   "[OK] All checks passed! (8m 45s)\n[OK] Fixed after 2 attempts\n\nFixes applied:\n  Attempt 1: Fixed linting errors in src/utils.ts\n  Attempt 2: Fixed failing assertion in tests/utils.test.ts\n\nPR #123 is ready to merge"
+# ]
+# ///
+
+"""Poll PR status until checks complete, with intelligent error analysis."""
+
+import sys
+import os
+import argparse
+import subprocess
+import json
+import time
+
+# Import gitlib
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.gitlib import (
+    get_current_branch, error, output_result,
+    get_template_from_metadata, cleanup_merged_branch
+)
+
+
+def get_pr_checks(pr_number):
+    """Get the status of all checks for a PR using gh pr view."""
+    # Use gh pr view with statusCheckRollup (gh pr checks --json not supported in older gh versions)
+    result = subprocess.run(
+        ['gh', 'pr', 'view', str(pr_number), '--json', 'statusCheckRollup'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return None, result.stderr.strip()
+
+    try:
+        data = json.loads(result.stdout)
+        # statusCheckRollup is a list of check objects
+        checks = data.get('statusCheckRollup', [])
+        return checks, None
+    except json.JSONDecodeError:
+        return None, "Failed to parse checks JSON"
+
+
+def get_pr_info(pr_number):
+    """Get PR information including reviews and mergeable status."""
+    result = subprocess.run(
+        ['gh', 'pr', 'view', str(pr_number), '--json',
+         'number,title,state,mergeable,reviewDecision,reviews,url'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return None, result.stderr.strip()
+
+    try:
+        return json.loads(result.stdout), None
+    except json.JSONDecodeError:
+        return None, "Failed to parse PR JSON"
+
+
+def get_failed_check_logs(pr_number, check_name):
+    """Fetch logs for a failed check."""
+    # Get the run ID for the failed check using gh pr view
+    result = subprocess.run(
+        ['gh', 'pr', 'view', str(pr_number), '--json', 'statusCheckRollup'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return None
+
+    try:
+        data = json.loads(result.stdout)
+        checks = data.get('statusCheckRollup', [])
+        for check in checks:
+            if check.get('name') == check_name:
+                # statusCheckRollup uses 'detailsUrl' instead of 'link'
+                link = check.get('detailsUrl', '')
+                # Extract run ID from link like https://github.com/owner/repo/actions/runs/12345
+                if '/runs/' in link:
+                    run_id = link.split('/runs/')[-1].split('/')[0].split('?')[0]
+                    # Fetch failed logs
+                    log_result = subprocess.run(
+                        ['gh', 'run', 'view', run_id, '--log-failed'],
+                        capture_output=True, text=True
+                    )
+                    if log_result.returncode == 0:
+                        # Return last 100 lines to keep it manageable
+                        lines = log_result.stdout.strip().split('\n')
+                        return '\n'.join(lines[-100:])
+    except (json.JSONDecodeError, KeyError, IndexError):
+        pass
+
+    return None
+
+
+def analyze_checks(checks):
+    """Analyze check results and return summary."""
+    total = len(checks)
+    completed = 0
+    passed = 0
+    failed = []
+    pending = []
+
+    for check in checks:
+        # statusCheckRollup uses 'status' field, not 'state'
+        status = check.get('status', '').upper()
+        conclusion = check.get('conclusion', '').upper()
+        name = check.get('name', 'Unknown')
+
+        if status == 'COMPLETED':
+            completed += 1
+            if conclusion in ('SUCCESS', 'NEUTRAL', 'SKIPPED'):
+                passed += 1
+            else:
+                failed.append({
+                    'name': name,
+                    'conclusion': conclusion,
+                    'url': check.get('detailsUrl', '')
+                })
+        else:
+            pending.append(name)
+
+    return {
+        'total': total,
+        'completed': completed,
+        'passed': passed,
+        'failed': failed,
+        'pending': pending,
+        'all_complete': completed == total,
+        'all_passed': completed == total and len(failed) == 0,
+        'has_failures': len(failed) > 0
+    }
+
+
+def admin_merge(pr_number):
+    """Merge PR with admin authority, bypassing branch protection rules."""
+    result = subprocess.run(
+        ['gh', 'pr', 'merge', '--admin', '--squash', '--delete-branch', str(pr_number)],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        return "merged", None
+    else:
+        return "failed", result.stderr.strip()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('pr_number', nargs='?', help='PR number to poll')
+    parser.add_argument('--admin-auto-merge', '-a', action='store_true',
+                        dest='admin_auto_merge',
+                        help='Merge with admin authority when checks pass (bypasses branch protection)')
+    parser.add_argument('--delete-branch', '-d', action='store_true',
+                        dest='delete_branch',
+                        help='Delete branch after successful merge (implied by --admin-auto-merge)')
+    parser.add_argument('--interval', type=int, default=30,
+                        help='Polling interval in seconds (default: 30)')
+    parser.add_argument('--fix', action='store_true',
+                        help='Auto-fix CI failures (up to 20 attempts). Fix loop is handled by LLM.')
+    args = parser.parse_args()
+
+    # --admin-auto-merge implies --delete-branch
+    if args.admin_auto_merge:
+        args.delete_branch = True
+
+    # In CC, PR number must be provided
+    if os.getenv('CC') == '1':
+        if not args.pr_number:
+            error("pr-number is required when running in CC")
+            sys.exit(1)
+
+    pr_number = args.pr_number
+
+    # If no PR number provided, try to find one for current branch
+    if not pr_number:
+        branch = get_current_branch()
+        result = subprocess.run(
+            ['gh', 'pr', 'list', '--head', branch, '--json', 'number', '-q', '.[0].number'],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            pr_number = result.stdout.strip()
+        else:
+            error(f"No PR found for branch '{branch}'")
+            sys.exit(1)
+
+    start_time = time.time()
+    timeout_seconds = 30 * 60
+
+    # Poll loop
+    while True:
+        elapsed = time.time() - start_time
+
+        # Check timeout
+        if elapsed > timeout_seconds:
+            data = {
+                "pr_number": int(pr_number),
+                "status": "timeout",
+                "elapsed_seconds": int(elapsed),
+                "message": "Polling timed out after 30 minutes"
+            }
+            template = get_template_from_metadata()
+            output_result(data, template)
+            sys.exit(1)
+
+        # Get checks status
+        checks, check_error = get_pr_checks(pr_number)
+        if check_error:
+            error(f"Failed to get PR checks: {check_error}")
+            sys.exit(1)
+
+        # Analyze checks
+        analysis = analyze_checks(checks)
+
+        # Exit immediately if any check has failed (don't wait for others)
+        if analysis['has_failures'] or analysis['all_complete']:
+            # Get full PR info
+            pr_info, pr_error = get_pr_info(pr_number)
+            if pr_error:
+                error(f"Failed to get PR info: {pr_error}")
+                sys.exit(1)
+
+            # Build result data
+            data = {
+                "pr_number": int(pr_number),
+                "elapsed_seconds": int(elapsed),
+                "checks_total": analysis['total'],
+                "checks_passed": analysis['passed'],
+                "checks_failed": len(analysis['failed']),
+            }
+
+            if analysis['all_passed']:
+                data["status"] = "success"
+                data["pr_title"] = pr_info.get('title', '')
+                data["pr_url"] = pr_info.get('url', '')
+                data["mergeable"] = pr_info.get('mergeable', 'UNKNOWN')
+                data["review_decision"] = pr_info.get('reviewDecision', 'NONE')
+
+                # Count reviews
+                reviews = pr_info.get('reviews', [])
+                approved_count = sum(1 for r in reviews if r.get('state') == 'APPROVED')
+                data["approved_reviews"] = approved_count
+
+                # Perform admin merge if requested
+                if args.admin_auto_merge:
+                    # Get branch name from PR before merging
+                    pr_branch_result = subprocess.run(
+                        ['gh', 'pr', 'view', str(pr_number), '--json', 'headRefName', '-q', '.headRefName'],
+                        capture_output=True, text=True
+                    )
+                    pr_branch = pr_branch_result.stdout.strip() if pr_branch_result.returncode == 0 else None
+
+                    am_status, am_error = admin_merge(pr_number)
+                    data["admin_merge"] = am_status
+                    if am_error:
+                        data["admin_merge_error"] = am_error
+                        print(f"Warning: Admin merge failed: {am_error}", file=sys.stderr)
+                    elif pr_branch:
+                        # Clean up local branch after successful merge
+                        cleanup_actions = cleanup_merged_branch(pr_branch)
+                        if cleanup_actions:
+                            data["branch_deleted"] = cleanup_actions
+                            print(f"[OK] Deleted branch '{pr_branch}'", file=sys.stderr)
+            else:
+                data["status"] = "failed"
+                data["pending_checks"] = analysis['pending']
+                data["failed_checks"] = []
+
+                # Analyze each failed check
+                for failed in analysis['failed']:
+                    check_data = {
+                        "name": failed['name'],
+                        "conclusion": failed['conclusion'],
+                        "url": failed['url']
+                    }
+
+                    # Try to get error logs
+                    logs = get_failed_check_logs(pr_number, failed['name'])
+                    if logs:
+                        check_data["logs"] = logs
+
+                    data["failed_checks"].append(check_data)
+
+            template = get_template_from_metadata()
+            output_result(data, template)
+            break
+
+        else:
+            # Still in progress - output status update
+            elapsed_str = f"{int(elapsed)}s" if elapsed < 60 else f"{int(elapsed/60)}m {int(elapsed%60)}s"
+            print(f"Polling PR #{pr_number}: {analysis['completed']}/{analysis['total']} checks complete ({elapsed_str})",
+                  file=sys.stderr)
+
+            # Wait before next poll
+            time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    main()

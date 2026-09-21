@@ -1,0 +1,233 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+
+"""
+code-review-submit - Submit formal GitHub review based on Claude's verdict
+
+Reads the most recent bot comment containing CLAUDE_VERDICT, extracts the
+verdict using the sibling code-review-verdict script, and submits a formal
+GitHub review (approve or request-changes).
+
+This separation prevents prompt-injection from causing self-approval --
+Claude never calls gh pr review itself.
+
+Also parses inline review comments tagged with severity prefixes
+([CRITICAL], [HIGH], [MEDIUM], [LOW] -- case-insensitive; lowercase
+[high]/[medium]/[low] from the current prompt are accepted too) and
+emits them as a JSON array to GITHUB_OUTPUT for downstream pre-review.
+
+Arguments:
+    pr_number  - Pull request number (positional, required)
+    repo       - GitHub repository owner/name (positional, required)
+
+Environment:
+    GH_TOKEN - GitHub token for PR review and API access
+
+Usage:
+    GH_TOKEN=xxx ./code-review-submit 42 owner/repo
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+# Matches a leading severity tag anywhere on the first line. Accepts both
+# the uppercase 4-tier vocabulary ([CRITICAL|HIGH|MEDIUM|LOW]) from the
+# new contract and the lowercase 3-tier vocabulary ([high|medium|low])
+# produced by the current .harness.yaml prompt.
+SEVERITY_RE = re.compile(r"\[(critical|high|medium|low)\]", re.IGNORECASE)
+
+
+def extract_issues(pr_number: str, repo: str) -> list[dict]:
+    """Fetch inline review comments for the PR and parse severity tags.
+
+    Returns a list of {severity, file, line, title} dicts. Comments
+    without a severity tag default to MEDIUM with a warning. If more
+    than 10% of comments lack a tag, a stronger warning is logged.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh", "api", f"repos/{repo}/pulls/{pr_number}/comments",
+                "--paginate",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"[WARN] Could not fetch inline comments: {result.stderr.strip()}",
+                  file=sys.stderr)
+            return []
+        raw = result.stdout.strip()
+        if not raw:
+            return []
+        comments = json.loads(raw)
+    except Exception as e:
+        print(f"[WARN] Failed to fetch/parse inline comments: {e}", file=sys.stderr)
+        return []
+
+    issues: list[dict] = []
+    missing_tag = 0
+    total = 0
+    for c in comments:
+        # Only consider bot-authored comments (Claude posts as the
+        # github-actions bot). Keep permissive: if user.type is absent,
+        # still process.
+        user = c.get("user") or {}
+        if user.get("type") not in (None, "Bot"):
+            continue
+
+        body = c.get("body") or ""
+        if not body.strip():
+            continue
+        total += 1
+
+        first_line = body.splitlines()[0].strip()
+        m = SEVERITY_RE.search(first_line)
+        if m:
+            severity = m.group(1).upper()
+        else:
+            severity = "MEDIUM"
+            missing_tag += 1
+
+        # Title: strip the severity tag, keep the rest of the first line
+        title = SEVERITY_RE.sub("", first_line, count=1).strip(" -:")
+        if not title:
+            # Fall back to the second non-empty line
+            for ln in body.splitlines()[1:]:
+                if ln.strip():
+                    title = ln.strip()
+                    break
+
+        issues.append({
+            "severity": severity,
+            "file": c.get("path", ""),
+            "line": c.get("line") or c.get("original_line") or 0,
+            "title": title[:200],
+        })
+
+    if missing_tag:
+        print(f"[WARN] {missing_tag}/{total} inline comments lack a severity tag "
+              f"(defaulted to MEDIUM)", file=sys.stderr)
+        if total and (missing_tag / total) > 0.10:
+            print("[WARN] More than 10% of review comments lack severity tags -- "
+                  "possible prompt drift; check .harness.yaml review prompt.",
+                  file=sys.stderr)
+
+    return issues
+
+
+def main() -> int:
+    """Submit formal review based on extracted CLAUDE_VERDICT."""
+    if len(sys.argv) < 3:
+        print("Usage: code-review-submit <pr_number> <repo>", file=sys.stderr)
+        return 1
+
+    pr_number = sys.argv[1]
+    repo = sys.argv[2]
+
+    # Step 1: Skip if PR author is a bot
+    try:
+        result = subprocess.run(
+            [
+                "gh", "pr", "view", pr_number,
+                "--repo", repo,
+                "--json", "author",
+                "--jq", ".author.__typename",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        author_type = result.stdout.strip() if result.returncode == 0 else "User"
+    except Exception:
+        author_type = "User"
+
+    if author_type == "Bot":
+        print("PR author is a bot -- skipping formal review decision")
+        return 0
+
+    # Step 2: Find most recent bot comment with CLAUDE_VERDICT
+    try:
+        result = subprocess.run(
+            [
+                "gh", "api",
+                f"repos/{repo}/issues/{pr_number}/comments",
+                "--jq",
+                '[.[] | select(.user.type == "Bot" and (.body | contains("CLAUDE_VERDICT:")))] | last | .body',
+            ],
+            capture_output=True,
+            text=True,
+        )
+        body = result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        body = ""
+
+    # Step 3: Extract verdict using sibling script
+    verdict = ""
+    if body and body != "null":
+        extract_script = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "code-review-verdict"
+        )
+        try:
+            result = subprocess.run(
+                ["uv", "run", "--quiet", "--script", extract_script],
+                input=body,
+                capture_output=True,
+                text=True,
+            )
+            verdict = result.stdout.strip() if result.returncode == 0 else ""
+        except Exception:
+            verdict = ""
+
+    # Step 4: Report extracted verdict and write to GITHUB_OUTPUT
+    print(f"Extracted verdict: '{verdict}'")
+    github_output = os.environ.get("GITHUB_OUTPUT", "")
+    if github_output and verdict:
+        with open(github_output, "a") as f:
+            f.write(f"verdict={verdict}\n")
+
+    # Step 4b: Extract inline issues and emit as a JSON array to GITHUB_OUTPUT
+    # so downstream workflows (e.g. pre-review) can consume structured data.
+    issues = extract_issues(pr_number, repo)
+    issues_json = json.dumps(issues, separators=(",", ":"))
+    print(f"Extracted {len(issues)} inline issues")
+    if github_output:
+        with open(github_output, "a") as f:
+            f.write(f"issues={issues_json}\n")
+
+    # Step 5: Submit review based on verdict
+    if verdict == "APPROVE":
+        print("Submitting APPROVE review")
+        subprocess.run(
+            [
+                "gh", "pr", "review", pr_number,
+                "--repo", repo,
+                "--approve",
+                "--body", "Claude review complete. No blockers found.",
+            ],
+            check=True,
+        )
+    elif verdict == "REQUEST_CHANGES":
+        print("Submitting REQUEST_CHANGES review")
+        subprocess.run(
+            [
+                "gh", "pr", "review", pr_number,
+                "--repo", repo,
+                "--request-changes",
+                "--body", "Claude review found issues that must be addressed. See inline comments above.",
+            ],
+            check=True,
+        )
+    else:
+        print("No valid CLAUDE_VERDICT found -- skipping formal review submission")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

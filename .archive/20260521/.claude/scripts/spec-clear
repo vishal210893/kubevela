@@ -1,0 +1,93 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Disassociate spec from current branch"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-clear:*)"]
+#
+# [tool.claude.output]
+# prompt = "Confirm the spec disassociation. Show what was removed."
+# examples = [
+#   "[OK] Disassociated spec 'feature-auth' from branch 'feature-auth'\n\nThe spec directory remains at .dev/specs/feature-auth/"
+# ]
+# ///
+
+"""
+Disassociate spec from current branch.
+
+Removes the spec-branch association from dev.yaml. This is the opposite
+of /spec <name>. The spec directory itself is NOT deleted.
+
+Idempotent: Yes (safe to run if no association exists)
+Worktree Constraints: Works for both WT & Branch flows
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+# Add to parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import get_current_branch, get_associated_spec, disassociate_spec, in_git_repo, spec_path
+
+
+def main():
+    """Main entry point."""
+    # Validate in git repo
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    # Get current branch
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    # Get current association
+    spec_name = get_associated_spec(branch)
+
+    if not spec_name:
+        # No association - still success (idempotent)
+        data = {
+            'branch': branch,
+            'spec_name': None,
+            'was_associated': False
+        }
+        if os.getenv('CC') == '1':
+            print(json.dumps(data))
+        else:
+            print(f"Branch '{branch}' has no spec association")
+        sys.exit(0)
+
+    # Remove association
+    spec_dir = spec_path(spec_name)
+    removed = disassociate_spec(branch)
+
+    if not removed:
+        print("Error: Failed to remove association from dev.yaml", file=sys.stderr)
+        sys.exit(1)
+
+    # Build output data
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(spec_dir),
+        'branch': branch,
+        'was_associated': True
+    }
+
+    # Output based on mode
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"[OK] Disassociated spec '{spec_name}' from branch '{branch}'")
+        print()
+        print(f"The spec directory remains at {spec_dir}/")
+
+
+if __name__ == "__main__":
+    main()

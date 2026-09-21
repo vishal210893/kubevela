@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: err-bad-props
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-err-bad-props-fixed
+spec:
+  components:
+    - name: bad
+      type: webservice
+      properties:
+        cmd: ["sleep", "1"]

@@ -111,9 +111,16 @@ func (s *Service) FetchModule(ctx context.Context, registry, moduleName, version
 	// this module, so what it costs the registry is what matters here. Reading
 	// the module is skipped entirely whenever the registry reports the same
 	// revision it was read at.
+	contentRev, contentPin, hasContentRev := component.ContentRevisionPin(ctx, reg, moduleName, version)
 	return moduleCache.Load(
 		moduleCacheKey(&reg, moduleName, version),
 		func(lastKnown string) (string, error) {
+			// The content revision when the source can name one, so that this
+			// cache and the workflow gate compare the same thing. See
+			// component.ContentRevisionPin.
+			if hasContentRev {
+				return contentRev, nil
+			}
 			if s.revision == nil {
 				return "", component.ErrRevisionUnsupported
 			}
@@ -122,6 +129,9 @@ func (s *Service) FetchModule(ctx context.Context, registry, moduleName, version
 		func(revision string) (*module.Module, error) {
 			// Read at the revision that was checked, so the files parsed here
 			// are the ones that revision names.
+			if hasContentRev {
+				revision = contentPin
+			}
 			at := reg.AtRevision(revision)
 			fsys, err := s.sourceFS(ctx, &at, moduleName, version)
 			if err != nil {

@@ -1,0 +1,25 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: oci-widget-greeter
+  namespace: vela-system
+  annotations:
+    definition.oam.dev/description: Greeter shipped by the oci-widget addon; renders a ConfigMap.
+spec:
+  workload:
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+  schematic:
+    cue:
+      template: |
+        output: {
+        	apiVersion: "v1"
+        	kind:       "ConfigMap"
+        	metadata: name: context.name
+        	data: greeting: parameter.greeting
+        }
+        parameter: {
+        	// What the greeter says.
+        	greeting: *"hi" | string
+        }

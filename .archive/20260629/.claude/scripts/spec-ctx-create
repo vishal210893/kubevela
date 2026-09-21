@@ -1,0 +1,138 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Create a new context directory"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-ctx-create *)", "Read", "Write", "Glob", "Grep"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "required-passthrough"
+# hint = "<name>"
+# description = "Context name (e.g. auth, billing, data-export)"
+#
+# [[tool.claude.argument]]
+# name = "--file"
+# type = "optional-passthrough"
+# description = "Create as a flat file (ctx/<name>.md) instead of a directory with a seed <name>.md inside"
+#
+# [tool.claude.output]
+# prompt = """A new context was created at the path shown in the output.
+#
+# If a directory was created, it already contains a seed file named `<name>.md` (e.g.
+# `auth/auth.md`). If --file was used, the path is a single flat markdown file.
+#
+# Now analyze the codebase to populate the context with useful content. Read relevant
+# source files, configuration, and existing docs to understand this area, then write
+# the content into the existing file(s).
+#
+# For directory contexts: start by filling in the seed `<name>.md` file. If the area
+# is large enough to warrant multiple files, add siblings alongside it and organize
+# by topic -- for example:
+#
+# - `overview.md` -- What this project/area does and why it exists
+# - `architecture.md` -- Key classes, modules, data flow, dependencies
+# - `conventions.md` -- Patterns, naming rules, error handling specific to this area
+# - `key-files.md` -- Important file paths with brief descriptions
+#
+# Do NOT invent a `context.md` -- the seed file is already named `<name>.md`.
+#
+# Write in a factual, concise style. Focus on what an agent needs to know to work
+# effectively in this area. Avoid duplicating steering docs (project-wide info) or
+# spec docs (feature-specific info).
+#
+# After writing, suggest adding it to the branch context: /spec ::+<name>"""
+# examples = [
+#   "[OK] Created context 'auth' at /workspaces/src/specs/dev/ctx/auth/ (seeded auth.md)\n\n[Analyzes codebase and writes into auth.md and any additional sibling files]"
+# ]
+# ///
+
+"""
+Create a new context directory or flat file.
+
+Creates a new context under <doc-root>/ctx/. By default creates a
+directory <name>/ containing a seed file <name>.md (so the context
+has a starting document to fill in). With --file, creates a single
+flat file <name>.md instead. Context holds long-lived project
+documentation that persists across specs and accumulates knowledge
+over time.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import doc_root, in_git_repo
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    if len(sys.argv) < 2:
+        print("Error: Context name required", file=sys.stderr)
+        print("Usage: spec-ctx-create <name>", file=sys.stderr)
+        sys.exit(1)
+
+    args = sys.argv[1:]
+    as_file = '--file' in args
+    if as_file:
+        args.remove('--file')
+
+    if not args:
+        print("Error: Context name required", file=sys.stderr)
+        print("Usage: spec-ctx-create [--file] <name>", file=sys.stderr)
+        sys.exit(1)
+
+    name = args[0]
+
+    root = doc_root()
+    ctx_dir = root / 'ctx'
+
+    # Check if context already exists (as directory or file)
+    ctx_path = ctx_dir / name
+    ctx_file = ctx_dir / f'{name}.md'
+
+    if ctx_path.is_dir():
+        print(f"Error: Context '{name}' already exists at {ctx_path}/", file=sys.stderr)
+        sys.exit(1)
+    if ctx_file.is_file():
+        print(f"Error: Context '{name}' already exists at {ctx_file}", file=sys.stderr)
+        sys.exit(1)
+
+    if as_file:
+        # Create as a flat file
+        ctx_dir.mkdir(parents=True, exist_ok=True)
+        ctx_file.write_text(f'# {name}\n')
+        created_path = str(ctx_file)
+    else:
+        # Create as a directory with a seed <name>.md inside
+        ctx_path.mkdir(parents=True, exist_ok=True)
+        seed_file = ctx_path / f'{name}.md'
+        if not seed_file.exists():
+            seed_file.write_text(f'# {name}\n')
+        created_path = f'{ctx_path}/'
+
+    data = {
+        'name': name,
+        'path': created_path,
+        'doc_root': str(root),
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"[OK] Created context '{name}' at {created_path}")
+        print()
+        print(f"Add to your branch: /spec ::+{name}")
+
+
+if __name__ == "__main__":
+    main()

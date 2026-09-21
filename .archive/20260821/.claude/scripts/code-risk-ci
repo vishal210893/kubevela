@@ -1,0 +1,217 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# ///
+"""
+code-risk-ci -- CI classifier for the code-risk workflow.
+
+Fetches changed files and diff stats for a PR via the `gh` CLI,
+loads .harness.yaml config, runs custom risk scripts, classifies the
+PR, and writes results to GITHUB_OUTPUT for downstream workflow
+steps.
+
+Usage (in a GitHub Actions step):
+    uv run --quiet --script .claude/scripts/code-risk-ci "$PR_NUMBER"
+
+Env:
+    GH_TOKEN       - GitHub token for `gh` CLI
+    PR_NUMBER      - PR number (also accepted as first positional arg)
+    GITHUB_OUTPUT  - Path to GitHub Actions output file (set by Actions)
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+# code_risk.py lives in the same directory
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from code_risk import TIER_ORDER, classify, load_config, run_custom_scripts
+
+# -- Defaults (used when .harness.yaml is missing or incomplete) ----------------
+
+DEFAULTS = {
+    "low": {
+        "max-lines": 50,
+        "patterns": [
+            "docs/",
+            "*.md",
+            "*.txt",
+            "CODEOWNERS",
+            ".gitignore",
+            ".gitattributes",
+            "LICENSE",
+        ],
+    },
+    "medium": {"max-lines": 300, "max-files": 10, "patterns": []},
+    "high": {"max-lines": 1000, "max-files": 25, "patterns": [".github/workflows"]},
+    "critical": {"patterns": []},
+    "scripts": [],
+}
+
+# -- Output helpers --------------------------------------------------------
+
+
+def _gh_output_path():
+    return os.environ.get("GITHUB_OUTPUT", "")
+
+
+def write_output(key, value):
+    path = _gh_output_path()
+    if path:
+        with open(path, "a") as f:
+            f.write(f"{key}={value}\n")
+
+
+def write_multiline_output(key, value):
+    path = _gh_output_path()
+    if path:
+        with open(path, "a") as f:
+            f.write(f"{key}<<FILELIST_EOF\n{value}\nFILELIST_EOF\n")
+
+
+def write_fallback(reason):
+    """Write a safe high-tier fallback when data cannot be retrieved."""
+    write_output("tier", "high")
+    write_output("reason", reason)
+    write_output("total_lines", "unknown")
+    write_output("total_files", "unknown")
+    write_output("critical_hit", "false")
+    write_output("high_hit", "false")
+    write_output("medium_hit", "false")
+    write_multiline_output("critical_files", "")
+    write_multiline_output("high_files", "")
+    write_multiline_output("medium_files", "")
+    write_multiline_output("low_files", "")
+    write_multiline_output("unmatched_files", "")
+
+
+# -- Main ------------------------------------------------------------------
+
+
+def main():
+    pr_number = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("PR_NUMBER", "")
+    if not pr_number:
+        print("[ERROR] PR number required (arg or PR_NUMBER env)", file=sys.stderr)
+        sys.exit(1)
+
+    # 1. Get changed files via gh CLI
+    try:
+        files_out = subprocess.run(
+            ["gh", "pr", "diff", str(pr_number), "--name-only"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        changed_files = [f for f in files_out.stdout.strip().splitlines() if f.strip()]
+    except Exception:
+        changed_files = []
+
+    if not changed_files:
+        print(
+            "[WARN] Could not retrieve file list, defaulting to high", file=sys.stderr
+        )
+        write_fallback("Unable to retrieve file list (safety default)")
+        sys.exit(0)
+
+    # 2. Get diff stats (additions + deletions)
+    line_count = 0
+    file_count = len(changed_files)
+    try:
+        stats_out = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr_number),
+                "--json",
+                "additions,deletions,changedFiles",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        stats = json.loads(stats_out.stdout)
+        line_count = stats.get("additions", 0) + stats.get("deletions", 0)
+        file_count = stats.get("changedFiles", file_count)
+    except Exception:
+        print(
+            "[WARN] Could not retrieve diff stats, using file count only",
+            file=sys.stderr,
+        )
+
+    # 3. Load config with defaults fallback
+    config_file = ".harness.yaml"
+    try:
+        config = load_config(config_file)
+        for key in DEFAULTS:
+            if key not in config or config[key] is None:
+                config[key] = DEFAULTS[key]
+        print(f"[OK] Loaded config from {config_file}", file=sys.stderr)
+    except FileNotFoundError:
+        config = dict(DEFAULTS)
+        print(f"[INFO] No {config_file} found, using defaults", file=sys.stderr)
+    except Exception as e:
+        config = dict(DEFAULTS)
+        print(
+            f"[WARN] Failed to parse {config_file}, using defaults: {e}",
+            file=sys.stderr,
+        )
+
+    # 4. Run custom scripts
+    script_results = run_custom_scripts(config, changed_files, ".", str(pr_number))
+    for sr in script_results:
+        print(f"[script] {sr['script']} => {sr['result']}", file=sys.stderr)
+
+    # 5. Classify
+    tier, score, per_file_tiers = classify(
+        changed_files,
+        config,
+        line_count,
+        file_count,
+        script_results,
+    )
+
+    # 6. Build per-tier file lists
+    buckets = {t: [] for t in list(TIER_ORDER) + ["unmatched"]}
+    for f, t in per_file_tiers.items():
+        buckets[t].append(f)
+
+    critical_hit = "true" if buckets["critical"] else "false"
+    high_hit = "true" if buckets["high"] else "false"
+    medium_hit = "true" if buckets["medium"] else "false"
+
+    reason = f"Score {score} -- {line_count} lines across {file_count} files"
+
+    # 7. Write outputs
+    write_output("tier", tier)
+    write_output("reason", reason)
+    write_output("total_lines", str(line_count))
+    write_output("total_files", str(file_count))
+    write_output("critical_hit", critical_hit)
+    write_output("high_hit", high_hit)
+    write_output("medium_hit", medium_hit)
+    write_multiline_output("critical_files", "\n".join(buckets["critical"]))
+    write_multiline_output("high_files", "\n".join(buckets["high"]))
+    write_multiline_output("medium_files", "\n".join(buckets["medium"]))
+    write_multiline_output("low_files", "\n".join(buckets["low"]))
+    write_multiline_output("unmatched_files", "\n".join(buckets["unmatched"]))
+
+    # 8. Diagnostic output
+    print("", file=sys.stderr)
+    print("=== Classification Result ===", file=sys.stderr)
+    print(f"Tier:      {tier}", file=sys.stderr)
+    print(f"Score:     {score}", file=sys.stderr)
+    print(f"Reason:    {reason}", file=sys.stderr)
+    print(f"Lines:     {line_count}", file=sys.stderr)
+    print(f"Files:     {file_count}", file=sys.stderr)
+    print(f"Critical:  {len(buckets['critical'])} files", file=sys.stderr)
+    print(f"High:      {len(buckets['high'])} files", file=sys.stderr)
+    print(f"Medium:    {len(buckets['medium'])} files", file=sys.stderr)
+    print(f"Low:       {len(buckets['low'])} files", file=sys.stderr)
+    print(f"Unmatched: {len(buckets['unmatched'])} files", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,58 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "View repository status"
+# model = "haiku"
+# context = "fork"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/git-status)"]
+#
+# [tool.claude.output]
+# format = "array"
+# prompt = "Summarize repository state for quick decision-making. Group changes by type. Flag anything blocking a commit (conflicts, unmerged files). Keep it scannable."
+# examples = [
+#   "M  README.md\nM  src/auth.js\n?? test.log",
+#   "M  package.json\n M src/index.js\n?? .env\n?? logs/"
+# ]
+# ///
+
+"""View repository status."""
+
+import sys
+from pathlib import Path
+
+# Load shared library
+exec(open(Path(__file__).parent / 'lib/gitlib.py').read())
+
+
+def main():
+    """Show concise repository status."""
+    import os
+    import json
+
+    # Get status output
+    result = run_git(
+        ['status', '--short'],
+        operation_description="get status",
+        capture_output=True
+    )
+
+    # Parse status output into structured array
+    files = []
+    for line in result.stdout.splitlines():
+        if line:
+            # Format: XY filename (XY = 2-char status code)
+            status = line[:2]
+            file_path = line[3:]  # Skip "XY "
+            files.append({"status": status, "file": file_path})
+
+    # Output: JSON array in command mode, raw status otherwise
+    if os.getenv('CC') == '1':
+        print(json.dumps(files))
+    else:
+        print(result.stdout, end='')
+
+
+if __name__ == "__main__":
+    main()

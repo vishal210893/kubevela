@@ -1,0 +1,75 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Approve pull request"
+# model = "sonnet"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/pr-approve:*)"]
+#
+# [[tool.claude.argument]]
+# name = "pr-number"
+# type = "optional-passthrough"
+# hint = "[pr-number]"
+# description = "PR number to approve (defaults to current branch's PR)"
+#
+# [tool.claude.output]
+# prompt = "Confirm approval. Simple and direct."
+# examples = [
+#   "[OK] Approved PR #123"
+# ]
+# ///
+
+import sys
+import os
+import argparse
+import subprocess
+import json
+
+# Import gitlib
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.gitlib import (
+    error, output_result, get_template_from_metadata
+)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Approve pull request')
+    parser.add_argument('pr_number', nargs='?', help='PR number to approve (defaults to current branch)')
+    args = parser.parse_args()
+
+    pr_number = args.pr_number
+
+    # If no PR number provided, get it from current branch
+    if not pr_number:
+        result = subprocess.run(['gh', 'pr', 'view', '--json', 'number'], capture_output=True, text=True)
+        if result.returncode != 0:
+            error("No PR number provided and could not find PR for current branch", stderr_output=result.stderr)
+            sys.exit(result.returncode)
+        try:
+            pr_data = json.loads(result.stdout)
+            pr_number = str(pr_data['number'])
+        except (json.JSONDecodeError, KeyError) as e:
+            error(f"Failed to parse PR number from current branch: {e}")
+            sys.exit(1)
+
+    # Approve the PR
+    gh_cmd = ['gh', 'pr', 'review', pr_number, '--approve']
+
+    result = subprocess.run(gh_cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        error(f"Failed to approve PR #{pr_number}", command=gh_cmd, stderr_output=result.stderr)
+        sys.exit(result.returncode)
+
+    # Output result
+    data = {
+        "pr_number": int(pr_number)
+    }
+
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

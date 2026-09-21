@@ -1,0 +1,14 @@
+# Reproducible fixture for the Vela Config controller audit.
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-missing-input
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-sensitive
+    namespace: cfg-audit-7105
+  propertiesFrom:
+    secretRef:
+      name: later-input
+      key: properties

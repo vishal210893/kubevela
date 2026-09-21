@@ -1,0 +1,207 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+#
+# [tool.claude]
+# description = "Analyze merged PRs from the past 7 days and propose .harness.yaml improvements"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/code-retro *)"]
+#
+# [[tool.claude.argument]]
+# name = "action"
+# type = "optional-passthrough"
+# hint = "[--action]"
+# description = "Trigger the CI retro workflow instead of running locally"
+# flag = true
+#
+# [tool.claude.output]
+# prompt = """Analyze the JSON output and propose .harness.yaml improvements:
+#
+# 1. If action_triggered is true: confirm the workflow was triggered and stop.
+# 2. If pr_count is 0: report no merged PRs in the window and stop.
+# 3. Scan all `comments` and `review_bodies` across every PR for recurring patterns:
+#    - Frequently flagged issues (same problem across multiple PRs)
+#    - Repeated reviewer feedback suggesting review prompt gaps
+#    Report under ## Review Pattern Analysis. For each pattern: what it is,
+#    how many PRs, whether .harness.yaml already covers it, proposed prompt change.
+# 4. For `unmatched_paths` (paths that matched no .harness.yaml pattern, defaulting
+#    to high): group by directory/type and propose tier placement with rationale.
+#    Report under ## Unmatched File Patterns as a table. Omit section if empty.
+# 5. Propose concrete .harness.yaml changes under ## Proposed .harness.yaml Changes:
+#    - Review prompt additions/adjustments
+#    - New glob patterns for unmatched files at appropriate tiers
+#    Show exact YAML for each proposed change. If no changes are warranted, say so.
+#
+# Output format:
+#   # Code Retrospective
+#   Analyzed N merged PRs from START to END.
+#   ## Review Pattern Analysis
+#   ## Unmatched File Patterns  (omit if none)
+#   ## Proposed .harness.yaml Changes
+#
+# Only propose changes clearly justified by data. This is local mode -- display
+# proposals only, do not modify .harness.yaml or create a PR."""
+# examples = [
+#   "# Code Retrospective\n\nAnalyzed 12 merged PRs from 2026-03-27 to 2026-04-03.\n\n## Review Pattern Analysis\n\n- **Missing test coverage** (5 PRs): reviewers flagged untested changes...\n\n## Proposed .harness.yaml Changes\n\n### Review Prompt\nNo changes warranted."
+# ]
+# ///
+"""
+code-retro - Collect merged PR data for retrospective analysis.
+
+Gathers merged PRs from the past 7 days, their changed files, comments,
+and reviews, then checks files against .harness.yaml patterns to identify
+unmatched paths. Outputs structured JSON for Claude to analyze.
+
+Usage:
+    code-retro [--action]
+"""
+
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+
+def run(cmd, check=False):
+    """Run a command and return stripped stdout."""
+    result = subprocess.run(
+        cmd, shell=True, capture_output=True, text=True
+    )
+    if check and result.returncode != 0:
+        print(f"Error: {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+    return result.stdout.strip()
+
+
+def find_repo_root():
+    root = run("git rev-parse --show-toplevel")
+    if not root:
+        print("Error: not in a git repository", file=sys.stderr)
+        sys.exit(1)
+    return root
+
+
+def get_merged_prs(since):
+    """Fetch merged PRs since the given date."""
+    output = run(
+        f'gh pr list --state merged'
+        f' --search "merged:>={since}"'
+        f' --json number,title,body,mergedAt'
+        f' --limit 100'
+    )
+    if not output:
+        return []
+    return json.loads(output)
+
+
+def get_pr_files(pr_number):
+    """Get changed file paths for a PR."""
+    output = run(f"gh pr view {pr_number} --json files --jq '.files[].path'")
+    return [f for f in output.splitlines() if f] if output else []
+
+
+def get_pr_comments(pr_number):
+    """Get issue comments (timeline comments) for a PR."""
+    output = run(
+        f"gh pr view {pr_number} --json comments --jq '.comments[].body'"
+    )
+    return [c for c in output.splitlines() if c.strip()] if output else []
+
+
+def get_pr_reviews(pr_number):
+    """Get review bodies for a PR."""
+    output = run(
+        f"gh pr view {pr_number} --json reviews --jq '.reviews[].body'"
+    )
+    return [r for r in output.splitlines() if r.strip()] if output else []
+
+
+def find_unmatched(files, config):
+    """Return files that match no pattern in .harness.yaml."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from code_risk import _build_tier_regexes, _classify_files
+
+    tier_regexes = _build_tier_regexes(config)
+    buckets = _classify_files(files, tier_regexes)
+    return buckets.get("unmatched", [])
+
+
+def main():
+    action_mode = "--action" in sys.argv
+
+    if action_mode:
+        result = subprocess.run(
+            "gh workflow run pr.yaml --ref main",
+            shell=True, capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print(
+                f"Error: failed to trigger workflow: {result.stderr.strip()}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        data = {"action_triggered": True}
+        if os.getenv("CC") == "1":
+            print(json.dumps(data))
+        else:
+            print("Triggered harness-pr-retro.yaml -- a PR will be opened if improvements are warranted.")
+        return
+
+    repo_root = find_repo_root()
+    pr_yaml_path = Path(repo_root) / ".harness.yaml"
+    if not pr_yaml_path.exists():
+        print("Error: .harness.yaml not found. Run /code:setup to create one.", file=sys.stderr)
+        sys.exit(1)
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from code_risk import load_config
+    config = load_config(str(pr_yaml_path))
+
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    end = now.strftime("%Y-%m-%d")
+
+    prs = get_merged_prs(since)
+
+    # Collect per-PR data and accumulate unmatched path counts
+    unmatched_counts = {}
+    pr_data = []
+    for pr in prs:
+        number = pr["number"]
+        files = get_pr_files(number)
+        comments = get_pr_comments(number)
+        reviews = get_pr_reviews(number)
+
+        unmatched = find_unmatched(files, config)
+        for path in unmatched:
+            unmatched_counts[path] = unmatched_counts.get(path, 0) + 1
+
+        pr_data.append({
+            "number": number,
+            "title": pr.get("title", ""),
+            "merged_at": pr.get("mergedAt", ""),
+            "files": files,
+            "comments": comments,
+            "review_bodies": reviews,
+        })
+
+    data = {
+        "action_triggered": False,
+        "window": {"start": since, "end": end},
+        "pr_count": len(pr_data),
+        "prs": pr_data,
+        "unmatched_paths": unmatched_counts,
+    }
+
+    if os.getenv("CC") == "1":
+        print(json.dumps(data))
+    else:
+        print(f"Collected {len(pr_data)} merged PRs from {since} to {end}.")
+        if unmatched_counts:
+            print(f"Unmatched paths: {len(unmatched_counts)}")
+
+
+if __name__ == "__main__":
+    main()

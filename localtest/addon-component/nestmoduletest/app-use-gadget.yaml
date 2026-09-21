@@ -1,0 +1,15 @@
+# Uses the capability the nested module installed, to prove the chain delivered
+# something usable and not just a ComponentDefinition object. The type name is
+# <module>-<apiVersion>-<capability>, which is how a module names what it
+# installs.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: use-gadget
+  namespace: default
+spec:
+  components:
+    - name: try-gadget
+      type: oci-gadget-v1-gadget
+      properties:
+        label: nested from oci

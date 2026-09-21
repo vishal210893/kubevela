@@ -186,8 +186,8 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 	EnableGlobalPolicies:                          {Default: false, PreRelease: featuregate.Alpha},
 	EnableApplicationScopedPolicies:               {Default: false, PreRelease: featuregate.Alpha},
 	ValidateUndeclaredParameters:                  {Default: false, PreRelease: featuregate.Alpha},
-	EnableAddonComponent:                          {Default: false, PreRelease: featuregate.Alpha},
-	EnableModuleComponent:                         {Default: false, PreRelease: featuregate.Alpha},
+	EnableAddonComponent:                          {Default: true, PreRelease: featuregate.Alpha},
+	EnableModuleComponent:                         {Default: true, PreRelease: featuregate.Alpha},
 }
 
 func init() {

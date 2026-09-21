@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh pr *)",
+      "WebFetch(domain:www.agent-native.com)",
+      "Bash(claude mcp *)",
+      "mcp__plan__list-visual-plans",
+      "mcp__jira__createJiraIssue",
+      "mcp__jira__searchJiraIssuesUsingJql",
+      "Read(//home/node/visualplan/**)",
+      "Read(//home/node/visualplan/node_modules/**)",
+      "Bash(gh issue *)",
+      "mcp__jira__getJiraIssue",
+      "Bash(export KUBECONFIG=/tmp/claude-1000/-workspaces-Open-Source-kubevela/42a32532-9150-4d18-aa18-ca8e5404f4e6/scratchpad/kc.yaml)",
+      "Bash(python3 -c ' *)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "confluence",
+    "jira",
+    "devassistant",
+    "figma",
+    "github",
+    "guidewire-docs",
+    "guidewire-docs-staging",
+    "jutro-developer-assistant",
+    "plan"
+  ]
+}

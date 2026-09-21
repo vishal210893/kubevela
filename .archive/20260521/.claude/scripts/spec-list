@@ -1,0 +1,149 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "List all specs with branch/worktree status"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-list)"]
+#
+# [tool.claude.output]
+# prompt = "Display specs in a formatted table showing name, associated branch, and worktree path. Include totals."
+# examples = [
+#   "Specs\n═════\n\nName              Branch              Worktree\n────              ──────              ────────\nfeature-auth      feature-auth        -\nuser-settings     user-settings       ../repo-user-settings/\n\nTotal: 2 specs"
+# ]
+# ///
+
+"""
+List all specs with branch/worktree status.
+
+Scans <doc-root>/specs/ directory and cross-references with git branches and worktrees.
+"""
+
+import subprocess
+import sys
+import os
+import json
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import doc_root
+
+
+def get_specs():
+    """Get all spec directories."""
+    specs_dir = doc_root() / 'specs'
+    if not specs_dir.exists():
+        return [], specs_dir
+    return sorted([d.name for d in specs_dir.iterdir() if d.is_dir()]), specs_dir
+
+
+def get_branches():
+    """Get all local and remote branches."""
+    result = subprocess.run(
+        ['git', 'branch', '-a', '--format=%(refname:short)'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return set()
+    branches = set()
+    for line in result.stdout.strip().split('\n'):
+        if line:
+            # Remove origin/ prefix for remote branches
+            if line.startswith('origin/'):
+                branches.add(line[7:])
+            else:
+                branches.add(line)
+    return branches
+
+
+def get_worktrees():
+    """Get all worktrees as dict mapping branch to path."""
+    result = subprocess.run(
+        ['git', 'worktree', 'list', '--porcelain'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return {}
+
+    worktrees = {}
+    current_path = None
+    for line in result.stdout.split('\n'):
+        if line.startswith('worktree '):
+            current_path = line.split(' ', 1)[1]
+        elif line.startswith('branch refs/heads/'):
+            branch = line.split('refs/heads/', 1)[1]
+            worktrees[branch] = current_path
+    return worktrees
+
+
+def get_spec_associations():
+    """Get spec-branch associations from dev.yaml.
+
+    Returns dict mapping spec_name -> branch_name.
+    """
+    from lib.speclib import get_all_associations
+
+    # get_all_associations returns branch -> spec, we need spec -> branch
+    branch_to_spec = get_all_associations()
+    return {spec: branch for branch, spec in branch_to_spec.items()}
+
+
+def main():
+    """Main entry point."""
+    specs, specs_dir = get_specs()
+    branches = get_branches()
+    worktrees = get_worktrees()
+    associations = get_spec_associations()
+
+    # Build spec info list
+    spec_info = []
+    for spec in specs:
+        # Check for associated branch
+        branch = associations.get(spec, None)
+
+        # If no association, check if branch with same name exists
+        if not branch and spec in branches:
+            branch = spec
+
+        # Check for worktree
+        worktree_path = worktrees.get(branch) if branch else None
+
+        spec_info.append({
+            'name': spec,
+            'branch': branch,
+            'worktree': worktree_path
+        })
+
+    data = {
+        'specs': spec_info,
+        'total': len(specs)
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if not specs:
+            print(f"No specs found in {specs_dir}/")
+            return
+
+        print("Specs")
+        print("═════")
+        print()
+        print(f"{'Name':<20} {'Branch':<20} {'Worktree':<30}")
+        print(f"{'────':<20} {'──────':<20} {'────────':<30}")
+
+        for info in spec_info:
+            name = info['name']
+            branch = info['branch'] or '-'
+            worktree = info['worktree'] or '-'
+            print(f"{name:<20} {branch:<20} {worktree:<30}")
+
+        print()
+        print(f"Total: {len(specs)} specs")
+
+
+if __name__ == "__main__":
+    main()

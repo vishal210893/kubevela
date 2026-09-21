@@ -1,0 +1,32 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: audit-deploy
+  namespace: vela-system
+spec:
+  workload:
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+  schematic:
+    cue:
+      template: |
+        output: {
+          apiVersion: "apps/v1"
+          kind:       "Deployment"
+          metadata: name: parameter.name
+          spec: {
+            replicas: 2
+            selector: matchLabels: app: parameter.name
+            template: {
+              metadata: labels: app: parameter.name
+              spec: containers: [{
+                name:  "main"
+                image: "nginx:1.25-alpine"
+              }]
+            }
+          }
+        }
+        parameter: {
+          name: string
+        }

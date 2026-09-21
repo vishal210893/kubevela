@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpokeCluster Connect Explorer</title>
+<style>
+:root{
+  --bg:#0b1118; --panel:#111a24; --panel2:#0e1620; --line:#22303f; --line2:#2d3f52;
+  --fg:#e6edf5; --fg2:#9fb0c3; --fg3:#6f8296;
+  --frontend:#38bdf8; --backend:#34d399; --database:#a78bfa; --cloud:#fbbf24;
+  --security:#fb7185; --external:#94a3b8; --accent:#34d399;
+}
+:root[data-theme="light"]{
+  --bg:#f6f8fb; --panel:#ffffff; --panel2:#eef2f7; --line:#d5deea; --line2:#bcc9d9;
+  --fg:#16202c; --fg2:#4a5b6e; --fg3:#71829a;
+  --frontend:#0284c7; --backend:#059669; --database:#7c3aed; --cloud:#b45309;
+  --security:#be123c; --external:#475569; --accent:#059669;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+  padding:16px 20px;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:17px;letter-spacing:.01em}
+.sub{color:var(--fg2);font-size:12.5px}
+.spacer{margin-left:auto}
+button.ghost{background:var(--panel);color:var(--fg2);border:1px solid var(--line2);
+  border-radius:7px;padding:6px 11px;font-size:12px;cursor:pointer}
+button.ghost:hover{color:var(--fg);border-color:var(--accent)}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:0;align-items:start}
+.stage{padding:14px 8px 24px 14px;min-width:0}
+svg{width:100%;height:auto;display:block}
+.hint{color:var(--fg3);font-size:12px;padding:0 6px 8px 8px}
+
+.bnd{fill:none;stroke-dasharray:5 5}
+.bnd.region{stroke:var(--line2)}
+.bnd.sec{stroke:var(--security);opacity:.55}
+.bnd-label{font-size:10.5px;fill:var(--fg3);letter-spacing:.06em;text-transform:uppercase}
+
+.node{cursor:pointer}
+.node .box{fill:var(--panel);stroke-width:1.6;rx:7}
+.node .lbl{font-size:13px;font-weight:650;fill:var(--fg)}
+.node .sub{font-size:10.5px;fill:var(--fg2)}
+.node .tag{font-size:9.5px;fill:var(--fg3);letter-spacing:.04em}
+.node:hover .box{filter:brightness(1.18)}
+.node:focus{outline:none}
+.node:focus .box{stroke-dasharray:3 2}
+.k-frontend .box{stroke:var(--frontend)} .k-backend .box{stroke:var(--backend)}
+.k-database .box{stroke:var(--database)} .k-cloud .box{stroke:var(--cloud)}
+.k-security .box{stroke:var(--security)} .k-external .box{stroke:var(--external)}
+.edge path{fill:none;stroke:var(--line2);stroke-width:1.6}
+.edge.em path{stroke:var(--accent);stroke-width:2.1}
+.edge.sec path{stroke:var(--security)}
+.edge.dash path{stroke-dasharray:5 4}
+.edge text{font-size:10.5px;fill:var(--fg2)}
+svg[data-sel] .node:not(.on){opacity:.28}
+svg[data-sel] .edge:not(.on){opacity:.16}
+svg[data-sel] .node.on .box{stroke-width:2.6}
+
+aside{position:sticky;top:0;max-height:100vh;overflow-y:auto;
+  border-left:1px solid var(--line);background:var(--panel2);padding:18px 20px 40px}
+aside h2{margin:0 0 2px;font-size:16px}
+.kind{display:inline-block;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--fg3);margin-bottom:14px}
+aside h3{margin:20px 0 6px;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg3)}
+aside p{margin:0 0 10px;color:var(--fg)}
+aside ul{margin:0;padding-left:0;list-style:none}
+aside li{padding:7px 0;border-top:1px solid var(--line);color:var(--fg2)}
+aside li:first-child{border-top:0}
+aside li b{color:var(--fg);font-weight:600}
+.dir{display:inline-block;min-width:54px;color:var(--fg3);font-size:11px;letter-spacing:.05em}
+code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--fg2);
+  background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.src{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--fg3);word-break:break-all}
+@media (max-width:900px){
+  .wrap{grid-template-columns:1fr}
+  aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--line)}
+  .stage{padding:12px 16px}
+  body{padding:0}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>SpokeCluster Connect Mode</h1>
+  <span class="sub">branch <code>feat/cluster-kep-infrastructure</code> at <code>ec21501</code></span>
+  <span class="spacer"></span>
+  <button class="ghost" id="theme">Light</button>
+  <button class="ghost" id="reset">Clear selection</button>
+</header>
+
+<div class="wrap">
+  <div class="stage">
+    <div class="hint">Click any component for its full description. Click it again, or Clear selection, to see everything.</div>
+    <svg id="svg" viewBox="0 0 1400 760" role="application" aria-label="SpokeCluster connect mode architecture"></svg>
+  </div>
+  <aside id="panel" aria-live="polite"></aside>
+</div>
+
+<script>
+const NODES = [
+  { id:"cli", label:"vela spokes", kind:"frontend", sub:"shows spoke state", tag:"operator",
+    x:30, y:352, w:170, h:66,
+    what:"A read-only operator surface. Two subcommands, <code>list</code> and <code>show</code>, print the SpokeCluster objects and the conditions the controller wrote. It takes no part in connecting a spoke; everything it prints was produced by the reconcile loop.",
+    behaviour:["The command group is registered as <code>spokes</code> and described as \"Inspect SpokeCluster resources (Cluster Connect)\".","Nothing here writes. A spoke that never connects looks the same from the CLI whether the credential failed or the probe did, so read the condition reasons, not just the connection state."],
+    src:["references/cli/spokecluster.go:61"] },
+
+  { id:"hub_api", label:"Hub API server", kind:"cloud", sub:"stores the SpokeCluster", tag:"hub",
+    x:280, y:350, w:190, h:70,
+    what:"Holds the SpokeCluster objects and their status. The spec carries the mode, the credential union, the probe interval and timeout, and the deletion policy. The status carries four conditions, the connection state, the last probe time, and the discovered cluster inventory.",
+    behaviour:["<code>spec.mode</code> defaults to <code>connect</code>. The other two values, <code>provision</code> and <code>adopt</code>, are accepted by the schema but no Phase 1 controller acts on them.","The controller's watch uses a predicate that ignores its own status writes. It wakes only when the generation changes or a deletion timestamp appears. Without that filter every status update would retrigger the loop.","<code>spec.credential</code> is a discriminated union keyed by <code>type</code>. Exactly one arm may be set."],
+    src:["apis/core.oam.dev/v1beta1/spokecluster_types.go:118","charts/vela-core/crds/core.oam.dev_spokeclusters.yaml"] },
+
+  { id:"webhooks", label:"Admission webhooks", kind:"security", sub:"defaults and rejects specs", tag:"vela-cluster-core",
+    x:280, y:112, w:190, h:68,
+    what:"Two handlers in front of every write. The mutating one fills defaults, including the Secret key when it is left out. The validating one refuses a spec the connect path cannot honour, so the reconciler never has to defend against it.",
+    behaviour:["A <code>secretRef</code> pointing at another namespace is forbidden. This is the boundary that stops one tenant from reading another tenant's kubeconfig.","<code>infraProvisioning</code>, <code>blueprintRef</code> and <code>rolloutStrategyRef</code> are Phase 2 fields. They are rejected outright while the mode is connect.","The binary waits for its serving certificate before registering either handler, so it fails closed instead of admitting unchecked objects during startup."],
+    src:["pkg/webhook/core.oam.dev/v1beta1/spokecluster/validation.go:38","pkg/webhook/core.oam.dev/v1beta1/spokecluster/mutating_handler.go:41"] },
+
+  { id:"cred_cache", label:"Credential cache", kind:"database", sub:"avoids repeat cloud calls", tag:"15m TTL",
+    x:570, y:112, w:200, h:68,
+    what:"An in-process cache of materialized credentials, keyed by namespace and name. Without it an AWS spoke would cost one <code>sts:AssumeRole</code> and one <code>eks:DescribeCluster</code> on every probe, for every spoke.",
+    behaviour:["An entry is rejected when the object UID differs, when the generation differs, or when its deadline falls inside the next probe interval. That last rule means a credential is refreshed before it can expire mid-probe.","The stored deadline is the earlier of the provider's own refresh time and now plus the TTL. A credential with no refresh time is never cached.","A TTL of zero or less disables caching and logs what that costs. A TTL above the 15 minute default weakens the ceiling on credential reuse and logs that too.","It lives in the process, so a controller restart re-derives every credential."],
+    src:["pkg/controller/core.oam.dev/v1beta1/spokecluster/credential_cache.go:55"] },
+
+  { id:"gateway_secret", label:"Gateway Secret", kind:"database", sub:"hands off connection facts", tag:"vela-system",
+    x:860, y:112, w:190, h:68,
+    what:"The registration itself. A Secret in the cluster-gateway namespace holding the endpoint, the CA, and either a bearer token or a client certificate and key. A label records which credential type it is so cluster-gateway knows how to authenticate. Writing this Secret is what makes a spoke routable.",
+    behaviour:["An annotation records which SpokeCluster owns it. Adoption is refused when the annotation is missing, which means a human joined that cluster by hand, and refused when it names a different SpokeCluster.","A controller reference is set only when the SpokeCluster and the Secret share a namespace. They usually do not, so in practice the finalizer is the only cleanup path.","Under the <code>detach</code> policy deleting the SpokeCluster removes this Secret. Under <code>orphan</code> the Secret stays and the spoke keeps working."],
+    src:["pkg/controller/core.oam.dev/v1beta1/spokecluster/connect.go:196"] },
+
+  { id:"reconciler", label:"SpokeCluster reconciler", kind:"backend", sub:"credential, register, probe", tag:"reconcileConnect",
+    x:570, y:346, w:200, h:78,
+    what:"The loop that does the work. One function runs the connect path in a fixed order: resolve a provider for the declared credential type, materialize the credential or reuse a cached one, write the gateway Secret, probe the spoke through cluster-gateway, then read its version and inventory. Each stage writes its own condition before the next begins.",
+    behaviour:["The order is the honesty mechanism. A failed credential means <code>Registered</code> is never claimed. A failed registration means <code>Connected</code> is never claimed. There is no path that reports a healthy spoke on stale facts.","A probe failure keeps the previous inventory and records a reason instead of clearing the status.","The next wake-up is the probe interval, or the time until the credential expires when that is sooner, with a five second floor.","A <code>401</code> from the probe drops the cached credential so the next pass re-derives it.","It adds a finalizer on the first pass, and the whole controller returns early at startup when <code>EnableClusterInfrastructure</code> is off."],
+    src:["pkg/controller/core.oam.dev/v1beta1/spokecluster/spokecluster_controller.go:90","pkg/controller/core.oam.dev/v1beta1/spokecluster/deletion.go:30"] },
+
+  { id:"cluster_gateway", label:"cluster-gateway", kind:"external", sub:"proxies hub to spoke", tag:"APIService",
+    x:860, y:350, w:190, h:70,
+    what:"An aggregated APIService that proxies hub requests to spoke API servers. It picks the spoke by Secret name, which is why the gateway Secret is named after the SpokeCluster. The controller never dials a spoke directly; every request goes through here.",
+    behaviour:["It always verifies TLS against the endpoint host. A credential that needs a different server name cannot be honoured, so the controller rejects that case before writing anything rather than producing a spoke that fails at probe time. A k3d load balancer address is the usual trigger.","A <code>404</code> back from a probe means the gateway has no route for the spoke, which points at the gateway Secret rather than the cluster.","A <code>5xx</code> means the gateway itself could not reach the spoke API server."],
+    src:["pkg/controller/core.oam.dev/v1beta1/spokecluster/probe.go:34"] },
+
+  { id:"spoke_api", label:"Spoke API server", kind:"external", sub:"answers healthz and reads", tag:"spoke",
+    x:1150, y:350, w:190, h:70,
+    what:"The managed cluster's own API server. It answers the <code>healthz</code> probe, and after a pass it also serves the version and the node list that become the recorded inventory.",
+    behaviour:["Inventory is node count, total CPU, total memory, Kubernetes version, platform and region.","Platform is inferred from node labels: EKS, GKE and AKS label prefixes, a k3s instance type or OS image, or the string kind in a node name.","Region comes from the credential when the provider knew it, otherwise from the standard topology region label, otherwise it is recorded as <code>N/A</code> rather than guessed.","Probe failures are classified into readable causes: timeout, revoked credential, RBAC refusal, missing gateway route, gateway could not reach, connection refused, name does not resolve, certificate name mismatch."],
+    src:["pkg/controller/core.oam.dev/v1beta1/spokecluster/discovery.go:44"] },
+
+  { id:"kubeconfig_secret", label:"Kubeconfig Secret", kind:"database", sub:"holds the kubeconfig", tag:"same namespace",
+    x:280, y:596, w:190, h:68,
+    what:"Where a kubeconfig spoke keeps its credential. The spec names the Secret and optionally the key; the key defaults to <code>kubeconfig</code>. The provider parses it and pulls out the endpoint, the CA, and either a token or a client certificate.",
+    behaviour:["It must sit in the same namespace as the SpokeCluster. The webhook's default policy forbids reaching across namespaces.","This is the arm to use for k3d, kind and any cluster whose credential a human already has. The refresh deadline comes from the kubeconfig itself, so a static token is cached under the TTL ceiling only."],
+    src:["pkg/spokecluster/credential/kubeconfig.go:46"] },
+
+  { id:"providers", label:"Credential providers", kind:"backend", sub:"builds one usable credential", tag:"kubeconfig | aws",
+    x:570, y:592, w:200, h:74,
+    what:"A registry keyed by credential type. Whatever the spec declared, a provider turns it into one shape: an endpoint, CA bytes, an optional server name, either a bearer token or a client certificate and key, a region, and a refresh deadline. Everything downstream works on that single shape and never looks at the cloud again.",
+    behaviour:["<b>kubeconfig</b> reads the named Secret key and loads it with client-go.","<b>aws</b> assumes the per-cluster role, calls <code>eks:DescribeCluster</code> for the endpoint and CA, and presigns an STS URL that becomes the EKS bearer token with its own expiry.","<b>azure</b> and <b>gcp</b> are registered and their specs validate, but neither materializes anything. A spoke on those arms will never connect, and the failure surfaces as a credential condition rather than a schema error.","An unknown type produces a <code>NoProvider</code> reason and the loop stops there."],
+    src:["pkg/spokecluster/credential/provider.go:74","pkg/spokecluster/credential/aws.go:71"] },
+
+  { id:"aws_apis", label:"AWS STS + EKS", kind:"cloud", sub:"issues the EKS token", tag:"per-spoke role",
+    x:1150, y:592, w:190, h:74,
+    what:"The cloud side of the AWS arm. STS issues credentials for the role named in the spec, EKS returns the cluster endpoint and CA, and a presigned STS URL becomes the token the spoke accepts.",
+    behaviour:["The auth mode, <code>podIdentity</code> or <code>irsa</code>, changes how the hub obtains its own base identity. It does not change which calls are made.","An optional external id can be required on the role assumption, which is the usual control when the spoke lives in another account.","Both calls happen only on a cache miss, so the steady-state cost is one pair of calls per spoke per cache lifetime rather than per probe."],
+    src:["pkg/spokecluster/credential/aws.go:114","pkg/spokecluster/credential/aws_token.go"] },
+];
+
+const EDGES = [
+  { from:"cli", to:"hub_api", label:"reads status", note:"Prints spec and conditions. No writes." },
+  { from:"hub_api", to:"webhooks", label:"admission on write", cls:"sec", note:"Every create and update is defaulted then validated before it is stored." },
+  { from:"hub_api", to:"reconciler", label:"watch on generation", cls:"em", note:"Generation-filtered watch, so status writes do not retrigger the loop." },
+  { from:"reconciler", to:"cred_cache", label:"reuse until refresh", cls:"dash", note:"Checked before any provider call, invalidated on 401 and on delete." },
+  { from:"reconciler", to:"providers", label:"materialize credential", cls:"em", note:"Dispatched by spec.credential.type." },
+  { from:"providers", to:"kubeconfig_secret", label:"reads secretRef", note:"Same namespace only." },
+  { from:"providers", to:"aws_apis", label:"assume role, presign token", cls:"sec", note:"Only on a cache miss." },
+  { from:"reconciler", to:"gateway_secret", label:"writes owner-annotated", cls:"em", note:"Refuses to overwrite a Secret it does not own." },
+  { from:"gateway_secret", to:"cluster_gateway", label:"routes by Secret name", note:"The Secret name is the spoke name." },
+  { from:"reconciler", to:"cluster_gateway", label:"healthz via gateway", cls:"em", note:"The probe, and then the version and node reads." },
+  { from:"cluster_gateway", to:"spoke_api", label:"proxies to endpoint", cls:"em", note:"TLS verified against the endpoint host." },
+  { from:"reconciler", to:"hub_api", label:"four conditions", cls:"dash", note:"Registered, CredentialValid, Connected, InfoSynced, written with conflict retry." },
+];
+
+const BOUNDARIES = [
+  { kind:"region", label:"Hub cluster", wraps:["webhooks","cred_cache","gateway_secret","hub_api","reconciler","cluster_gateway","kubeconfig_secret","providers"], pad:26 },
+  { kind:"sec", label:"vela-system gateway credentials", wraps:["gateway_secret"], pad:13 },
+  { kind:"region", label:"Spoke cluster", wraps:["spoke_api"], pad:18 },
+  { kind:"region", label:"AWS account of the spoke", wraps:["aws_apis"], pad:18 },
+];
+
+const OVERVIEW = {
+  label:"SpokeCluster connect mode",
+  kind:"11 components, one connect path",
+  what:"A SpokeCluster in connect mode attaches a cluster that already exists. The hub derives a credential for it, writes that credential into a Secret cluster-gateway can route on, then keeps checking that the spoke still answers. Nothing is provisioned and nothing is installed on the spoke.",
+  behaviour:["The whole surface sits behind <code>EnableClusterInfrastructure</code>, which is alpha and off by default. With the gate off the controller logs and returns at startup.","It runs in its own binary, <code>vela-cluster-core</code>, with its own leader election id and webhook server.","<code>provision</code> and <code>adopt</code> exist in the mode enum with no controller behind them. The Phase 2 spec fields are rejected while the mode is connect.","Click a component to read what it does, how it connects, and where it lives in the tree."],
+  src:["cmd/cluster-core/app/server.go:158","pkg/features/controller_features.go:152"]
+};
+
+const byId = {};
+NODES.forEach(n => { byId[n.id] = n; n.cx = n.x + n.w/2; n.cy = n.y + n.h/2; });
+
+const NS = "http://www.w3.org/2000/svg";
+const el = (t, a={}) => { const e = document.createElementNS(NS, t);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+
+function route(a, b) {
+  const dx = Math.abs(a.cx - b.cx), dy = Math.abs(a.cy - b.cy);
+  let p1, p2, mid;
+  if (dy < 30) {
+    const right = b.cx > a.cx;
+    p1 = { x: right ? a.x + a.w : a.x, y: a.cy };
+    p2 = { x: right ? b.x : b.x + b.w, y: b.cy };
+    mid = { x: (p1.x + p2.x)/2, y: p1.y - 9 };
+    return { d:`M${p1.x} ${p1.y} L${p2.x} ${p2.y}`, mid };
+  }
+  if (dx < 30) {
+    const down = b.cy > a.cy;
+    p1 = { x: a.cx, y: down ? a.y + a.h : a.y };
+    p2 = { x: b.cx, y: down ? b.y : b.y + b.h };
+    mid = { x: p1.x + 12, y: (p1.y + p2.y)/2 };
+    return { d:`M${p1.x} ${p1.y} L${p2.x} ${p2.y}`, mid, anchor:"start" };
+  }
+  const right = b.cx > a.cx;
+  p1 = { x: right ? a.x + a.w : a.x, y: a.cy };
+  const turn = right ? (p1.x + b.x)/2 : (b.x + b.w + p1.x)/2;
+  p2 = { x: b.cx, y: b.cy > a.cy ? b.y : b.y + b.h };
+  mid = { x: turn, y: p1.y - 9 };
+  return { d:`M${p1.x} ${p1.y} L${turn} ${p1.y} L${turn} ${p2.y} L${p2.x} ${p2.y}`, mid };
+}
+
+const svg = document.getElementById("svg");
+
+function draw() {
+  svg.textContent = "";
+  const defs = el("defs");
+  [["ah","var(--line2)"],["ah-em","var(--accent)"],["ah-sec","var(--security)"]].forEach(([id,c])=>{
+    const m = el("marker",{id,viewBox:"0 0 10 10",refX:"9",refY:"5",
+      markerWidth:"6",markerHeight:"6",orient:"auto-start-reverse"});
+    m.appendChild(el("path",{d:"M0 0 L10 5 L0 10 z",fill:c}));
+    defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+
+  BOUNDARIES.forEach(b => {
+    const ns = b.wraps.map(id => byId[id]);
+    const x1 = Math.min(...ns.map(n=>n.x)) - b.pad, y1 = Math.min(...ns.map(n=>n.y)) - b.pad;
+    const x2 = Math.max(...ns.map(n=>n.x+n.w)) + b.pad, y2 = Math.max(...ns.map(n=>n.y+n.h)) + b.pad;
+    const g = el("g");
+    g.appendChild(el("rect",{class:`bnd ${b.kind==="sec"?"sec":"region"}`,
+      x:x1,y:y1,width:x2-x1,height:y2-y1,rx:12}));
+    const t = el("text",{class:"bnd-label",x:x1+4,y:y1-7}); t.textContent = b.label;
+    g.appendChild(t); svg.appendChild(g);
+  });
+
+  EDGES.forEach((e,i) => {
+    const a = byId[e.from], b = byId[e.to];
+    const r = route(a,b);
+    const g = el("g",{class:`edge ${e.cls||""}`,"data-i":i,
+      "data-from":e.from,"data-to":e.to});
+    const mk = e.cls==="em" ? "ah-em" : e.cls==="sec" ? "ah-sec" : "ah";
+    g.appendChild(el("path",{d:r.d,"marker-end":`url(#${mk})`}));
+    const t = el("text",{x:r.mid.x,y:r.mid.y,"text-anchor":r.anchor||"middle"});
+    t.textContent = e.label; g.appendChild(t);
+    svg.appendChild(g);
+  });
+
+  NODES.forEach(n => {
+    const g = el("g",{class:`node k-${n.kind}`,"data-id":n.id,tabindex:"0",
+      role:"button","aria-label":`${n.label}: ${n.sub}`});
+    g.appendChild(el("rect",{class:"box",x:n.x,y:n.y,width:n.w,height:n.h,rx:7}));
+    const l = el("text",{class:"lbl",x:n.cx,y:n.y+26,"text-anchor":"middle"});
+    l.textContent = n.label; g.appendChild(l);
+    const s = el("text",{class:"sub",x:n.cx,y:n.y+43,"text-anchor":"middle"});
+    s.textContent = n.sub; g.appendChild(s);
+    const tg = el("text",{class:"tag",x:n.cx,y:n.y+58,"text-anchor":"middle"});
+    tg.textContent = n.tag; g.appendChild(tg);
+    svg.appendChild(g);
+  });
+}
+
+function connections(id) {
+  const out = EDGES.filter(e => e.from === id)
+    .map(e => ({ dir:"calls", other:byId[e.to], e }));
+  const inc = EDGES.filter(e => e.to === id)
+    .map(e => ({ dir:"called by", other:byId[e.from], e }));
+  return out.concat(inc);
+}
+
+function render(id) {
+  const panel = document.getElementById("panel");
+  const n = id ? byId[id] : OVERVIEW;
+  const rows = id ? connections(id) : [];
+  panel.innerHTML = `
+    <h2>${n.label}</h2>
+    <span class="kind">${id ? n.kind + " · " + n.tag : n.kind}</span>
+    <h3>What it does</h3>
+    <p>${n.what}</p>
+    ${rows.length ? `<h3>How it connects</h3><ul>${rows.map(r => `
+      <li><span class="dir">${r.dir}</span> <b>${r.other.label}</b><br>
+      ${r.e.label}. ${r.e.note}</li>`).join("")}</ul>` : ""}
+    <h3>${id ? "Behaviour worth knowing" : "Scope"}</h3>
+    <ul>${n.behaviour.map(b => `<li>${b}</li>`).join("")}</ul>
+    <h3>Where it lives</h3>
+    <ul>${n.src.map(s => `<li class="src">${s}</li>`).join("")}</ul>`;
+  panel.scrollTop = 0;
+
+  if (!id) { svg.removeAttribute("data-sel"); }
+  else {
+    svg.setAttribute("data-sel", id);
+    const near = new Set([id]);
+    EDGES.forEach(e => { if (e.from === id) near.add(e.to); if (e.to === id) near.add(e.from); });
+    svg.querySelectorAll(".node").forEach(g =>
+      g.classList.toggle("on", near.has(g.dataset.id)));
+    svg.querySelectorAll(".edge").forEach(g =>
+      g.classList.toggle("on", g.dataset.from === id || g.dataset.to === id));
+  }
+}
+
+let selected = null;
+function select(id) { selected = (selected === id) ? null : id; render(selected); }
+
+draw();
+render(null);
+
+svg.addEventListener("click", ev => {
+  const g = ev.target.closest(".node");
+  if (g) select(g.dataset.id);
+});
+svg.addEventListener("keydown", ev => {
+  if (ev.key !== "Enter" && ev.key !== " ") return;
+  const g = ev.target.closest(".node");
+  if (g) { ev.preventDefault(); select(g.dataset.id); }
+});
+document.getElementById("reset").addEventListener("click", () => { selected = null; render(null); });
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape" && selected) { selected = null; render(null); }
+});
+const themeBtn = document.getElementById("theme");
+themeBtn.addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  themeBtn.textContent = light ? "Light" : "Dark";
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Show PR status with checks and reviews"
+# model = "sonnet"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/pr-status:*)"]
+#
+# [[tool.claude.argument]]
+# name = "pr-number"
+# type = "optional-passthrough"
+# hint = "[pr-number]"
+# description = "PR number (defaults to current branch's PR)"
+#
+# [tool.claude.output]
+# prompt = "Show complete PR state: status, author, mergeable, reviews, checks. Highlight blockers."
+# examples = [
+#   "PR #123: Add authentication\nStatus: open\nMergeable: [OK] Yes\nReviews: [OK] Approved (2)\nChecks: [OK] All passing (5/5)"
+# ]
+# ///
+
+import sys
+import os
+import argparse
+import subprocess
+import json
+
+# Import gitlib
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.gitlib import (
+    error, output_result, get_template_from_metadata
+)
+
+
+def format_mergeable(mergeable_state):
+    """Format mergeable state with appropriate indicator."""
+    if mergeable_state == "MERGEABLE":
+        return "[OK] Yes"
+    elif mergeable_state == "CONFLICTING":
+        return "[--] No (conflicts)"
+    else:
+        return f"? {mergeable_state}"
+
+
+def format_review_status(review_decision):
+    """Format review decision with appropriate indicator."""
+    if review_decision == "APPROVED":
+        return "[OK] Approved"
+    elif review_decision == "CHANGES_REQUESTED":
+        return "[--] Changes requested"
+    elif review_decision == "REVIEW_REQUIRED":
+        return "⚠ Review required"
+    else:
+        return "- No reviews"
+
+
+def format_checks_status(status_rollup):
+    """Format checks status with counts."""
+    if not status_rollup:
+        return "- No checks"
+
+    # Count check states
+    total = len(status_rollup)
+    passed = sum(1 for check in status_rollup if check.get('state') == 'SUCCESS')
+    failed = sum(1 for check in status_rollup if check.get('state') == 'FAILURE')
+    pending = sum(1 for check in status_rollup if check.get('state') == 'PENDING')
+
+    if failed > 0:
+        return f"[--] {failed} failing, {passed}/{total} passed"
+    elif pending > 0:
+        return f"⏳ {pending} pending, {passed}/{total} passed"
+    elif passed == total:
+        return f"[OK] All passing ({passed}/{total})"
+    else:
+        return f"{passed}/{total} passed"
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Show PR status with checks and reviews')
+    parser.add_argument('pr_number', nargs='?', help='PR number (defaults to current branch)')
+    args = parser.parse_args()
+
+    # Build gh pr view command
+    gh_cmd = ['gh', 'pr', 'view']
+
+    if args.pr_number:
+        gh_cmd.append(args.pr_number)
+
+    gh_cmd.extend(['--json', 'number,title,state,isDraft,url,author,mergeable,reviewDecision,statusCheckRollup'])
+
+    # Get PR information
+    result = subprocess.run(gh_cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        error("Failed to get PR status", command=gh_cmd, stderr_output=result.stderr)
+        sys.exit(result.returncode)
+
+    # Parse JSON response
+    try:
+        pr_data = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        error(f"Failed to parse gh pr view output: {e}")
+        sys.exit(1)
+
+    # Extract and format data
+    pr_number = pr_data['number']
+    title = pr_data['title']
+    state = pr_data['state'].lower()
+    is_draft = pr_data.get('isDraft', False)
+    draft_indicator = "(draft)" if is_draft else ""
+    author = pr_data['author']['login']
+    pr_url = pr_data['url']
+
+    mergeable = format_mergeable(pr_data.get('mergeable', 'UNKNOWN'))
+    review_status = format_review_status(pr_data.get('reviewDecision'))
+    checks_status = format_checks_status(pr_data.get('statusCheckRollup'))
+
+    # Output result
+    data = {
+        "pr_number": pr_number,
+        "title": title,
+        "state": state,
+        "draft_indicator": draft_indicator,
+        "author": author,
+        "mergeable": mergeable,
+        "review_status": review_status,
+        "checks_status": checks_status,
+        "pr_url": pr_url
+    }
+
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

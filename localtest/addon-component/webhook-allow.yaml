@@ -1,0 +1,15 @@
+# Webhook test (contrast): the SAME addon component WITH skipVersionValidation: true.
+# The Application validating webhook skips the addon compatibility check, so this
+# is ADMITTED (created) even though webhook-reject.yaml for the same addon is denied.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-fluxcd-webhook-allow
+  namespace: vela-system
+spec:
+  components:
+    - name: fluxcd
+      type: addon
+      properties:
+        version: "3.0.2"
+        skipVersionValidation: true

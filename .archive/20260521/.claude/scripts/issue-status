@@ -1,0 +1,59 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+#
+# [tool.claude]
+# description = "Show your GitHub issue status"
+# model = "haiku"
+#
+# [tool.claude.output]
+# prompt = """Run: gh issue status
+#
+# If that fails, run these instead:
+# - gh issue list --assignee @me --limit 10
+# - gh issue list --author @me --limit 10
+#
+# Only use the Bash tool. Do not output any text before or after the tool calls."""
+# ///
+
+"""Show your personal GitHub issue dashboard."""
+
+import subprocess
+import sys
+
+
+def main():
+    # Try gh issue status first
+    result = subprocess.run(
+        ['gh', 'issue', 'status'],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        print(result.stdout, end='')
+        return
+
+    # Fallback: list assigned and authored issues
+    print('-- Assigned to you --')
+    assigned = subprocess.run(
+        ['gh', 'issue', 'list', '--assignee', '@me', '--limit', '10'],
+        capture_output=True, text=True
+    )
+    if assigned.returncode == 0:
+        print(assigned.stdout, end='')
+    else:
+        print(f'Error: {assigned.stderr}', file=sys.stderr)
+
+    print('\n-- Created by you --')
+    authored = subprocess.run(
+        ['gh', 'issue', 'list', '--author', '@me', '--limit', '10'],
+        capture_output=True, text=True
+    )
+    if authored.returncode == 0:
+        print(authored.stdout, end='')
+    else:
+        print(f'Error: {authored.stderr}', file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()

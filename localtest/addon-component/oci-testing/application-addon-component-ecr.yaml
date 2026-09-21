@@ -1,0 +1,26 @@
+# The addon component resolving a pinned version from Docker Hub, which is an
+# OCI registry with a publicly trusted certificate and requires authentication.
+#
+# The registry credential lives in Secret addon-registry-dockerhub; the
+# ConfigMap record carries only tokenSecretRef.
+#
+# Register first:
+#   vela addon registry add dockerhub --type oci \
+#     --endpoint oci://docker.io/<namespace> \
+#     --username <user> --password-stdin < token.txt
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: oci-addon-ecr
+  namespace: vela-system
+spec:
+  components:
+    - name: example
+      type: addon
+      properties:
+        addon: example
+        version: "1.0.1"
+        registry: ecr
+        properties:
+          example: hello-from-ecr
+        skipVersionValidation: true

@@ -1,0 +1,99 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Fetch and checkout PR branch for review"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/pr-pull *)"]
+#
+# [[tool.claude.argument]]
+# name = "pr-number"
+# type = "required-passthrough"
+# hint = "<pr-number>"
+# description = "PR number to checkout"
+#
+# [tool.claude.output]
+# prompt = "Confirm PR checkout. Show PR number, branch, author, title. Remind to rename session."
+# examples = [
+#   "[OK] Checked out PR #123\nBranch: feature-auth\nAuthor: johndoe\nTitle: Add authentication\n\nTip: Rename session: /rename feature-auth"
+# ]
+# ///
+
+import sys
+import os
+import argparse
+import subprocess
+import json
+
+# Import gitlib
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.gitlib import (
+    get_current_branch, get_repo_url, run_git, error, output_result,
+    get_template_from_metadata
+)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Fetch and checkout PR branch for review')
+    parser.add_argument('pr_number', help='PR number to checkout')
+    args = parser.parse_args()
+
+    # Get PR information
+    gh_cmd = ['gh', 'pr', 'view', args.pr_number, '--json', 'headRefName,title,author']
+    result = subprocess.run(gh_cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        error(f"Failed to get PR #{args.pr_number} information", command=gh_cmd, stderr_output=result.stderr)
+        sys.exit(result.returncode)
+
+    # Parse PR data
+    try:
+        pr_data = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        error(f"Failed to parse PR data: {e}")
+        sys.exit(1)
+
+    branch = pr_data['headRefName']
+    title = pr_data['title']
+    author = pr_data['author']['login']
+
+    # Check if already on the PR branch (idempotent)
+    current_branch = get_current_branch()
+    if current_branch == branch:
+        # Already on the branch - idempotent success
+        data = {
+            "pr_number": int(args.pr_number),
+            "branch": branch,
+            "author": author,
+            "title": title
+        }
+
+        template = get_template_from_metadata(script_path=__file__)
+        output_result(data, template)
+        sys.exit(0)
+
+    # Fetch the branch
+    repo_url = get_repo_url()
+    run_git(['fetch', repo_url, f'{branch}:refs/remotes/origin/{branch}'],
+            operation_description=f"fetch PR branch '{branch}'")
+
+    # Checkout with tracking
+    run_git(['checkout', '--track', f'origin/{branch}'],
+            operation_description=f"checkout PR branch '{branch}'")
+
+    # Output result
+    data = {
+        "pr_number": int(args.pr_number),
+        "branch": branch,
+        "author": author,
+        "title": title
+    }
+
+    template = get_template_from_metadata(script_path=__file__)
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

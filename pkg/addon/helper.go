@@ -380,14 +380,21 @@ func GetAddonInstallPackageFromRegistry(ctx context.Context, cli client.Client, 
 	// going through the latest package. Without the cache here, pinning a
 	// version -- the safest thing an author can do -- would be the one case
 	// that pulls the addon from the registry on every reconcile.
+	contentRev, contentPin, hasContentRev := component.ContentRevisionPin(ctx, reg, addonName, version)
 	return installPackageCache.Load(
 		installPackageCacheKey(reg, addonName, version),
 		func(lastKnown string) (string, error) {
+			if hasContentRev {
+				return contentRev, nil
+			}
 			// The version is known here, so the probe is a single conditional
 			// request: no tag listing to discover what "latest" means.
 			return reg.PackageRevision(ctx, addonName, version, lastKnown)
 		},
 		func(revision string) (*InstallPackage, error) {
+			if hasContentRev {
+				revision = contentPin
+			}
 			return readInstallPackage(ctx, reg.AtRevision(revision), registryName, addonName, version)
 		},
 	)
@@ -515,14 +522,28 @@ func addonCacheKey(r component.Registry, addonName string) string {
 // when its revision has moved since the package was last read. An addon the
 // registry does not carry reports component.ErrPackageNotExist.
 func readAddonPackage(ctx context.Context, r component.Registry, addonName string) (*WholeAddonPackage, error) {
+	contentRev, contentPin, hasContentRev := component.ContentRevisionPin(ctx, r, addonName, "")
+	klog.InfoS("addon package requested", "addon", addonName, "registry", r.Name,
+		"contentRevision", contentRev, "pinned", hasContentRev)
 	return addonCache.Load(
 		addonCacheKey(r, addonName),
 		func(lastKnown string) (string, error) {
+			// The content revision when the source can name one, so that this
+			// cache and the workflow gate compare the same thing. See
+			// component.ContentRevisionPin.
+			if hasContentRev {
+				return contentRev, nil
+			}
 			return r.PackageRevision(ctx, addonName, "", lastKnown)
 		},
 		func(revision string) (*WholeAddonPackage, error) {
 			// Every read below builds its own reader from this registry value,
 			// so pinning the value pins all of them to one revision.
+			if hasContentRev {
+				revision = contentPin
+			}
+			klog.InfoS("addon package read from registry", "addon", addonName,
+				"registry", r.Name, "readAt", revision, "contentRevision", contentRev)
 			at := r.AtRevision(revision)
 			sourceMeta, err := at.ListPackageMeta(addonName)
 			if err != nil {
@@ -557,9 +578,13 @@ func readAddonPackage(ctx context.Context, r component.Registry, addonName strin
 // digest behind the resolved tag, which a conditional HEAD confirms without
 // transferring the chart.
 func readVersionedAddonPackage(ctx context.Context, r component.Registry, vr VersionedRegistry, addonName string) (*WholeAddonPackage, error) {
+	contentRev, _, hasContentRev := component.ContentRevisionPin(ctx, r, addonName, "")
 	return addonCache.Load(
 		addonCacheKey(r, addonName),
 		func(lastKnown string) (string, error) {
+			if hasContentRev {
+				return contentRev, nil
+			}
 			return r.PackageRevision(ctx, addonName, "", lastKnown)
 		},
 		func(string) (*WholeAddonPackage, error) {

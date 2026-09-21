@@ -1,0 +1,100 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Clear contexts from current branch"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/ctx-clear:*)"]
+#
+# [[tool.claude.argument]]
+# name = "context"
+# type = "optional-passthrough"
+# hint = "[context...]"
+# description = "Comma-separated context refs to remove. If omitted, removes ALL contexts."
+#
+# [tool.claude.output]
+# prompt = "Confirm which contexts were removed."
+# examples = [
+#   "Removed 1 context from branch 'feature-auth'\n\n  Removed: auth\n  Remaining: steering",
+#   "Cleared all contexts from branch 'feature-auth'\n\n  Removed: steering, auth"
+# ]
+# ///
+
+"""Clear contexts from current branch."""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_current_branch, in_git_repo,
+    get_contexts, set_contexts
+)
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    existing = get_contexts(branch)
+
+    # Parse refs to remove
+    refs_to_remove = []
+    for arg in sys.argv[1:]:
+        for ref in arg.split(','):
+            ref = ref.strip()
+            if ref:
+                refs_to_remove.append(ref)
+
+    if not refs_to_remove:
+        # Remove all
+        removed = existing[:]
+        set_contexts([], branch)
+        remaining = []
+    else:
+        removed = []
+        remaining = []
+        for ref in existing:
+            if ref in refs_to_remove:
+                removed.append(ref)
+            else:
+                remaining.append(ref)
+        set_contexts(remaining, branch)
+
+    data = {
+        'branch': branch,
+        'removed': removed,
+        'remaining': remaining
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if not removed:
+            print(f"No matching contexts to remove from branch '{branch}'")
+            if existing:
+                print(f"Current contexts: {', '.join(existing)}")
+        elif not refs_to_remove:
+            print(f"Cleared all contexts from branch '{branch}'")
+            print()
+            print(f"  Removed: {', '.join(removed)}")
+        else:
+            print(f"Removed {len(removed)} context(s) from branch '{branch}'")
+            print()
+            print(f"  Removed: {', '.join(removed)}")
+            if remaining:
+                print(f"  Remaining: {', '.join(remaining)}")
+
+
+if __name__ == "__main__":
+    main()

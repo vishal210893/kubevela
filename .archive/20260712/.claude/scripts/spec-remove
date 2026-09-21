@@ -1,0 +1,115 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Remove a spec directory"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-remove *)"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "optional-passthrough"
+# hint = "[name]"
+# description = "Spec name to remove (defaults to current branch's spec)"
+#
+# [tool.claude.output]
+# prompt = "Confirm the spec was removed. Show what was deleted."
+# examples = [
+#   "[OK] Removed spec 'feature-auth'\n\nDeleted:\n  Directory: .dev/specs/feature-auth/\n  Association: branch 'feature-auth'"
+# ]
+# ///
+
+"""
+Remove a spec directory.
+
+Deletes a spec directory and removes any branch associations.
+
+If no name is provided, removes the spec associated with the current branch.
+
+Idempotent: No (fails if spec doesn't exist)
+Worktree Constraints: Works for both WT & Branch flows
+"""
+
+import sys
+import os
+import json
+import shutil
+from pathlib import Path
+
+# Add to parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_current_branch, get_associated_spec, get_all_associations,
+    disassociate_spec, in_git_repo, spec_path, display_branch
+)
+
+
+def main():
+    """Main entry point."""
+    # Validate in git repo
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse arguments - just an optional spec name
+    spec_name = None
+    for arg in sys.argv[1:]:
+        if not arg.startswith('-'):
+            spec_name = arg
+
+    # If no spec name provided, use current branch's spec
+    if not spec_name:
+        branch = get_current_branch()
+        spec_name = get_associated_spec(branch)
+        if not spec_name:
+            print(f"Error: No spec associated with branch '{branch}'", file=sys.stderr)
+            print("Provide a spec name or use /spec <name> to associate one", file=sys.stderr)
+            sys.exit(1)
+
+    # Check spec exists
+    path = spec_path(spec_name)
+    if not path.is_dir():
+        print(f"Error: Spec '{spec_name}' not found at {path}/", file=sys.stderr)
+        sys.exit(1)
+
+    # Find and remove all associations for this spec
+    associations = get_all_associations()
+    associated_branches = [b for b, s in associations.items() if s == spec_name]
+
+    removed_associations = []
+    for branch in associated_branches:
+        if disassociate_spec(branch):
+            removed_associations.append(display_branch(branch))
+
+    # Remove the directory
+    try:
+        shutil.rmtree(path)
+    except Exception as e:
+        print(f"Error: Failed to remove {path}/: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Build output data
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(path),
+        'removed_associations': removed_associations
+    }
+
+    # Output based on mode
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"[OK] Removed spec '{spec_name}'")
+        print()
+        print("Deleted:")
+        print(f"  Directory: {path}/")
+        if removed_associations:
+            for branch in removed_associations:
+                print(f"  Association: branch '{branch}'")
+
+
+if __name__ == "__main__":
+    main()

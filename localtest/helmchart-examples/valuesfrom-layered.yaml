@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: podinfo-base
+  namespace: default
+data:
+  values.yaml: |
+    replicaCount: 3
+    resources:
+      limits:
+        cpu: 100m
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: podinfo-overrides
+  namespace: default
+stringData:
+  values.yaml: |
+    resources:
+      limits:
+        memory: 512Mi
+---
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: podinfo-layered
+  namespace: default
+spec:
+  components:
+    - name: podinfo
+      type: helmchart
+      properties:
+        chart:
+          source: podinfo
+          repoURL: https://stefanprodan.github.io/podinfo
+          version: "6.11.1"
+        release:
+          name: podinfo
+          namespace: default
+        valuesFrom:
+          - kind: ConfigMap
+            name: podinfo-base
+          - kind: Secret
+            name: podinfo-overrides
+        options:
+          createNamespace: true
+          skipTests: true

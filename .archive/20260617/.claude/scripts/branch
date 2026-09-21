@@ -1,0 +1,270 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Show current branch, switch to existing, or create from description"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/branch *)", "Bash($WSROOT/.claude/scripts/branch-create *)"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "optional-passthrough"
+# hint = "[name]"
+# description = "Branch name to switch to, or natural language description to create from. If omitted, shows current branch."
+#
+# [[tool.claude.argument]]
+# name = "spec"
+# type = "optional-passthrough"
+# hint = "--spec project:spec:context,...|spec"
+# description = "Spec name or qualified spec (see docs/guides/spec-parameter.md)"
+#
+# [[tool.claude.argument]]
+# name = "impl"
+# type = "optional-passthrough"
+# hint = "--impl|-i"
+# description = "Implement the feature after branch creation"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "pr"
+# type = "optional-passthrough"
+# hint = "--pr|-p"
+# description = "Create PR after implementation"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "poll"
+# type = "optional-passthrough"
+# hint = "--poll|-o"
+# description = "Poll CI checks after PR creation"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "fix"
+# type = "optional-passthrough"
+# hint = "--fix|-f"
+# description = "Auto-fix CI failures (implies --poll)"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "merge"
+# type = "optional-passthrough"
+# hint = "--merge|-m"
+# description = "Merge PR after CI passes (implies --fix --pr --impl)"
+# flag = true
+#
+# [tool.claude.output]
+# prompt = """Handle based on "mode" in JSON output:
+#
+# mode=get: Display current branch name.
+#
+# mode=switch: Confirm branch switch. If spec_status is present, show it
+#   (indicates the --spec flag updated the branch's spec association).
+#   Remind to rename session.
+#
+# mode=create: YOU MUST CALL /branch:create. This is not optional.
+#   Step 1: Generate a short kebab-case branch name (2-3 words max, e.g. "fix-auth-bug")
+#     from the description. Do NOT slugify the full description.
+#   Step 2: IMMEDIATELY call /branch:create with the generated name, passing through:
+#     --description (the FULL original description text from the JSON),
+#     --spec if present in JSON, and ALL pipeline flags from the JSON flags object.
+#   branch-create handles the entire pipeline from there. You are done after step 2.
+#   If you do not call /branch:create the branch will not exist and everything fails."""
+# examples = [
+#   "Current branch: main",
+#   "[OK] Switched to branch 'feature-auth'\n\nTip: Rename this session to match: /rename feature-auth",
+#   "[OK] Created branch 'sclaussen/add-auth-logging' from origin/main (prefix: sclaussen)\n[OK] Pushed to remote with upstream tracking\n\nTip: Rename this session to match: /rename sclaussen/add-auth-logging"
+# ]
+# ///
+
+"""
+Show current branch, switch to existing, or create from description.
+
+No args: shows the current branch (get).
+With existing branch name: switches to that branch (switch).
+With non-existent name/description: LLM generates short branch name and calls branch-create.
+"""
+
+import sys
+import os
+import argparse
+
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    run_git,
+    output_result,
+    get_template_from_metadata,
+    branch_exists,
+    remote_branch_exists,
+    get_repo_url,
+    get_current_branch,
+    apply_pipeline_default,
+    apply_escalation,
+    apply_spec_to_current_branch,
+)
+
+
+def do_get():
+    """Show current branch."""
+    import json
+    branch = get_current_branch()
+
+    data = {
+        'branch': branch,
+        'mode': 'get'
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Current branch: {branch}")
+
+
+def do_switch(branch, spec=None, impl=False, pr=False, poll=False, fix=False, merge=False):
+    """Switch to existing branch, or trigger create mode if not found."""
+
+    if branch_exists(branch):
+        run_git(
+            ['checkout', branch],
+            operation_description="switch to branch",
+            context=branch
+        )
+    else:
+        repo_url = get_repo_url()
+        if remote_branch_exists(branch, repo_url):
+            run_git(
+                ['checkout', '-t', f'origin/{branch}'],
+                operation_description="checkout remote branch",
+                context=branch
+            )
+        else:
+            # Branch doesn't exist -- treat as a description for natural language creation
+            do_create(branch, spec=spec, impl=impl, pr=pr, poll=poll, fix=fix, merge=merge)
+            return
+
+    # Apply --spec to the newly-switched branch (persists association in dev.yaml)
+    spec_status, spec_name = apply_spec_to_current_branch(spec)
+
+    data = {
+        'branch': branch,
+        'mode': 'switch'
+    }
+    if spec_status:
+        data['spec_status'] = spec_status
+    if spec_name:
+        data['spec_name'] = spec_name
+
+    template = get_template_from_metadata(script_path=__file__)
+    output_result(data, template)
+
+    # Load associated spec context (reflects new association if just applied).
+    # Skip when --spec failed, so we don't silently print the prior spec's files
+    # after surfacing a [WARNING].
+    if not (spec_status and spec_status.startswith('[WARNING]')):
+        load_spec_context(branch)
+
+
+def do_create(description, spec=None, impl=False, pr=False, poll=False, fix=False, merge=False):
+    """Output JSON for LLM to generate branch name and call branch-create."""
+    import json
+
+    data = {
+        'mode': 'create',
+        'description': description,
+    }
+
+    if spec:
+        data['spec'] = spec
+
+    # Pipeline flags
+    flags = {}
+    if impl:
+        flags['impl'] = True
+    if pr:
+        flags['pr'] = True
+    if poll:
+        flags['poll'] = True
+    if fix:
+        flags['fix'] = True
+    if merge:
+        flags['merge'] = True
+    if flags:
+        data['flags'] = flags
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Description: {description}")
+        print("Mode: create (branch name to be generated)")
+        if spec:
+            print(f"Spec: {spec}")
+        if flags:
+            print(f"Flags: {', '.join(flags.keys())}")
+
+
+def load_spec_context(branch):
+    """Load spec context for the branch if one is associated."""
+    try:
+        from lib.speclib import get_associated_spec, doc_root
+        spec_name = get_associated_spec(branch)
+        if not spec_name:
+            return
+
+        from pathlib import Path
+        spec_dir = doc_root() / 'specs' / spec_name
+        if not spec_dir.is_dir():
+            return
+
+        print(f"\n# Spec Context: {spec_name}", file=sys.stderr)
+        print(f"Branch `{branch}` is associated with spec `{spec_name}`.\n", file=sys.stderr)
+
+        for filename, title in [
+            ('requirements.md', 'Requirements'),
+            ('design.md', 'Design'),
+            ('tasks.md', 'Tasks'),
+        ]:
+            spec_file = spec_dir / filename
+            if spec_file.exists():
+                print(f"## {title}", file=sys.stderr)
+                print(f"File: `{spec_file}`\n", file=sys.stderr)
+                print(spec_file.read_text().strip(), file=sys.stderr)
+                print("", file=sys.stderr)
+
+    except Exception:
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Show current branch, switch to existing, or create from description')
+    parser.add_argument('name', nargs='?', default=None,
+                       help='Branch name to switch to, or description to create from (omit to show current branch)')
+    parser.add_argument('--spec', default=None,
+                       help='Spec name or qualified spec (project:spec:context)')
+    parser.add_argument('--impl', '-i', action='store_true',
+                       help='Implement the feature after branch creation')
+    parser.add_argument('--pr', '-p', action='store_true',
+                       help='Create PR after implementation')
+    parser.add_argument('--poll', '-o', action='store_true',
+                       help='Poll CI checks after PR creation')
+    parser.add_argument('--fix', '-f', action='store_true',
+                       help='Auto-fix CI failures (implies --poll)')
+    parser.add_argument('--merge', '-m', action='store_true',
+                       help='Merge PR after CI passes (implies --fix --pr --impl)')
+    args = parser.parse_args()
+
+    apply_pipeline_default(args)
+    apply_escalation(args)
+
+    if args.name:
+        do_switch(args.name, spec=args.spec, impl=args.impl, pr=args.pr,
+                  poll=args.poll, fix=args.fix, merge=args.merge)
+    else:
+        do_get()
+
+
+if __name__ == "__main__":
+    main()

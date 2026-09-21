@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-mysql-exporter
+  namespace: vela-system
+spec:
+  components:
+    - name: mysql-exporter
+      type: addon
+      properties:
+        skipVersionValidation: true

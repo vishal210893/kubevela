@@ -1,0 +1,39 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: pol-combined
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-combined-fixed
+spec:
+  components:
+    - name: combined
+      type: webservice
+      properties:
+        image: nginx:1.21
+      traits:
+        - type: scaler
+          properties:
+            replicas: 2
+  policies:
+    - name: gc-rule
+      type: garbage-collect
+      properties:
+        keepLegacyResource: true
+    - name: share-cm
+      type: shared-resource
+      properties:
+        rules:
+          - selector:
+              resourceTypes:
+                - ConfigMap
+  workflow:
+    steps:
+      - name: status-msg
+        type: print-message-in-status
+        properties:
+          message: "Combined policy + workflow + trait scenario"
+      - name: apply-combined
+        type: apply-component
+        properties:
+          component: combined

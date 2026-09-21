@@ -1,0 +1,12 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: outer-module
+spec:
+  components:
+    - name: nest-module-poc
+      type: module
+      properties:
+        module: e2e-widget
+        registry: my-modules
+        namespace: default

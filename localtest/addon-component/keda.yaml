@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-keda
+  namespace: vela-system
+spec:
+  components:
+    - name: keda
+      type: addon
+      properties:
+        skipVersionValidation: true

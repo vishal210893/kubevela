@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# lang-java-doctor -- check the Java build environment for InsuranceSuite.
+#
+# The lang-java capability installs Corretto 11/17/21 (default 21), creates
+# ~/.java/{11,17,21} symlinks behind JAVA11_HOME/JAVA17_HOME/JAVA21_HOME, and
+# forwards Artifactory credentials (ARTIFACTORY_URL/USERNAME/PASSWORD) so
+# Maven/Gradle can reach Guidewire's private repos. Things that silently bite:
+#   - the default JDK is not 21 (IS builds compile against 21);
+#   - a ~/.java/NN symlink is missing (a build tool reading JAVANN_HOME fails);
+#   - Artifactory credentials are unset (private-repo downloads 401 mid-build;
+#     note ./gwb reads DEPENDENCY_REPOSITORY_* rather than ARTIFACTORY_*).
+# This doctor reports each with WARNING/impact/fix.
+#
+# Most findings are advisory (exit 0): a non-21 default may be intentional, and
+# a warm ~/.m2 can build without live Artifactory creds. Only a missing JDK
+# entirely is a hard failure (exit 1).
+#
+# It NEVER prints the Artifactory password. Read-only (no --fix).
+#
+# Usage:   lang-java-doctor [--format text|json]
+# Exit:    0 = ok (advisories may print), 1 = no JDK, 2 = usage error.
+#
+# Test hook: JAVA_DOCTOR_BIN overrides the java binary (default `java`).
+#
+# Doctor contract (shared with mcp-github-doctor, ccbridge-doctor,
+# zshenv-secrets-doctor): a *-doctor script in ~/.claude/scripts/ that exits
+# 0/1/2 and prints findings as WARNING/impact/fix triplets; the profile-doctor
+# aggregator runs all of them.
+
+set -uo pipefail
+
+SECTION=lang-java
+FORMAT=text
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --format) FORMAT="${2:-text}"; shift; [ $# -gt 0 ] && shift ;;
+        --format=*) FORMAT="${1#*=}"; shift ;;
+        -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Unknown argument: $1 (try --help)" >&2; exit 2 ;;
+    esac
+done
+case "$FORMAT" in text|json) ;; *) echo "Invalid --format: $FORMAT" >&2; exit 2 ;; esac
+
+SECRETS="$HOME/.zshenv.secrets"
+JAVA_BIN="${JAVA_DOCTOR_BIN:-java}"
+
+PROBLEMS=0
+JSON_ROWS=""
+note() { # <status: ok|warn|problem> <key> <single-line message...>
+    local s="$1" k="$2"; shift 2
+    local msg="$*" em
+    [ "$s" = problem ] && PROBLEMS=$((PROBLEMS + 1))
+    em="${msg//\\/\\\\}"; em="${em//\"/\\\"}"
+    JSON_ROWS="${JSON_ROWS:+$JSON_ROWS,}{\"section\":\"$SECTION\",\"status\":\"$s\",\"key\":\"$k\",\"message\":\"$em\"}"
+}
+say() { [ "$FORMAT" = text ] && printf '%s\n' "$*" >&2 || true; }
+guide() { # <what> <impact> <fix>
+    [ "$FORMAT" = text ] || return 0
+    printf '  WARNING: %s\n' "$1" >&2
+    printf '           impact: %s\n' "$2" >&2
+    printf '           fix:    %s\n' "$3" >&2
+}
+
+say "lang-java doctor -- JDK version, ~/.java symlinks, Artifactory credentials."
+
+# 1. JDK present + default version
+if ! command -v "$JAVA_BIN" >/dev/null 2>&1; then
+    note problem no_java "java not found on PATH."
+    guide "No JDK on PATH (SDKMAN install did not complete)." \
+          "Nothing compiles." \
+          "Rebuild the container; the lang-java post-start script installs Corretto 11/17/21 via SDKMAN and sets 21 as default."
+else
+    ver="$("$JAVA_BIN" -version 2>&1 | awk -F'"' '/version/{print $2; exit}')"
+    major="${ver%%.*}"
+    if [ "$major" = 21 ]; then
+        note ok java_21 "default JDK is Java 21 ($ver)."
+    elif [ -n "$ver" ]; then
+        note warn java_not_21 "default JDK is $ver, not 21 (IS builds target 21)."
+        guide "The active default JDK is $ver, not Java 21." \
+              "InsuranceSuite builds expect Java 21 and may fail to compile." \
+              "Switch the default: add 'sdk default java 21.x.x-amzn' to ~/.zshrc.local (or run it now), then reopen the shell."
+    else
+        note warn java_version_unknown "could not parse java version from '$JAVA_BIN -version'."
+        guide "java is on PATH but its version could not be parsed." \
+              "Cannot confirm the build will use Java 21." \
+              "Run 'java -version' manually and ensure 21 is the default (sdk default java 21.x.x-amzn)."
+    fi
+fi
+
+# 2. ~/.java symlinks behind JAVAnn_HOME
+missing=""
+for v in 11 17 21; do
+    [ -e "$HOME/.java/$v" ] || missing="${missing:+$missing }$v"
+done
+if [ -z "$missing" ]; then
+    note ok java_symlinks "~/.java/{11,17,21} all present."
+else
+    note warn java_symlinks_missing "~/.java symlink(s) missing: $missing"
+    guide "~/.java JDK symlink(s) missing: $missing (the matching JAVAnn_HOME would dangle)." \
+          "Build tools that resolve a specific JDK via JAVAnn_HOME can fail." \
+          "Rebuild the container (install-java-versions.py recreates the symlinks), or recreate them by hand from your SDKMAN candidates."
+fi
+
+# 3. Artifactory credentials (env or the secrets file the loader sources)
+A_URL="${ARTIFACTORY_URL:-}"; A_USER="${ARTIFACTORY_USERNAME:-}"; A_PASS="${ARTIFACTORY_PASSWORD:-}"
+if { [ -z "$A_URL" ] || [ -z "$A_USER" ] || [ -z "$A_PASS" ]; } && [ -f "$SECRETS" ]; then
+    # shellcheck disable=SC1090
+    . "$SECRETS" 2>/dev/null || true
+    A_URL="${ARTIFACTORY_URL:-$A_URL}"; A_USER="${ARTIFACTORY_USERNAME:-$A_USER}"; A_PASS="${ARTIFACTORY_PASSWORD:-$A_PASS}"
+fi
+amiss=""
+[ -z "$A_URL" ]  && amiss="ARTIFACTORY_URL"
+[ -z "$A_USER" ] && amiss="${amiss:+$amiss, }ARTIFACTORY_USERNAME"
+[ -z "$A_PASS" ] && amiss="${amiss:+$amiss, }ARTIFACTORY_PASSWORD"
+if [ -z "$amiss" ]; then
+    note ok artifactory_creds "Artifactory URL + username + password resolved."
+else
+    note warn artifactory_creds_missing "Artifactory credential(s) unset: $amiss"
+    guide "Artifactory credential(s) not forwarded: $amiss." \
+          "Maven/Gradle downloads of private Guidewire artifacts 401 on a cache miss (a warm ~/.m2 can hide this). Note: ./gwb reads DEPENDENCY_REPOSITORY_USERNAME/PASSWORD, not ARTIFACTORY_*." \
+          "Set ARTIFACTORY_URL/USERNAME/PASSWORD (and, for ./gwb, DEPENDENCY_REPOSITORY_USERNAME/PASSWORD) in ~/.zshenv.secrets on the host, then restart the container."
+fi
+
+# 4. DEPENDENCY_REPOSITORY_* -- the vars `./gwb` actually reads for Maven Artifactory.
+# These are a SEPARATE credential path from ARTIFACTORY_* (same username, but a
+# distinct password with its own expiry). A real incident (2026-06-01): ./gwb idea
+# 401'd on insurancesuitecoredependencies-mvn-release because DEPENDENCY_REPOSITORY_PASSWORD
+# had drifted/expired while ARTIFACTORY_PASSWORD stayed valid -- so the ARTIFACTORY_* check
+# above passed and the breakage was invisible until the build failed. Check them explicitly.
+D_USER="${DEPENDENCY_REPOSITORY_USERNAME:-}"; D_PASS="${DEPENDENCY_REPOSITORY_PASSWORD:-}"
+if { [ -z "$D_USER" ] || [ -z "$D_PASS" ]; } && [ -f "$SECRETS" ]; then
+    # shellcheck disable=SC1090
+    . "$SECRETS" 2>/dev/null || true
+    D_USER="${DEPENDENCY_REPOSITORY_USERNAME:-$D_USER}"; D_PASS="${DEPENDENCY_REPOSITORY_PASSWORD:-$D_PASS}"
+fi
+dmiss=""
+[ -z "$D_USER" ] && dmiss="DEPENDENCY_REPOSITORY_USERNAME"
+[ -z "$D_PASS" ] && dmiss="${dmiss:+$dmiss, }DEPENDENCY_REPOSITORY_PASSWORD"
+if [ -z "$dmiss" ]; then
+    note ok dependency_repo_creds "DEPENDENCY_REPOSITORY_USERNAME + PASSWORD resolved (the vars ./gwb reads)."
+    # Cheap drift heuristic (no value printed): same username as ARTIFACTORY_* but a
+    # different password is the classic "one token expired, the other did not" footgun.
+    if [ -n "$A_USER" ] && [ "$A_USER" = "$D_USER" ] && [ -n "$A_PASS" ] && [ "$A_PASS" != "$D_PASS" ]; then
+        note warn dependency_repo_pw_divergence "DEPENDENCY_REPOSITORY_PASSWORD differs from ARTIFACTORY_PASSWORD (same username) -- if a ./gwb build 401s, this one likely drifted."
+        guide "DEPENDENCY_REPOSITORY_PASSWORD and ARTIFACTORY_PASSWORD share a username but differ -- one can expire while the other stays valid." \
+              "A ./gwb Maven 401 (e.g. on insurancesuitecoredependencies-mvn-release) when ARTIFACTORY_* still works points at a drifted DEPENDENCY_REPOSITORY_PASSWORD (this exact incident hit on 2026-06-01)." \
+              "Reconcile DEPENDENCY_REPOSITORY_PASSWORD in ~/.zshenv.secrets; quick unblock: DEPENDENCY_REPOSITORY_PASSWORD=\"\$ARTIFACTORY_PASSWORD\" ./gwb ..."
+    fi
+else
+    note warn dependency_repo_creds_missing "DEPENDENCY_REPOSITORY credential(s) unset: $dmiss"
+    guide "DEPENDENCY_REPOSITORY credential(s) not set: $dmiss -- these (NOT ARTIFACTORY_*) are what ./gwb reads for Maven Artifactory." \
+          "./gwb codegen/compile 401s on private Guidewire Maven repos (a warm cache can delay the failure); ARTIFACTORY_* being set does NOT cover this." \
+          "Set DEPENDENCY_REPOSITORY_USERNAME/PASSWORD in ~/.zshenv.secrets on the host, then restart the container."
+fi
+
+if [ "$FORMAT" = json ]; then
+    ok=true; [ "$PROBLEMS" -gt 0 ] && ok=false
+    printf '{"schema_version":1,"doctor":"%s","problems":%s,"ok":%s,"checks":[%s]}\n' \
+        "$SECTION" "$PROBLEMS" "$ok" "$JSON_ROWS"
+else
+    if [ "$PROBLEMS" -eq 0 ]; then
+        say "[OK] Java environment usable (advisories above are non-fatal)."
+    else
+        say "[PROBLEM] lang-java has $PROBLEMS issue(s) above -- builds will fail until fixed."
+    fi
+fi
+
+[ "$PROBLEMS" -eq 0 ] || exit 1
+exit 0

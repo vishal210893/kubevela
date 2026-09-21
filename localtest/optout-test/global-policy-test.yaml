@@ -1,0 +1,64 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: tf-fake
+  namespace: vela-system
+spec:
+  workload:
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+  schematic:
+    cue:
+      template: |
+        output: {
+        	apiVersion: "v1"
+        	kind:       "ConfigMap"
+        	metadata: name: context.name
+        	data: {
+        		deleteResource: "\(parameter.deleteResource)"
+        	}
+        }
+        parameter: {
+        	// mirrors terraform-controller: absent => true (destructive)
+        	deleteResource: *true | bool
+        }
+---
+apiVersion: core.oam.dev/v1beta1
+kind: PolicyDefinition
+metadata:
+  name: default-delete-resource-false
+  namespace: vela-system
+spec:
+  scope: Application
+  global: true
+  schematic:
+    cue:
+      template: |
+        context: {
+        	appComponents: [...{
+        		name: string
+        		type: string
+        		properties?: {...}
+        		traits?: [...]
+        	}]
+        }
+        parameter: {}
+        output: {
+        	components: [ for c in context.appComponents {
+        		name: c.name
+        		type: c.type
+        		if c.properties != _|_ {
+        			if c.type == "tf-fake" {
+        				// keep an explicit value, default to false when the user omitted it
+        				properties: c.properties & {deleteResource: *false | bool}
+        			}
+        			if c.type != "tf-fake" {
+        				properties: c.properties
+        			}
+        		}
+        		if c.traits != _|_ {
+        			traits: c.traits
+        		}
+        	}]
+        }

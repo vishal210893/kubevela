@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-model-training
+  namespace: vela-system
+spec:
+  components:
+    - name: model-training
+      type: addon
+      properties:
+        skipVersionValidation: true

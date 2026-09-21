@@ -1,0 +1,215 @@
+# Reproducible fixture for the Vela Config controller audit.
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: audit-basic
+  namespace: cfg-audit-7105
+spec:
+  alias: Audit Basic
+  description: Basic controller audit template
+  template: |
+    import "encoding/json"
+
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "Secret"
+        metadata: {
+          name:      context.name
+          namespace: context.namespace
+          labels: "audit.example/template-label": "kept"
+          annotations: "audit.example/template-annotation": "kept"
+        }
+        stringData: {
+          payload: json.Marshal(parameter)
+        }
+      }
+      parameter: {
+        username: string
+        greeting: *"hello" | string
+        count:    *1 | int
+        enabled:  *false | bool
+        nested?: {
+          message: string
+        }
+      }
+    }
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: audit-invalid
+  namespace: cfg-audit-7105
+spec:
+  template: |
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "Secret"
+        metadata: name: context.name
+        stringData: value: "fixed-" + parameter.value
+      }
+      parameter: value: string
+    }
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: audit-sensitive
+  namespace: cfg-audit-7105
+spec:
+  sensitive: true
+  template: |
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "Secret"
+        metadata: name: context.name
+        stringData: token: "updated-" + parameter.token
+      }
+      parameter: token: string
+    }
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: audit-renamed-output
+  namespace: cfg-audit-7105
+spec:
+  template: |
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "Secret"
+        metadata: name: context.name + "-" + parameter.suffix
+        stringData: value: parameter.value
+      }
+      parameter: {
+        suffix: string
+        value:  string
+      }
+    }
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: audit-outputs
+  namespace: cfg-audit-7105
+spec:
+  template: |
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "Secret"
+        metadata: name: context.name
+        stringData: value: parameter.value
+      }
+      outputs: extra: {
+        apiVersion: "v1"
+        kind:       "ConfigMap"
+        metadata: {
+          name:      context.name + "-extra"
+          namespace: context.namespace
+        }
+        data: value: parameter.value
+      }
+      parameter: value: string
+    }
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: audit-no-output
+  namespace: cfg-audit-7105
+spec:
+  template: |
+    template: {
+      parameter: value: string
+    }
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: audit-non-secret-output
+  namespace: cfg-audit-7105
+spec:
+  template: |
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "ConfigMap"
+        metadata: name: context.name
+        data: value: parameter.value
+      }
+      parameter: value: string
+    }
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: audit-validation
+  namespace: cfg-audit-7105
+spec:
+  template: |
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "Secret"
+        metadata: name: context.name
+        stringData: value: parameter.value
+      }
+      validation: {
+        if parameter.value == "forbidden" {
+          $returns: {
+            result:  false
+            message: "value is forbidden by audit template"
+          }
+        }
+        if parameter.value != "forbidden" {
+          $returns: {
+            result:  true
+            message: ""
+          }
+        }
+      }
+      parameter: value: string
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-template-audit-legacy
+  namespace: cfg-audit-7105
+  labels:
+    config.oam.dev/catalog: velacore-config
+    config.oam.dev/scope: namespace
+  annotations:
+    config.oam.dev/sensitive: "false"
+data:
+  template: |
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "Secret"
+        metadata: name: context.name
+        stringData: source: "legacy-updated-" + parameter.value
+      }
+      parameter: value: string
+    }
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: ConfigTemplate
+metadata:
+  name: appears-later
+  namespace: cfg-audit-7105
+spec:
+  template: |
+    template: {
+      output: {
+        apiVersion: "v1"
+        kind:       "Secret"
+        metadata: name: context.name
+        stringData: value: "recovered-" + parameter.value
+      }
+      parameter: value: string
+    }

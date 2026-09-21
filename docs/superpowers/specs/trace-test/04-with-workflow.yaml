@@ -1,0 +1,25 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: trace-with-workflow
+  namespace: trace-test
+spec:
+  components:
+    - name: workflow-web
+      type: webservice
+      properties:
+        image: nginx:1.21
+      traits:
+        - type: scaler
+          properties:
+            replicas: 1
+  workflow:
+    steps:
+      - name: deploy-step
+        type: apply-component
+        properties:
+          component: workflow-web
+      - name: pause-step
+        type: suspend
+        properties:
+          duration: 3s

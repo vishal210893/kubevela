@@ -1,0 +1,55 @@
+# {{SCENARIO_TITLE}}
+
+## Applies When
+
+{{APPLIES_WHEN}}
+
+## Symptoms
+
+{{SYMPTOM_LIST}}
+
+## Investigation Guidance
+
+### Step 1: {{INVESTIGATION_STEP_1_TITLE}}
+
+```
+{{INVESTIGATION_STEP_1_QUERY}}
+```
+
+{{INVESTIGATION_STEP_1_INTERPRETATION}}
+
+### Step 2: {{INVESTIGATION_STEP_2_TITLE}}
+
+```
+{{INVESTIGATION_STEP_2_QUERY}}
+```
+
+{{INVESTIGATION_STEP_2_INTERPRETATION}}
+
+### Step 3: {{INVESTIGATION_STEP_3_TITLE}}
+
+```
+{{INVESTIGATION_STEP_3_QUERY}}
+```
+
+{{INVESTIGATION_STEP_3_INTERPRETATION}}
+
+### Decision Tree
+
+{{DECISION_TREE}}
+
+## Resolution Steps
+
+{{RESOLUTION_STEPS}}
+
+### Rollback
+
+{{ROLLBACK_INSTRUCTIONS}}
+
+## Prevention
+
+{{PREVENTION_MEASURES}}
+
+## Related Alerts
+
+{{RELATED_ALERTS}}

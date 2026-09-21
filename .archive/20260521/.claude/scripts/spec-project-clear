@@ -1,0 +1,84 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Clear branch project override"
+# model = "haiku"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-project-clear:*)"]
+#
+# [tool.claude.output]
+# prompt = "Confirm the branch project override was cleared. Show what the project now falls back to (repo default or repo name)."
+# examples = [
+#   "Cleared project override for branch 'feature-x'\nProject now: dev (repo default)",
+#   "No project override set for branch 'feature-x' (nothing to clear)"
+# ]
+# ///
+
+"""
+Clear the branch-scoped project override, falling back to the repo default or repo name.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_project, get_repo_name, in_git_repo,
+    get_current_branch, remove_branch_project,
+)
+from lib.devyaml import get as _yaml_get
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    repo = get_repo_name()
+
+    # Check if there's a branch override in dev.yaml
+    has_override = False
+    if repo:
+        has_override = _yaml_get(f'spec.{repo}.branches.{branch}.project') is not None
+
+    if not has_override:
+        data = {
+            'branch': branch,
+            'had_override': False,
+            'project': get_project(branch)
+        }
+        if os.getenv('CC') == '1':
+            print(json.dumps(data))
+        else:
+            print(f"No project override set for branch '{branch}' (nothing to clear)")
+        return
+
+    remove_branch_project(branch)
+
+    # Show what it falls back to
+    fallback = get_project(branch)
+
+    data = {
+        'branch': branch,
+        'had_override': True,
+        'project': fallback
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Cleared project override for branch '{branch}'")
+        print(f"Project now: {fallback}")
+
+
+if __name__ == "__main__":
+    main()

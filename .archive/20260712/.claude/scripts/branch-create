@@ -1,0 +1,277 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Create new branch and push to remote"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/branch-create *)"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "required-passthrough"
+# hint = "<name>"
+# description = "Branch name"
+#
+# [[tool.claude.argument]]
+# name = "description"
+# type = "optional-passthrough"
+# hint = "--description|-d <text>"
+# description = "What to implement (used by --impl to know what to build)"
+#
+# [[tool.claude.argument]]
+# name = "spec"
+# type = "optional-passthrough"
+# hint = "--spec project:spec:context,...|spec"
+# description = "Spec name or qualified spec (see docs/guides/spec-parameter.md)"
+#
+# [[tool.claude.argument]]
+# name = "impl"
+# type = "optional-passthrough"
+# hint = "--impl|-i"
+# description = "Implement the feature after branch creation"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "pr"
+# type = "optional-passthrough"
+# hint = "--pr|-p"
+# description = "Create PR after implementation"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "poll"
+# type = "optional-passthrough"
+# hint = "--poll|-o"
+# description = "Poll CI checks after PR creation"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "fix"
+# type = "optional-passthrough"
+# hint = "--fix|-f"
+# description = "Auto-fix CI failures (implies --poll)"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "merge"
+# type = "optional-passthrough"
+# hint = "--merge|-m"
+# description = "Merge PR after CI passes (implies --fix --pr --impl)"
+# flag = true
+#
+# [tool.claude.output]
+# prompt = """Confirm branch creation. Show what it branched from. Note if pushed to remote.
+# If spec was associated or created, show spec status. If prefix was applied, show it.
+# Remind user to rename session with: /rename <branch-name>.
+# If pipeline flags are present in JSON output, execute them in order:
+# 1. impl: The "description" field is the user's implementation request -- use it as your
+#    primary guidance for what to build. If a spec is associated, also read its
+#    requirements.md, design.md, and tasks.md for detailed context. Make all necessary
+#    code changes, run builds (node dev.js capability build <name> && node dev.js profile
+#    build if capabilities changed), commit, and push. Update docs and release notes
+#    if applicable. REQUIRED: also update tests (add/update in the relevant test/
+#    directory), the current spec if one is associated, and context docs (consult
+#    the Contexts table in steering/memory.md, update affected ctx/<name>/design.md
+#    or ctx/<name>.md in the specs repo).
+# 2. pr/poll/fix/merge: Invoke /git:sync --pr, passing through applicable flags
+#    (--poll if poll, --fix if fix, --merge if merge). git-sync handles the full
+#    pipeline: commit, push, create PR, poll CI, auto-fix failures, and admin merge."""
+# examples = [
+#   "[OK] Created branch 'feature-auth' from origin/main\n[OK] Pushed to remote with upstream tracking\n\nTip: Rename this session to match: /rename feature-auth",
+#   "[OK] Created branch 'sclaussen/feature-auth' from origin/main (prefix: sclaussen)\n[OK] Pushed to remote with upstream tracking\n\nTip: Rename this session to match: /rename sclaussen/feature-auth",
+#   "[OK] Created branch 'feature-auth' from origin/main\n[OK] Pushed to remote with upstream tracking\n[OK] Created spec 'auth' and associated with branch\n\nTip: Rename this session to match: /rename feature-auth"
+# ]
+# ///
+
+import sys
+import os
+import argparse
+
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    get_repo_url,
+    get_repo_name,
+    run_git,
+    output_result,
+    get_template_from_metadata,
+    branch_exists,
+    remote_branch_exists,
+    get_default_branch,
+    error,
+    push_and_track,
+    apply_pipeline_default,
+    apply_escalation,
+    apply_spec_to_current_branch,
+)
+from lib.devyaml import get as yaml_get, set as yaml_set, unset as yaml_unset
+
+
+def get_aidev_config(key):
+    """Read a git workflow config value from dev.yaml."""
+    repo = get_repo_name()
+    if not repo:
+        return None
+    value = yaml_get(f'git.{repo}.{key}')
+    return str(value) if value is not None else None
+
+
+def get_source_branch_spec(branch):
+    """Read full spec association (spec, project, ctx) for a branch from dev.yaml."""
+    repo = get_repo_name()
+    if not repo:
+        return None, None, None
+    spec = yaml_get(f'spec.{repo}.branches.{branch}.spec')
+    if not spec:
+        return None, None, None
+    project = yaml_get(f'spec.{repo}.branches.{branch}.project')
+    ctx = yaml_get(f'spec.{repo}.branches.{branch}.ctx')
+    return spec, project, ctx
+
+
+def copy_spec_to_branch(target_branch, spec, project, ctx):
+    """Write full spec association to a target branch in dev.yaml."""
+    repo = get_repo_name()
+    if not repo:
+        return
+    yaml_set(f'spec.{repo}.branches.{target_branch}.spec', spec)
+    if project:
+        yaml_set(f'spec.{repo}.branches.{target_branch}.project', project)
+    if ctx:
+        yaml_set(f'spec.{repo}.branches.{target_branch}.ctx', ctx)
+
+
+def clear_branch_spec(branch):
+    """Clear full spec association from a branch in dev.yaml."""
+    repo = get_repo_name()
+    if not repo:
+        return
+    yaml_unset(f'spec.{repo}.branches.{branch}.spec')
+    yaml_unset(f'spec.{repo}.branches.{branch}.project')
+    yaml_unset(f'spec.{repo}.branches.{branch}.ctx')
+
+
+def main():
+    """Create new branch and push to remote."""
+    parser = argparse.ArgumentParser(description='Create new branch and push to remote')
+    parser.add_argument('name', help='Branch name')
+    parser.add_argument('--description', '-d', default=None,
+                        help='What to implement (used by --impl to know what to build)')
+    parser.add_argument('--spec', default=None,
+                        help='Spec name or qualified spec (project:spec:context)')
+    parser.add_argument('--impl', '-i', action='store_true',
+                        help='Implement the feature after branch creation')
+    parser.add_argument('--pr', '-p', action='store_true',
+                        help='Create PR after implementation')
+    parser.add_argument('--poll', '-o', action='store_true',
+                        help='Poll CI checks after PR creation')
+    parser.add_argument('--fix', '-f', action='store_true',
+                        help='Auto-fix CI failures (implies --poll)')
+    parser.add_argument('--merge', '-m', action='store_true',
+                        help='Merge PR after CI passes (implies --fix --pr)')
+
+    args = parser.parse_args()
+
+    apply_pipeline_default(args)
+    apply_escalation(args)
+    branch = args.name
+
+    # Apply prefix
+    prefix = get_aidev_config('branch-prefix')
+    if prefix:
+        branch = f"{prefix}/{branch}"
+
+    default_branch = get_default_branch()
+
+    if branch_exists(branch):
+        error(f"Branch '{branch}' already exists locally")
+        sys.exit(1)
+
+    repo_url = get_repo_url()
+
+    if remote_branch_exists(branch, repo_url):
+        error(f"Branch '{branch}' already exists on remote")
+        sys.exit(1)
+
+    # Pull latest default branch
+    run_git(
+        ['pull', repo_url, default_branch],
+        operation_description=f"pull latest {default_branch}",
+        context=default_branch
+    )
+
+    # Create and checkout branch
+    run_git(
+        ['checkout', '-b', branch],
+        operation_description="create branch",
+        context=branch
+    )
+
+    # Push branch to remote and set up tracking
+    push_and_track(repo_url, branch)
+
+    push_status = "[OK] Pushed to remote with upstream tracking"
+
+    # Handle --spec: create or associate spec (spec name may be empty for project/ctx only)
+    spec_status = None
+    spec_name = None
+
+    # Inherit spec from source branch when --spec is not provided
+    if not args.spec:
+        source_spec, source_project, source_ctx = get_source_branch_spec(default_branch)
+        if source_spec:
+            copy_spec_to_branch(branch, source_spec, source_project, source_ctx)
+            clear_branch_spec(default_branch)
+            spec_name = source_spec
+            inherited_parts = [f"spec '{source_spec}'"]
+            if source_project:
+                inherited_parts.append(f"project '{source_project}'")
+            if source_ctx:
+                inherited_parts.append(f"contexts '{source_ctx}'")
+            spec_status = f"[OK] Inherited {', '.join(inherited_parts)} from {default_branch}"
+
+    if args.spec:
+        spec_status, spec_name = apply_spec_to_current_branch(args.spec)
+
+    # Build output
+    data = {
+        'branch': branch,
+        'base': f'origin/{default_branch}',
+        'push_status': push_status
+    }
+
+    if args.name != branch:
+        data['input_name'] = args.name
+
+    if prefix:
+        data['prefix_applied'] = prefix
+
+    if args.description:
+        data['description'] = args.description
+
+    if spec_status:
+        data['spec_status'] = spec_status
+        data['spec_name'] = spec_name
+
+    # Include pipeline flags in output for command .md to act on
+    flags = {}
+    if args.impl:
+        flags['impl'] = True
+    if args.pr:
+        flags['pr'] = True
+    if args.poll:
+        flags['poll'] = True
+    if args.fix:
+        flags['fix'] = True
+    if args.merge:
+        flags['merge'] = True
+    if flags:
+        data['flags'] = flags
+
+    template = get_template_from_metadata(script_path=__file__)
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

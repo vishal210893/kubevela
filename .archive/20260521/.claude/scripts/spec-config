@@ -1,0 +1,235 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Configure SDD repository settings"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-config:*)"]
+#
+# [[tool.claude.argument]]
+# name = "set"
+# type = "optional-passthrough"
+# hint = "[--set key value]"
+# description = "Set a config value (keys: spec-repo-directory, project)"
+#
+# [[tool.claude.argument]]
+# name = "unset"
+# type = "optional-passthrough"
+# hint = "[--unset key]"
+# description = "Remove a config value"
+#
+# [tool.claude.output]
+# prompt = "Display the configuration result. For --set/--unset, confirm what changed. With no args, show all current config values and resolved doc root. If a branch project override is active, mention it."
+# examples = [
+#   "SDD Configuration\n==================\n\n  spec-repo-directory:  $WSROOT/specs\n  project:              dev (repo default)\n    branch override:    platform (branch 'feature-x')\n\n  Spec root: /workspaces/src/specs/dev/",
+#   "[OK] Set project = dev"
+# ]
+# ///
+
+"""
+Configure SDD repository settings.
+
+View or modify spec configuration values (spec-repo-directory, project)
+stored in ~/.dev/dev.yaml. These settings control how spec paths are resolved
+and are shared across all environments.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_spec_repo_directory, set_spec_repo_directory,
+    get_project, set_project, get_repo_name,
+    doc_root, in_git_repo, CONFIG_KEYS,
+    get_current_branch
+)
+
+_lib_dir = str(Path(__file__).parent / 'lib')
+if _lib_dir not in sys.path:
+    sys.path.insert(0, _lib_dir)
+from devyaml import get as _yaml_get, unset as _yaml_unset
+
+
+def parse_args(argv):
+    args = argv[1:]
+
+    if not args:
+        return ('show', None, None)
+
+    if args[0] == '--set':
+        if len(args) < 3:
+            print("Error: --set requires key and value", file=sys.stderr)
+            print("Usage: spec-config --set <key> <value>", file=sys.stderr)
+            print(f"Valid keys: {', '.join(CONFIG_KEYS)}", file=sys.stderr)
+            sys.exit(1)
+        return ('set', args[1], args[2])
+
+    if args[0] == '--unset':
+        if len(args) < 2:
+            print("Error: --unset requires a key", file=sys.stderr)
+            print("Usage: spec-config --unset <key>", file=sys.stderr)
+            print(f"Valid keys: {', '.join(CONFIG_KEYS)}", file=sys.stderr)
+            sys.exit(1)
+        return ('unset', args[1], None)
+
+    print(f"Error: Unknown argument '{args[0]}'", file=sys.stderr)
+    print("Usage: spec-config [--set key value] [--unset key]", file=sys.stderr)
+    sys.exit(1)
+
+
+def validate_key(key):
+    if key not in CONFIG_KEYS:
+        print(f"Error: Unknown key '{key}'", file=sys.stderr)
+        print(f"Valid keys: {', '.join(CONFIG_KEYS)}", file=sys.stderr)
+        sys.exit(1)
+
+
+def handle_set(key, value):
+    validate_key(key)
+
+    repo_name = get_repo_name()
+
+    if key == 'spec-repo-directory':
+        expanded = os.path.expandvars(value)
+        if not os.path.isabs(expanded):
+            print(f"Error: spec-repo-directory must resolve to an absolute path (got '{value}')", file=sys.stderr)
+            sys.exit(1)
+        set_spec_repo_directory(value)
+        dotpath = f'spec.{repo_name}.spec-repo-directory' if repo_name else None
+    elif key == 'project':
+        # Set at repo level (applies to all branches without a branch override)
+        set_project(value)
+        dotpath = f'spec.{repo_name}.project' if repo_name else None
+    else:
+        dotpath = None
+
+    data = {
+        'action': 'set',
+        'key': key,
+        'dotpath': dotpath,
+        'value': value
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"[OK] Set {key} = {value}")
+        if dotpath:
+            print()
+            print(f"  dev.yaml: {dotpath} = {value}")
+
+
+def handle_unset(key):
+    validate_key(key)
+
+    repo_name = get_repo_name()
+
+    if key == 'spec-repo-directory':
+        dotpath = f'spec.{repo_name}.spec-repo-directory' if repo_name else None
+    elif key == 'project':
+        dotpath = f'spec.{repo_name}.project' if repo_name else None
+    else:
+        dotpath = None
+
+    was_set = False
+    if dotpath:
+        current = _yaml_get(dotpath)
+        if current is not None:
+            _yaml_unset(dotpath)
+            was_set = True
+
+    data = {
+        'action': 'unset',
+        'key': key,
+        'dotpath': dotpath,
+        'was_set': was_set
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if was_set:
+            print(f"[OK] Removed {key}")
+            if dotpath:
+                print()
+                print(f"  dev.yaml: {dotpath} (unset)")
+        else:
+            print(f"Key '{key}' was not set (nothing to remove)")
+
+
+def handle_show():
+    repo_name = get_repo_name()
+    spec_repo_dir = get_spec_repo_directory()
+    branch = get_current_branch()
+
+    # Project resolution from dev.yaml
+    repo_project = None
+    branch_project = None
+
+    if repo_name:
+        repo_project = _yaml_get(f'spec.{repo_name}.project')
+    if branch and repo_name:
+        branch_project = _yaml_get(f'spec.{repo_name}.branches.{branch}.project')
+
+    effective_project = get_project(branch)
+    project_source = 'repo name (fallback)'
+    if branch_project is not None:
+        project_source = f'branch override ({branch})'
+    elif repo_project is not None:
+        project_source = 'repo default'
+
+    # Doc root
+    spec_root_display = None
+    try:
+        spec_root_display = str(doc_root())
+    except SystemExit:
+        spec_root_display = "(cannot resolve - missing required config)"
+
+    data = {
+        'spec_repo_directory': spec_repo_dir,
+        'project': effective_project,
+        'project_repo_default': repo_project,
+        'project_branch_override': branch_project,
+        'project_source': project_source,
+        'project_branch': branch,
+        'spec_root': spec_root_display
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print("SDD Configuration")
+        print("==================")
+        print()
+        print(f"  spec-repo-directory:  {spec_repo_dir}")
+        print(f"  project:              {effective_project} ({project_source})")
+        if branch_project is not None:
+            print(f"    branch override:    {branch_project} (branch '{branch}')")
+        if repo_project is not None and branch_project is not None:
+            print(f"    repo default:       {repo_project}")
+        print()
+        print(f"  Spec root: {spec_root_display}")
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    action, key, value = parse_args(sys.argv)
+
+    if action == 'set':
+        handle_set(key, value)
+    elif action == 'unset':
+        handle_unset(key)
+    else:
+        handle_show()
+
+
+if __name__ == "__main__":
+    main()

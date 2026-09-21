@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-loki
+  namespace: vela-system
+spec:
+  components:
+    - name: loki
+      type: addon
+      properties:
+        skipVersionValidation: true

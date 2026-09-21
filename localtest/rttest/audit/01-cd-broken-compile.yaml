@@ -1,0 +1,28 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: audit-broken-compile
+  namespace: vela-system
+spec:
+  workload:
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+  schematic:
+    cue:
+      template: |
+        import "strings"
+
+        output: {
+          apiVersion: "v1"
+          kind:       "ConfigMap"
+          metadata: name: parameter.name
+          data: {
+            allLabels: strings.Join(parameter.left + parameter.right, ",")
+          }
+        }
+        parameter: {
+          name:  string
+          left:  [...string]
+          right: [...string]
+        }

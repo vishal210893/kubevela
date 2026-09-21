@@ -17,6 +17,8 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"time"
@@ -27,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -459,7 +462,27 @@ func (h *AppHandler) prepareWorkloadAndManifests(ctx context.Context,
 	if err := af.SetOAMContract(manifest); err != nil {
 		return nil, nil, errors.WithMessage(err, "SetOAMContract")
 	}
+	if manifest != nil && manifest.ComponentOutput != nil {
+		klog.InfoS("component manifest generated", "component", manifest.Name,
+			"kind", manifest.ComponentOutput.GetKind(),
+			"name", manifest.ComponentOutput.GetName(),
+			"digest", objectDigest(manifest.ComponentOutput))
+	}
 	return wl, manifest, nil
+}
+
+// objectDigest fingerprints a rendered object so one render's output can be
+// told from another's in a log without printing the whole manifest.
+func objectDigest(obj *unstructured.Unstructured) string {
+	if obj == nil {
+		return "nil"
+	}
+	b, err := json.Marshal(obj.Object)
+	if err != nil {
+		return "unmarshalable"
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
 }
 
 func renderComponentsAndTraits(manifest *types.ComponentManifest, appRev *v1beta1.ApplicationRevision, clusterName string, overrideNamespace string) (*unstructured.Unstructured, []*unstructured.Unstructured, error) {

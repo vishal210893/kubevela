@@ -1,0 +1,1241 @@
+{
+  "version": 1,
+  "project": {
+    "name": "KubeVela - Addon as Component",
+    "slug": "kubevela-addon-component",
+    "tagline": "Feature-scoped scan of the feat/addon-component branch: installing a KubeVela addon declaratively as an Application component (type: addon), with a CueX render provider, an OCI/Helm addon registry backend layer, and admission-time compatibility validation.",
+    "iconDomain": "kubevela.io",
+    "date": "2026-09-06"
+  },
+  "stats": {
+    "agents": 0,
+    "models": 0,
+    "tools": 0,
+    "integrations": 9
+  },
+  "topModels": [],
+  "topTools": [],
+  "topIntegrations": [
+    {
+      "id": "int-kubernetes",
+      "label": "Kubernetes API",
+      "domain": "kubernetes.io"
+    },
+    {
+      "id": "int-oci-registry",
+      "label": "OCI Registry (distribution spec)",
+      "domain": "opencontainers.org"
+    },
+    {
+      "id": "int-aws-ecr",
+      "label": "AWS Elastic Container Registry",
+      "domain": "aws.amazon.com"
+    },
+    {
+      "id": "int-helm-repo",
+      "label": "Helm Chart Repository",
+      "domain": "helm.sh"
+    },
+    {
+      "id": "int-chartmuseum",
+      "label": "ChartMuseum",
+      "domain": "chartmuseum.com"
+    },
+    {
+      "id": "int-github",
+      "label": "GitHub",
+      "domain": "github.com"
+    },
+    {
+      "id": "int-gitlab",
+      "label": "GitLab",
+      "domain": "gitlab.com"
+    },
+    {
+      "id": "int-gitee",
+      "label": "Gitee",
+      "domain": "gitee.com"
+    },
+    {
+      "id": "int-alibaba-oss",
+      "label": "Alibaba Cloud OSS",
+      "domain": "aliyun.com"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "entry-addon-componentdef",
+        "label": "addon ComponentDefinition",
+        "kind": "entry",
+        "sub": "type: addon in an Application",
+        "group": "Addon Component Rendering",
+        "sourceRef": "vela-templates/definitions/internal/component/addon.cue:14",
+        "detail": "The user-facing surface of the feature. A component with type: addon accepts parameters addon (defaults to context.name), version (empty = latest stable), registry (empty = configured default), properties (open struct passed to the addon's own templates) and skipVersionValidation. The CUE template imports vela/addon, calls addon.#Render and emits output: _render.$returns.application, so the component's rendered output is a whole nested core.oam.dev/v1beta1 Application. Workload type is autodetects.core.oam.dev. Shipped in-chart at charts/vela-core/templates/defwithtemplate/addon.yaml; documented example at references/docgen/def-doc/component/addon.eg.md."
+      },
+      {
+        "id": "entry-app-webhook",
+        "label": "Application validating webhook",
+        "kind": "entry",
+        "sub": "ValidatingHandler.Handle",
+        "group": "Admission Validation",
+        "sourceRef": "pkg/webhook/core.oam.dev/v1beta1/application/validating_handler.go:69",
+        "detail": "Shared Application admission handler, always registered. On Create it runs ValidateAnnotations, ValidateDefinitionPermissions, ValidateWorkflow, ValidateComponents, ValidateAddonComponents, ValidateTraitConflicts in order without short-circuiting; all field errors are merged into one 400. Update re-runs ValidateCreate plus immutability checks and is skipped when DeletionTimestamp is set. This branch moved logger injection and namespace-in-context ahead of the operation switch so the addon validator inherits request-scoped logging fields."
+      },
+      {
+        "id": "entry-controller-bootstrap",
+        "label": "vela-core startup wiring",
+        "kind": "entry",
+        "sub": "cmd/core/app/server.go",
+        "group": "Packaging & Rollout",
+        "sourceRef": "cmd/core/app/server.go:138",
+        "detail": "Registers the addon render service into the process-wide renderer seam, but only when the EnableAddonComponent feature gate is enabled. Registration is a deliberate explicit call rather than an init() so it happens after flag parsing and can be gated."
+      },
+      {
+        "id": "entry-cli-addon-push",
+        "label": "vela addon push",
+        "kind": "entry",
+        "sub": "CLI publish command",
+        "group": "Addon Publishing (CLI)",
+        "sourceRef": "references/cli/addon.go:499",
+        "detail": "Retargeted on this branch from ChartMuseum-only to Helm or OCI. Second argument may be a named registry of type oci or a raw oci:// URL; OCI pushes also update the portable addon catalog. Adds --password-stdin (mutually exclusive with --password, trailing CR/LF trimmed, empty rejected) so an ECR login token can be piped in. A Kubernetes client is only fetched when the target is not a direct URL, so pushing to a bare registry URL no longer needs a cluster."
+      },
+      {
+        "id": "entry-cli-registry-add",
+        "label": "vela addon registry add/update",
+        "kind": "entry",
+        "sub": "CLI registry management",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "references/cli/addon-registry.go:44",
+        "detail": "Adds the oci registry type alongside helm; both write the same Helm registry record, but --type oci asserts an oci:// endpoint. Credentials are routed by scheme: oci:// endpoints store the password as a Secret-backed token, http(s) Helm repos keep the existing inline password. Username and password must be given together or both omitted for anonymous access. Add-time validation constructs the versioned registry and tolerates ErrOCICatalogAbsent so a fresh OCI registry with no catalog yet is accepted while auth/connectivity failures still reject. list/get display OCI for oci:// URLs."
+      },
+      {
+        "id": "entry-cli-addon-enable",
+        "label": "vela addon enable",
+        "kind": "entry",
+        "sub": "Imperative addon install",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "references/cli/addon.go:618",
+        "detail": "Pre-existing imperative install path, adjusted by this branch: a registry fetch error now logs a warning and skips that registry instead of being conflated with not-found, and the final not-found error wraps the underlying cause. Complements, rather than replaces, the declarative type: addon component."
+      },
+      {
+        "id": "entry-cli-addon-list",
+        "label": "vela addon ls",
+        "kind": "entry",
+        "sub": "Addon listing",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "references/cli/addon.go:1043",
+        "detail": "When a specific --registry is named, per-registry errors are surfaced instead of silently skipped. Builds versioned registries through the shared conversion helper rather than hardcoding the HTTP backend, so OCI registries list correctly."
+      },
+      {
+        "id": "entry-e2e-suite",
+        "label": "Addon Component E2E suite",
+        "kind": "entry",
+        "sub": "Test-only, not application behavior",
+        "group": "Quality (test-only)",
+        "sourceRef": "e2e/addon-component/addon_component_test.go:167",
+        "detail": "Ginkgo suite (test code, not runtime behavior). Creates Application comp-example in vela-system with one component {name: example, type: addon} and raw properties {registry: KubeVela, skipVersionValidation: true, properties: {example: e2e}}. Asserts: wrapping app reaches ApplicationRunning; child Application addon-example reaches ApplicationRunning; auxiliary ComponentDefinition helm-example exists; the outer ResourceTracker records only the child Application and not helm-example while the inner tracker does record it; StateKeep restores a deleted helm-example; deleting the wrapping app garbage-collects the child. ResourceTracker names are derived from live ObjectMeta.Generation rather than a hardcoded revision. Picked up by the existing e2e-api-test target; no new make target. Suite bootstrap is e2e/addon-component/addon_component_suite_test.go:26; the gate is turned on for the whole e2e cluster by makefiles/e2e.mk:39 (--set featureGates.enableAddonComponent=true) in e2e-setup-core-wo-auth. Unit coverage for the same feature lives in pkg/addon/service/renderer_test.go, pkg/cue/cuex/providers/addon/addon_test.go, pkg/addon/backend_oci_test.go, oci_catalog_test.go, versioned_registry_facade_test.go, push_oci_test.go, push_helm_repo_test.go, cache_test.go, registry_test.go, source_test.go, helper_test.go, addon_coverage_test.go, pkg/appfile/appfile_test.go, pkg/resourcekeeper/resourcekeeper_test.go, references/cli/addon_test.go pkg/addon/addon_test.go, pkg/addon/versioned_registry_test.go, pkg/addon/reader_gitlab_test.go and the webhook addon/*_test.go files - all test code, deliberately not modelled as runtime nodes."
+      },
+      {
+        "id": "cron-registry-refresh",
+        "label": "Registry discovery loop",
+        "kind": "cron",
+        "sub": "DiscoverAndRefreshLoop ticker",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/cache.go:69",
+        "detail": "Periodic ticker that re-reads the registry ConfigMap and rebuilds cached UI data and registry metadata per registry. Registries removed from the ConfigMap have all four cache maps purged; per-addon versioned entries whose addon is no longer listed are deleted."
+      },
+      {
+        "id": "svc-feature-gate",
+        "label": "EnableAddonComponent gate",
+        "kind": "service",
+        "sub": "Alpha, default false",
+        "group": "Packaging & Rollout",
+        "sourceRef": "pkg/features/controller_features.go:149",
+        "detail": "Single new feature gate for the whole feature. Gates three things: renderer registration at startup, the CueX provider call path, and the webhook's addon compatibility branch. Deliberately does NOT gate the ComponentDefinition install or the vela/addon CueX package registration, so with the gate off the definition still installs and rendering fails with an actionable message naming the gate."
+      },
+      {
+        "id": "svc-chart-wiring",
+        "label": "vela-core Helm chart wiring",
+        "kind": "service",
+        "sub": "values + controller args + definition",
+        "group": "Packaging & Rollout",
+        "sourceRef": "charts/vela-core/templates/kubevela-controller.yaml:331",
+        "detail": "Adds featureGates.enableAddonComponent (default false) in values.yaml, passes --feature-gates=EnableAddonComponent=<value> to the controller, documents the gate in the chart README, and installs the generated addon ComponentDefinition into the system definition namespace. Concretely: charts/vela-core/values.yaml:173 (gate default plus its ##@param doc at :151), charts/vela-core/templates/kubevela-controller.yaml:331 (controller arg) and charts/vela-core/README.md:116 (documented gate row)."
+      },
+      {
+        "id": "svc-cuex-registration",
+        "label": "CueX provider registration",
+        "kind": "service",
+        "sub": "vela/addon package",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/cue/cuex/compiler.go:52",
+        "detail": "Registers the addon package on the workload compiler and on the workflow provider compiler (pkg/workflow/providers/compiler.go:78). Registration is unconditional and ungated because the ComponentDefinition imports vela/addon and would otherwise fail to compile. Notably not registered on the config compiler."
+      },
+      {
+        "id": "svc-cuex-addon-provider",
+        "label": "addon CueX provider",
+        "kind": "service",
+        "sub": "#do: render, #provider: addon",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/cue/cuex/providers/addon/addon.go:64",
+        "detail": "Go implementation behind addon.#Render. $params are addon, version, registry, properties, skipVersionValidate; $returns are resolvedVersion, registry, application. Checks the feature gate first (actionable error when off), then the renderer seam (addon renderer not initialized when unwired), then maps params into an AddonRequest. Note the deliberate naming step: the definition parameter is skipVersionValidation and is mapped to the provider's skipVersionValidate. The CUE-side stub that declares #Render, its $params and its optional $returns lives beside the Go code at pkg/cue/cuex/providers/addon/addon.cue and is embedded into the provider package."
+      },
+      {
+        "id": "svc-renderer-seam",
+        "label": "Renderer injection seam",
+        "kind": "service",
+        "sub": "api.Renderer / SetDefaultRenderer",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/api/api.go:49",
+        "detail": "Stdlib-only leaf package holding AddonRequest, AddonResult and the Renderer interface, plus a mutex-guarded process-wide default. Exists solely to break the import cycle between the CueX provider and pkg/addon, and to let the renderer be wired conditionally at startup."
+      },
+      {
+        "id": "svc-renderer-impl",
+        "label": "Addon render service",
+        "kind": "service",
+        "sub": "rendererImpl.RenderAddon",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/renderer.go:147",
+        "detail": "Render-only service: it resolves and renders an addon into an Application object but never dispatches anything to the cluster. Reads the Kubernetes client and rest config lazily from the singleton package. Entry point for cache lookup, singleflight collapsing and the resolve/render pipeline."
+      },
+      {
+        "id": "svc-render-singleflight",
+        "label": "Render singleflight",
+        "kind": "service",
+        "sub": "Concurrent-miss collapsing",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/renderer.go:167",
+        "detail": "Collapses concurrent cache misses on the same key, with a double-check load inside the shared function. The shared render runs under context.WithoutCancel so a leader's cancellation does not fail followers; the documented tradeoff is that no caller's deadline constrains the shared render."
+      },
+      {
+        "id": "svc-resolve-and-render",
+        "label": "Resolve and render pipeline",
+        "kind": "service",
+        "sub": "resolveAndRender",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/renderer.go:188",
+        "detail": "Core pipeline: resolve the install package (pinned version resolved directly so a valid pin does not depend on latest loading; otherwise take the first package returned by the registry search), optionally validate system requirements, call RenderApp, fold auxiliaries in, then post-process in a fixed order - stamp the addon registry label, convert to unstructured and force apiVersion/kind, append auxiliary components, ensure the state-keep policy, sanitize the manifest, suppress last-applied config."
+      },
+      {
+        "id": "svc-version-resolution",
+        "label": "Pinned version resolution",
+        "kind": "service",
+        "sub": "resolvePinnedVersion",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/renderer.go:497",
+        "detail": "Iterates candidate registries, accumulating per-registry failures and returning the first success; the terminal error joins all failures. With no registry pinned it enumerates every configured registry; an empty list yields an explicit no addon registries are configured error."
+      },
+      {
+        "id": "svc-addon-lookup",
+        "label": "Addon package lookup",
+        "kind": "service",
+        "sub": "Find/Get addon package from registry",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/helper.go:247",
+        "detail": "Shared resolution helpers used by both the renderer and the webhook: FindAddonPackagesDetailFromRegistry (latest across one or all registries) and GetAddonInstallPackageFromRegistry (exact version, helper.go:369). Registry order is treated as priority, which is why registry listing is now name-sorted. Unreachable registries are skipped rather than aborting the whole search (skippable errors now include not-exist, fetch and OCI-catalog-absent)."
+      },
+      {
+        "id": "svc-system-requirements",
+        "label": "System requirements check",
+        "kind": "service",
+        "sub": "vela / vela-core / Kubernetes semver",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/addon.go:1795",
+        "detail": "Checks the addon's declared SystemRequirements against three semver constraints: the vela CLI/UX version, the vela-core controller image tag, and the Kubernetes server version via discovery. Non-semver values such as latest or a commit SHA bypass their individual check. In the render path the check is skipped entirely, with a log line, when no rest config is available."
+      },
+      {
+        "id": "svc-velacore-image-tag",
+        "label": "vela-core image tag lookup",
+        "kind": "service",
+        "sub": "Deployment introspection",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/addon.go:1889",
+        "detail": "Lists Deployments by the controller-name label and falls back to a direct get of vela-system/kubevela-vela-core to read the running controller's image tag for the vela-core version constraint."
+      },
+      {
+        "id": "svc-render-app",
+        "label": "Addon template rendering",
+        "kind": "service",
+        "sub": "RenderApp",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/render.go:303",
+        "detail": "Pre-existing addon renderer reused by the component path: turns an install package plus user args into the addon's own Application object and a slice of auxiliary unstructured objects."
+      },
+      {
+        "id": "svc-aux-components",
+        "label": "Auxiliary folding",
+        "kind": "service",
+        "sub": "Definitions, config templates, schemas, views, secret",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/renderer.go:395",
+        "detail": "Renders the addon's definitions, config templates, definition schemas, views and args secret, then appends them to the nested Application as up to five k8s-objects components named addon-definitions, addon-config-templates, addon-schemas, addon-views and addon-secret, plus a catch-all addon-auxiliaries component for the template's own uncategorized outputs. Folding auxiliaries into the child Application (instead of emitting them beside it) is what keeps the outer ResourceTracker holding only the Application while the child tracker owns the rest."
+      },
+      {
+        "id": "svc-statekeep-policy",
+        "label": "State-keep policy injection",
+        "kind": "service",
+        "sub": "apply-once with enable:false",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/renderer.go:322",
+        "detail": "Injects an apply-once policy named addon-component-state-keep with enable:false into the nested Application so the addon's auxiliaries stay reconciled and self-heal, unless the addon already declares its own apply-once policy. Name collisions fall back to numeric suffixes."
+      },
+      {
+        "id": "svc-sanitize-manifest",
+        "label": "Manifest sanitization",
+        "kind": "service",
+        "sub": "sanitizeManifest",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/renderer.go:276",
+        "detail": "Strips non-declarative and server-populated fields from the rendered Application before it is handed back as CUE output, so the produced object is safe to re-render deterministically."
+      },
+      {
+        "id": "svc-suppress-lastapplied",
+        "label": "Last-applied suppression",
+        "kind": "service",
+        "sub": "annotation set to skip",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/renderer.go:304",
+        "detail": "Stamps app.oam.dev/last-applied-configuration: skip onto the nested Application because folding a resource-heavy addon into a single Application can exceed the 256KiB annotation limit. This is the one place on the branch that writes the literal sentinel rather than the shared constant."
+      },
+      {
+        "id": "svc-lastapplied-helpers",
+        "label": "Last-applied sentinel helpers",
+        "kind": "service",
+        "sub": "\"-\" and \"skip\" constants",
+        "group": "Controller Runtime & Dispatch",
+        "sourceRef": "pkg/oam/lastapplied.go:31",
+        "detail": "New shared constants and IsSkipLastAppliedConfig predicate, replacing inline string comparisons at the apply and patch call sites so the sentinel semantics have one definition."
+      },
+      {
+        "id": "svc-appfile-annotations",
+        "label": "Annotation inheritance filter",
+        "kind": "service",
+        "sub": "filterAndSetAnnotations",
+        "group": "Controller Runtime & Dispatch",
+        "sourceRef": "pkg/appfile/appfile.go:484",
+        "detail": "Rewritten to merge and filter annotations in one pass and to stop the last-applied skip sentinel from being inherited by child workloads and traits. The component's own value wins; an inherited sentinel is deleted. Without this, the renderer's skip annotation would propagate to every addon resource, disabling three-way merge and breaking vela status --tree --format raw, which parses that annotation value as JSON."
+      },
+      {
+        "id": "svc-apply-lastapplied",
+        "label": "Apply / three-way patch",
+        "kind": "service",
+        "sub": "trim + original-configuration handling",
+        "group": "Controller Runtime & Dispatch",
+        "sourceRef": "pkg/utils/apply/apply.go:152",
+        "detail": "Apply and patch paths now consult the shared sentinel predicate (also pkg/utils/apply/patch.go:171) when deciding whether to record or read a last-applied configuration for a resource. Both call sites are in pkg/utils/apply/apply.go:152 and pkg/utils/apply/patch.go:171."
+      },
+      {
+        "id": "svc-app-controller",
+        "label": "Application controller",
+        "kind": "service",
+        "sub": "Reconciler.Reconcile",
+        "group": "Controller Runtime & Dispatch",
+        "sourceRef": "pkg/controller/core.oam.dev/v1beta1/application/application_controller.go:109",
+        "detail": "Pre-existing reconciler that drives the feature at runtime: it renders each component through its ComponentDefinition CUE (invoking the addon provider), applies the resulting nested Application, and records it in the outer ResourceTracker. Periodic reconciliation plus the injected state-keep policy is what self-heals deleted addon auxiliaries."
+      },
+      {
+        "id": "svc-addon-validation-dispatch",
+        "label": "Addon validation dispatch",
+        "kind": "service",
+        "sub": "ValidateAddonComponents",
+        "group": "Admission Validation",
+        "sourceRef": "pkg/webhook/core.oam.dev/v1beta1/application/addon_validation.go:38",
+        "detail": "Cheap two-stage guard before any I/O: returns immediately when the feature gate is off, then when no component has type addon. Uses the manager-injected validator; a hand-constructed handler falls back to a validator with a nil rest config, which silently disables the Kubernetes-version half of the compatibility check."
+      },
+      {
+        "id": "svc-addon-validator",
+        "label": "Addon component validator",
+        "kind": "service",
+        "sub": "Property parsing + delegation",
+        "group": "Admission Validation",
+        "sourceRef": "pkg/webhook/core.oam.dev/v1beta1/application/addon/validator.go:69",
+        "detail": "Matches components whose type is exactly addon, unmarshals addon, version, registry and skipVersionValidation from raw properties, defaults the addon name to the component name, honors the skip opt-out, and reports a field.Invalid at spec.components[i].properties on a real incompatibility. Malformed properties are skipped rather than rejected. The compatibility checker is an unexported func field, which is the seam unit tests stub."
+      },
+      {
+        "id": "svc-compat-checker",
+        "label": "Compatibility checker",
+        "kind": "service",
+        "sub": "Fails open by design",
+        "group": "Admission Validation",
+        "sourceRef": "pkg/webhook/core.oam.dev/v1beta1/application/addon/compat.go:38",
+        "detail": "Resolves the addon package from the named or all registries, re-resolves the exact package when the component pins a different version, and evaluates its SystemRequirements. Denies only on a genuine version mismatch; every registry, lookup, discovery or parse failure allows the request, because the webhook runs with failurePolicy Fail. Client and rest config are explicit parameters injected from the manager, since the webhook process never initializes the client singleton."
+      },
+      {
+        "id": "svc-concise-cue-error",
+        "label": "Concise schematic errors",
+        "kind": "service",
+        "sub": "Unwraps CueX call errors",
+        "group": "Admission Validation",
+        "sourceRef": "pkg/webhook/core.oam.dev/v1beta1/application/validation.go:121",
+        "detail": "Unwraps a CueX function-call error so a failing provider (such as the addon render provider) reports its inner cause instead of a full CUE call trace - the difference between an actionable message and an unreadable one when the gate is off or a registry is down."
+      },
+      {
+        "id": "svc-registry-datastore",
+        "label": "Registry data store",
+        "kind": "service",
+        "sub": "List/Get/Add registries",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/registry.go:103",
+        "detail": "Reads and writes addon registry records. Listing is now name-sorted so registry priority is deterministic. OCI registry tokens are migrated out of the ConfigMap into a per-registry Secret on write and loaded back on read, so an all-registry search performs one Secret read per configured registry."
+      },
+      {
+        "id": "svc-versioned-registry",
+        "label": "Versioned registry facade",
+        "kind": "service",
+        "sub": "helmRegistry over chartBackend",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/versioned_registry.go:104",
+        "detail": "Single implementation of the VersionedRegistry interface (list, UI data, install package, detailed addon, available versions). Owns everything after the chart archive - package loading, UI data construction, registry-name and version stamping - while transport is delegated to a chartBackend. A resolvedChart DTO distinguishes an index that declares no requirements from a transport that carries no requirement metadata at all."
+      },
+      {
+        "id": "svc-backend-dispatch",
+        "label": "Chart backend selection",
+        "kind": "service",
+        "sub": "NewVersionedRegistry",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/versioned_registry.go:221",
+        "detail": "The dispatch point of the refactor that folded OCI into the Helm registry: validates credentials for the scheme, then picks the OCI backend for oci:// endpoints (case-insensitive scheme compare) and the HTTP Helm backend for everything else, including cm://. A registry is treated as chart-backed at all when it has a Helm source; otherwise the legacy git/OSS reader path applies."
+      },
+      {
+        "id": "svc-backend-oci",
+        "label": "OCI chart backend",
+        "kind": "service",
+        "sub": "Helm registry client over oras",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/backend_oci.go:60",
+        "detail": "Uses the Helm v3 registry client (which wraps oras-go) for login, tag listing and chart pull; no direct oras usage. Version resolution takes a pinned version as-is, otherwise lists tags, semver-filters and takes the highest - it never relies on a floating latest tag, which helm push does not create. Tags carry no requirement annotations, so this backend reports that it cannot supply version requirements and callers refuse to guess. Repository-absent detection string-matches name unknown because the underlying error types are in an unexported internal package."
+      },
+      {
+        "id": "svc-backend-http",
+        "label": "HTTP Helm chart backend",
+        "kind": "service",
+        "sub": "index.yaml + chart tarballs",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/backend_http.go:40",
+        "detail": "Fetches and strictly unmarshals index.yaml, sorts versions descending and treats the newest as the addon's meta. Chart resolution walks the version's URL list - relative URLs are joined onto the repo URL, absolute URLs used as-is - and a failed download or decode moves to the next URL rather than failing the request. The index is authoritative for system requirements, including when it declares none."
+      },
+      {
+        "id": "svc-credential-scoping",
+        "label": "Credential scoping",
+        "kind": "service",
+        "sub": "sameHost + credential stripping",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/backend_http.go:126",
+        "detail": "Before following a chart URL advertised by an index, compares scheme and host against the configured repo URL; on mismatch it strips username, password, bearer token and client certificate/key, keeping only trust configuration such as the CA file. The scheme comparison closes the case where an https repo advertises an http URL on the same host and basic auth would have been replayed in cleartext. Scheme-based credential choice lives alongside it: oci:// endpoints use the Secret-backed token, http(s) uses the password, and mTLS/insecure-TLS options are rejected for OCI because the OCI client has no transport seam."
+      },
+      {
+        "id": "svc-oci-catalog-read",
+        "label": "Portable OCI catalog reader",
+        "kind": "service",
+        "sub": "kubevela-addon-catalog chart",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/oci_catalog.go:63",
+        "detail": "Primary addon-discovery mechanism for OCI registries: a chart at a fixed repository path carrying a catalog.json document. It uses only portable registry operations - tag listing and pull - which is what makes discovery work on registries with no catalog API. The decoder deliberately fills the meta version with the newest semver so cached entries do not get a dead key."
+      },
+      {
+        "id": "svc-oci-catalog-fallback",
+        "label": "Registry _catalog fallback",
+        "kind": "service",
+        "sub": "GET /v2/_catalog",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/backend_oci.go:296",
+        "detail": "Fallback discovery using the raw distribution catalog API, prefix-filtered, paginated, with the catalog chart repository excluded. A supplied RFC 5988 Link header is only followed when scheme and host match the original request, because every request carries basic auth. 404/405/501 map to a distinct catalog-absent error; only when both the portable catalog and this fallback report absence is the registry treated as genuinely empty, so a read failure never masquerades as an empty registry."
+      },
+      {
+        "id": "svc-oci-catalog-publish",
+        "label": "OCI catalog publisher",
+        "kind": "service",
+        "sub": "Read-merge-publish with retry",
+        "group": "Addon Publishing (CLI)",
+        "sourceRef": "pkg/addon/oci_catalog.go:249",
+        "detail": "Updates the portable catalog after a push: reads existing entries, merges, and publishes a patch-incremented version, up to five attempts with growing backoff. The absence probe is deliberately asymmetric - only an explicit repository-unknown response authorizes rebuilding the catalog from scratch, since a wrong absent verdict would silently drop every other addon. The tag is re-checked immediately before push and a change (or a failed listing) forces a retry; with no conditional-put in the OCI spec the race window is narrowed, not closed."
+      },
+      {
+        "id": "svc-legacy-readers",
+        "label": "Non-versioned source readers",
+        "kind": "service",
+        "sub": "git / OSS AsyncReader",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/source.go:452",
+        "detail": "The legacy, non-chart registry path retained beside the chart backends: a registry without a Helm source builds an async reader for GitHub, GitLab, Gitee or Alibaba OSS (plus an in-memory reader for decoding a chart archive). Reachable from the render and webhook lookup helpers when such a registry is configured."
+      },
+      {
+        "id": "svc-push-cmd",
+        "label": "Addon push dispatcher",
+        "kind": "service",
+        "sub": "Three-way target routing",
+        "group": "Addon Publishing (CLI)",
+        "sourceRef": "pkg/addon/push.go:92",
+        "detail": "Routes a push three ways: a raw oci:// target uses CLI credentials directly; a named registry is looked up and, when OCI-backed, pushed with CLI credentials overriding stored ones (the stored token is re-carried because the safe-copy helper drops it); otherwise the ChartMuseum path. Also reads HELM_REPO_* environment overrides for credentials and transport options."
+      },
+      {
+        "id": "svc-push-oci",
+        "label": "OCI push",
+        "kind": "service",
+        "sub": "Package + push chart",
+        "group": "Addon Publishing (CLI)",
+        "sourceRef": "pkg/addon/push.go:244",
+        "detail": "Packages the addon as a chart and pushes it to host/prefix/<chart>:<version> using a logged-in Helm registry client. Rejects CA/cert/key/insecure flags because the OCI client offers no transport customization. After a successful chart push it updates the portable catalog; a catalog failure is logged as a warning only, since the chart is already published and a hard error would invite a duplicate retry."
+      },
+      {
+        "id": "svc-push-chartmuseum",
+        "label": "ChartMuseum push",
+        "kind": "service",
+        "sub": "Legacy upload path",
+        "group": "Addon Publishing (CLI)",
+        "sourceRef": "pkg/addon/push.go:215",
+        "detail": "Pre-existing path: resolves the Helm repo (skipping oci:// entries), regenerates Chart.yaml from metadata.yaml unless chart metadata is explicitly kept, packages, and uploads the chart package."
+      },
+      {
+        "id": "svc-mock-registry",
+        "label": "E2E mock registry wiring",
+        "kind": "service",
+        "sub": "Test-only",
+        "group": "Quality (test-only)",
+        "sourceRef": "e2e/addon/mock/utils/utils.go:53",
+        "detail": "Test support (not runtime code): resolves the kind network's IPv4 gateway by inspecting the Docker network and substitutes it for the registry and Helm addresses, falling back to loopback with a log line. Needed because the mock registry endpoint must be reachable from pods inside the cluster, not only from the test runner."
+      },
+      {
+        "id": "store-render-cache",
+        "label": "Render result cache",
+        "kind": "store",
+        "sub": "In-process sync.Map",
+        "group": "Addon Component Rendering",
+        "sourceRef": "pkg/addon/service/renderer.go:52",
+        "detail": "Process-lifetime, unbounded, never evicted or invalidated. Keyed by name, version, registry, skip flag and a sha256 of the JSON-marshalled properties (marshalling sorts keys, so the digest is order-independent). Only pinned versions are cached; an empty version means latest and bypasses the cache entirely. Unhashable properties bypass the cache rather than aliasing onto a shared key. Cached results are returned by pointer and shared across callers."
+      },
+      {
+        "id": "store-oci-client-cache",
+        "label": "OCI client cache",
+        "kind": "store",
+        "sub": "Logged-in registry clients",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/backend_oci.go:144",
+        "detail": "Small bounded cache (cap 16, arbitrary-entry eviction) of authenticated Helm registry clients, keyed by host, plain-HTTP flag and a digest of the credentials. Credentials in the key mean a rotated short-lived token (such as an ECR login) yields a fresh client rather than reusing a stale one. Concurrent creation is collapsed with singleflight."
+      },
+      {
+        "id": "store-helm-index-cache",
+        "label": "Helm index cache",
+        "kind": "store",
+        "sub": "TTL only, no invalidation",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/utils/helm/helm_helper.go:72",
+        "detail": "In-memory cache of fetched repository indexes keyed by repo URL, with a short TTL that is extended for large indexes. Used only by the HTTP chart backend; there is no explicit invalidation hook."
+      },
+      {
+        "id": "store-addon-cache",
+        "label": "Addon UI-data cache",
+        "kind": "store",
+        "sub": "Per-registry cached metadata",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/cache.go:37",
+        "detail": "Caches UI data, registry metadata, registry records and versioned UI data per registry. Install packages are deliberately never cached. Each versioned addon is stored twice - under its real version and under a latest alias - and the alias keys are filtered out of listings."
+      },
+      {
+        "id": "store-registry-configmap",
+        "label": "vela-addon-registry ConfigMap",
+        "kind": "store",
+        "sub": "vela-system",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/registry.go:36",
+        "detail": "Authoritative list of configured addon registries. Read on every registry list or get, which means the admission path reads it synchronously during a request when the feature is enabled."
+      },
+      {
+        "id": "store-registry-secret",
+        "label": "Registry token Secret",
+        "kind": "store",
+        "sub": "addon-registry-<name>",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/registry.go:317",
+        "detail": "Per-registry Secret holding the OCI token. Inline tokens found in the ConfigMap are migrated into a Secret on write; only oci:// Helm sources are Secret-backed, so http(s) Helm repos keep their existing storage."
+      },
+      {
+        "id": "store-k8s-api",
+        "label": "Kubernetes API server",
+        "kind": "store",
+        "sub": "Objects, discovery, admission",
+        "group": "Controller Runtime & Dispatch",
+        "detail": "Backing store for everything the feature reads and writes: registry ConfigMap and Secrets, vela-core Deployment (for the image-tag constraint), server version via discovery, and the definitions, config templates, schemas, views and secrets produced by the addon. Discovery and Deployment reads occur inside admission when the gate is on, which is the latency risk on a fail-closed webhook and the reason the compatibility checker fails open."
+      },
+      {
+        "id": "store-child-app",
+        "label": "Nested addon Application",
+        "kind": "store",
+        "sub": "addon-<name> in vela-system",
+        "group": "Controller Runtime & Dispatch",
+        "detail": "The Kubernetes object the feature ultimately produces: a full core.oam.dev/v1beta1 Application owned by the wrapping Application, carrying the addon's own components plus the appended auxiliary k8s-objects components and the injected state-keep policy, and annotated to skip last-applied recording. Its lifecycle is tied to the wrapping Application, so deleting the parent garbage-collects the addon."
+      },
+      {
+        "id": "store-resourcetracker",
+        "label": "ResourceTracker",
+        "kind": "store",
+        "sub": "Ownership records",
+        "group": "Controller Runtime & Dispatch",
+        "detail": "Two-level ownership is the design intent of folding auxiliaries into the child: the outer Application's tracker records only the nested Application, while the child's own tracker records the addon's definitions and other auxiliaries. This keeps garbage collection and state-keep responsibilities at the right level."
+      },
+      {
+        "id": "ext-oci-registry",
+        "label": "OCI Registry",
+        "kind": "external",
+        "sub": "Distribution-spec registry",
+        "domain": "opencontainers.org",
+        "group": "Addon Registry & Distribution",
+        "detail": "Any distribution-spec registry (Harbor, GHCR, self-hosted) serving addon charts. Accessed for login, tag listing, chart pull, chart push, catalog chart pull/push and, where supported, the /v2/_catalog listing."
+      },
+      {
+        "id": "ext-aws-ecr",
+        "label": "AWS ECR",
+        "kind": "external",
+        "sub": "Registry without a catalog API",
+        "domain": "aws.amazon.com",
+        "group": "Addon Registry & Distribution",
+        "detail": "Called out explicitly in the code and CLI examples: authentication uses the AWS username with a short-lived token from aws ecr get-login-password, piped in via --password-stdin. Because ECR exposes no /v2/_catalog, the portable catalog chart is the discovery mechanism there."
+      },
+      {
+        "id": "ext-helm-repo",
+        "label": "Helm chart repository",
+        "kind": "external",
+        "sub": "index.yaml over HTTP(S)",
+        "domain": "helm.sh",
+        "group": "Addon Registry & Distribution",
+        "detail": "Classic HTTP(S) chart repository serving index.yaml and chart tarballs; the default backend for any non-oci:// endpoint."
+      },
+      {
+        "id": "ext-chartmuseum",
+        "label": "ChartMuseum",
+        "kind": "external",
+        "sub": "Chart upload target",
+        "domain": "chartmuseum.com",
+        "group": "Addon Publishing (CLI)",
+        "detail": "Legacy publish target for vela addon push, retained alongside the new OCI push path."
+      },
+      {
+        "id": "ext-github",
+        "label": "GitHub",
+        "kind": "external",
+        "sub": "Non-versioned addon source",
+        "domain": "github.com",
+        "group": "Addon Registry & Distribution",
+        "detail": "Git-hosted addon registry read through the legacy async reader; rate-limit responses are mapped to a dedicated error."
+      },
+      {
+        "id": "ext-gitlab",
+        "label": "GitLab",
+        "kind": "external",
+        "sub": "Non-versioned addon source",
+        "domain": "gitlab.com",
+        "group": "Addon Registry & Distribution",
+        "detail": "Git-hosted addon registry read through the legacy async reader via the GitLab projects API."
+      },
+      {
+        "id": "ext-gitee",
+        "label": "Gitee",
+        "kind": "external",
+        "sub": "Non-versioned addon source",
+        "domain": "gitee.com",
+        "group": "Addon Registry & Distribution",
+        "detail": "Git-hosted addon registry read through the legacy async reader."
+      },
+      {
+        "id": "ext-alibaba-oss",
+        "label": "Alibaba Cloud OSS",
+        "kind": "external",
+        "sub": "Bucket-hosted addon source",
+        "domain": "aliyun.com",
+        "group": "Addon Registry & Distribution",
+        "detail": "Object-storage addon registry read through the legacy async reader; also the registry type the e2e mock server emulates."
+      },
+      {
+        "id": "svc-addon-error-taxonomy",
+        "label": "Addon error taxonomy",
+        "kind": "service",
+        "sub": "Typed errors that drive control flow",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/error.go:55",
+        "detail": "Typed sentinel errors are load-bearing for this feature, not cosmetic. ErrOCICatalogAbsent (error.go:55) separates an OCI registry that has no catalog yet from one whose catalog could not be read, so a first push can bootstrap a catalog while a transient read failure never silently discards the real one. ErrVersionMismatch (error.go:63) separates a positively evaluated, unmet SystemRequirement from the operational failures the same check can raise (image-tag read, discovery call, malformed constraint), which is exactly what lets the admission webhook deny on a real mismatch and fail open otherwise. ErrNotExist (:39) and ErrFetch (:48) classify skippable registry failures so one broken registry does not abort a multi-registry search."
+      },
+      {
+        "id": "svc-legacy-def-lookup",
+        "label": "Addon in-use check on disable",
+        "kind": "service",
+        "sub": "checkAddonHasBeenUsed / findLegacyAddonDefs",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/utils.go:174",
+        "detail": "Safety check that refuses to disable an addon whose definitions are still referenced by other Applications. Older addon Applications carry no definition annotations, so it falls back to re-reading the addon package from its registry. This branch switched that fallback to the shared registry conversion (utils.go:205) because chart-backed registries have no AsyncReader - sending one down the reader path failed with a not-enough-info error and blocked disabling any addon installed from an OCI or Helm registry."
+      },
+      {
+        "id": "svc-godef-conflict",
+        "label": "CUE/Go definition conflict detection",
+        "kind": "service",
+        "sub": "DetectDefinitionConflicts",
+        "group": "Addon Registry & Distribution",
+        "sourceRef": "pkg/addon/godef.go:182",
+        "detail": "Used by the local-directory install path (pkg/addon/helper.go:120, EnableAddonByLocalDir) to flag definitions declared in both definitions/ and godef/, erroring unless override is allowed. Fixed on this branch to compare basenames (godef.go:211): a CUE definition name carrying a directory prefix never matched the basename-only removal lookup, so a conflict was reported but the conflicting CUE definition was never actually removed under --override-definitions."
+      }
+    ],
+    "edges": [
+      {
+        "from": "svc-chart-wiring",
+        "to": "entry-addon-componentdef",
+        "kind": "writes",
+        "label": "installs the generated addon ComponentDefinition regardless of the gate"
+      },
+      {
+        "from": "svc-chart-wiring",
+        "to": "entry-controller-bootstrap",
+        "kind": "calls",
+        "label": "passes --feature-gates=EnableAddonComponent from values.yaml"
+      },
+      {
+        "from": "entry-controller-bootstrap",
+        "to": "svc-feature-gate",
+        "kind": "reads",
+        "label": "wires the renderer only when the gate is enabled"
+      },
+      {
+        "from": "entry-controller-bootstrap",
+        "to": "svc-renderer-seam",
+        "kind": "calls",
+        "label": "registers the render service as the process-wide renderer"
+      },
+      {
+        "from": "svc-cuex-registration",
+        "to": "svc-cuex-addon-provider",
+        "kind": "calls",
+        "label": "registers vela/addon on the workload and workflow compilers, ungated so the definition always compiles"
+      },
+      {
+        "from": "svc-app-controller",
+        "to": "entry-addon-componentdef",
+        "kind": "calls",
+        "label": "renders each component through its ComponentDefinition CUE"
+      },
+      {
+        "from": "entry-addon-componentdef",
+        "to": "svc-cuex-addon-provider",
+        "kind": "calls",
+        "label": "template calls addon.#Render"
+      },
+      {
+        "from": "svc-cuex-addon-provider",
+        "to": "svc-feature-gate",
+        "kind": "reads",
+        "label": "fails with an actionable message when the gate is off"
+      },
+      {
+        "from": "svc-cuex-addon-provider",
+        "to": "svc-renderer-seam",
+        "kind": "calls",
+        "label": "resolves the injected renderer; errors when unwired"
+      },
+      {
+        "from": "svc-renderer-seam",
+        "to": "svc-renderer-impl",
+        "kind": "calls"
+      },
+      {
+        "from": "svc-renderer-impl",
+        "to": "store-render-cache",
+        "kind": "reads",
+        "label": "pinned versions only; latest bypasses the cache"
+      },
+      {
+        "from": "svc-renderer-impl",
+        "to": "svc-render-singleflight",
+        "kind": "calls",
+        "label": "collapses concurrent misses on the same key"
+      },
+      {
+        "from": "svc-render-singleflight",
+        "to": "svc-resolve-and-render",
+        "kind": "calls",
+        "label": "shared render runs under a non-cancellable context"
+      },
+      {
+        "from": "svc-resolve-and-render",
+        "to": "store-render-cache",
+        "kind": "writes",
+        "label": "stores pinned results; never evicted or invalidated"
+      },
+      {
+        "from": "svc-resolve-and-render",
+        "to": "svc-version-resolution",
+        "kind": "calls",
+        "label": "resolves a pinned version directly instead of via the latest package"
+      },
+      {
+        "from": "svc-version-resolution",
+        "to": "svc-registry-datastore",
+        "kind": "reads",
+        "label": "enumerates all registries when none is specified"
+      },
+      {
+        "from": "svc-version-resolution",
+        "to": "svc-addon-lookup",
+        "kind": "calls",
+        "label": "first successful registry wins; failures are joined"
+      },
+      {
+        "from": "svc-resolve-and-render",
+        "to": "svc-addon-lookup",
+        "kind": "calls",
+        "label": "latest package when no version is pinned"
+      },
+      {
+        "from": "svc-addon-lookup",
+        "to": "svc-registry-datastore",
+        "kind": "reads",
+        "label": "name-sorted registry list is treated as priority"
+      },
+      {
+        "from": "svc-addon-lookup",
+        "to": "svc-versioned-registry",
+        "kind": "calls",
+        "label": "chart-backed registries"
+      },
+      {
+        "from": "svc-addon-lookup",
+        "to": "svc-legacy-readers",
+        "kind": "calls",
+        "label": "registries with no Helm source fall back to git/OSS readers"
+      },
+      {
+        "from": "svc-resolve-and-render",
+        "to": "svc-system-requirements",
+        "kind": "calls",
+        "label": "skipped when skipVersionValidation is set"
+      },
+      {
+        "from": "svc-system-requirements",
+        "to": "svc-velacore-image-tag",
+        "kind": "calls",
+        "label": "resolves the running controller version"
+      },
+      {
+        "from": "svc-velacore-image-tag",
+        "to": "store-k8s-api",
+        "kind": "reads",
+        "label": "vela-core Deployment image tag"
+      },
+      {
+        "from": "svc-system-requirements",
+        "to": "store-k8s-api",
+        "kind": "reads",
+        "label": "discovery /version for the Kubernetes constraint"
+      },
+      {
+        "from": "svc-resolve-and-render",
+        "to": "svc-render-app",
+        "kind": "calls",
+        "label": "renders the addon's own Application and auxiliaries"
+      },
+      {
+        "from": "svc-render-app",
+        "to": "store-k8s-api",
+        "kind": "reads",
+        "label": "cluster data the addon templates depend on"
+      },
+      {
+        "from": "svc-resolve-and-render",
+        "to": "svc-aux-components",
+        "kind": "calls",
+        "label": "folds definitions, schemas, views and secrets into the child Application"
+      },
+      {
+        "from": "svc-aux-components",
+        "to": "store-k8s-api",
+        "kind": "reads",
+        "label": "definition and config-template rendering needs client and rest config"
+      },
+      {
+        "from": "svc-resolve-and-render",
+        "to": "svc-statekeep-policy",
+        "kind": "calls",
+        "label": "injects apply-once enable:false unless the addon declares its own"
+      },
+      {
+        "from": "svc-resolve-and-render",
+        "to": "svc-sanitize-manifest",
+        "kind": "calls"
+      },
+      {
+        "from": "svc-resolve-and-render",
+        "to": "svc-suppress-lastapplied",
+        "kind": "calls",
+        "label": "avoids exceeding the 256KiB annotation limit"
+      },
+      {
+        "from": "svc-app-controller",
+        "to": "svc-appfile-annotations",
+        "kind": "calls",
+        "label": "copies app annotations onto rendered workloads and traits"
+      },
+      {
+        "from": "svc-appfile-annotations",
+        "to": "svc-lastapplied-helpers",
+        "kind": "calls",
+        "label": "deletes an inherited skip sentinel so children keep three-way merge"
+      },
+      {
+        "from": "svc-apply-lastapplied",
+        "to": "svc-lastapplied-helpers",
+        "kind": "calls"
+      },
+      {
+        "from": "svc-app-controller",
+        "to": "svc-apply-lastapplied",
+        "kind": "calls",
+        "label": "three-way merge apply of rendered resources"
+      },
+      {
+        "from": "svc-app-controller",
+        "to": "store-child-app",
+        "kind": "writes",
+        "label": "applies the nested addon-<name> Application"
+      },
+      {
+        "from": "svc-app-controller",
+        "to": "store-resourcetracker",
+        "kind": "writes",
+        "label": "outer tracker records only the child Application"
+      },
+      {
+        "from": "svc-app-controller",
+        "to": "store-k8s-api",
+        "kind": "writes",
+        "label": "child Application dispatches the addon's definitions, schemas, views and secrets"
+      },
+      {
+        "from": "svc-app-controller",
+        "to": "store-child-app",
+        "kind": "reads",
+        "label": "periodic reconcile plus state-keep restores deleted addon auxiliaries"
+      },
+      {
+        "from": "entry-app-webhook",
+        "to": "svc-addon-validation-dispatch",
+        "kind": "calls",
+        "label": "fifth validator on create; errors accumulate rather than short-circuit"
+      },
+      {
+        "from": "entry-app-webhook",
+        "to": "svc-concise-cue-error",
+        "kind": "calls",
+        "label": "unwraps CueX provider failures into a readable message"
+      },
+      {
+        "from": "svc-addon-validation-dispatch",
+        "to": "svc-feature-gate",
+        "kind": "reads",
+        "label": "no addon-specific work when the gate is off"
+      },
+      {
+        "from": "svc-addon-validation-dispatch",
+        "to": "svc-addon-validator",
+        "kind": "calls",
+        "label": "only when a component of type addon is present"
+      },
+      {
+        "from": "svc-addon-validator",
+        "to": "svc-compat-checker",
+        "kind": "calls",
+        "label": "skipped for skipVersionValidation or malformed properties"
+      },
+      {
+        "from": "svc-compat-checker",
+        "to": "svc-addon-lookup",
+        "kind": "calls",
+        "label": "re-resolves the exact package when a version is pinned"
+      },
+      {
+        "from": "svc-compat-checker",
+        "to": "svc-system-requirements",
+        "kind": "calls",
+        "label": "denies only on a genuine version mismatch; all other failures allow"
+      },
+      {
+        "from": "svc-compat-checker",
+        "to": "store-k8s-api",
+        "kind": "reads",
+        "label": "builds a discovery client per admission call"
+      },
+      {
+        "from": "svc-versioned-registry",
+        "to": "svc-backend-dispatch",
+        "kind": "calls"
+      },
+      {
+        "from": "svc-backend-dispatch",
+        "to": "svc-backend-oci",
+        "kind": "calls",
+        "label": "oci:// endpoints, credentials validated for the scheme"
+      },
+      {
+        "from": "svc-backend-dispatch",
+        "to": "svc-backend-http",
+        "kind": "calls",
+        "label": "http(s) and cm:// endpoints"
+      },
+      {
+        "from": "svc-backend-oci",
+        "to": "store-oci-client-cache",
+        "kind": "writes",
+        "label": "caches logged-in clients keyed by host and credential digest"
+      },
+      {
+        "from": "svc-backend-oci",
+        "to": "ext-oci-registry",
+        "kind": "reads",
+        "label": "login, semver tag listing and chart pull"
+      },
+      {
+        "from": "svc-backend-oci",
+        "to": "svc-oci-catalog-read",
+        "kind": "calls",
+        "label": "portable catalog is tried first for discovery"
+      },
+      {
+        "from": "svc-backend-oci",
+        "to": "svc-oci-catalog-fallback",
+        "kind": "calls",
+        "label": "only both reporting absence counts as an empty registry"
+      },
+      {
+        "from": "svc-oci-catalog-read",
+        "to": "ext-oci-registry",
+        "kind": "reads",
+        "label": "pulls the catalog chart and decodes catalog.json"
+      },
+      {
+        "from": "svc-oci-catalog-read",
+        "to": "ext-aws-ecr",
+        "kind": "reads",
+        "label": "the discovery path on ECR, which exposes no catalog API"
+      },
+      {
+        "from": "svc-oci-catalog-fallback",
+        "to": "ext-oci-registry",
+        "kind": "reads",
+        "label": "paginated /v2/_catalog; Link header followed only on the same scheme and host"
+      },
+      {
+        "from": "svc-backend-http",
+        "to": "ext-helm-repo",
+        "kind": "reads",
+        "label": "index.yaml and chart tarballs, trying each advertised URL in turn"
+      },
+      {
+        "from": "svc-backend-http",
+        "to": "store-helm-index-cache",
+        "kind": "reads",
+        "label": "short TTL, extended for large indexes"
+      },
+      {
+        "from": "svc-backend-http",
+        "to": "svc-credential-scoping",
+        "kind": "calls",
+        "label": "strips auth and client certs for chart URLs on a foreign scheme or host"
+      },
+      {
+        "from": "svc-registry-datastore",
+        "to": "store-registry-configmap",
+        "kind": "reads"
+      },
+      {
+        "from": "svc-registry-datastore",
+        "to": "store-registry-secret",
+        "kind": "reads",
+        "label": "one Secret read per registry when searching all registries"
+      },
+      {
+        "from": "svc-registry-datastore",
+        "to": "store-registry-secret",
+        "kind": "writes",
+        "label": "migrates inline OCI tokens out of the ConfigMap on write"
+      },
+      {
+        "from": "cron-registry-refresh",
+        "to": "svc-registry-datastore",
+        "kind": "reads",
+        "label": "re-reads the registry list each tick"
+      },
+      {
+        "from": "cron-registry-refresh",
+        "to": "svc-backend-dispatch",
+        "kind": "calls",
+        "label": "rebuilds versioned UI data per registry"
+      },
+      {
+        "from": "cron-registry-refresh",
+        "to": "store-addon-cache",
+        "kind": "writes",
+        "label": "purges entries for registries and addons no longer listed"
+      },
+      {
+        "from": "entry-cli-registry-add",
+        "to": "svc-registry-datastore",
+        "kind": "writes",
+        "label": "stores the registry; oci:// passwords become Secret-backed tokens"
+      },
+      {
+        "from": "entry-cli-registry-add",
+        "to": "svc-backend-dispatch",
+        "kind": "calls",
+        "label": "validates connectivity, tolerating a not-yet-created OCI catalog"
+      },
+      {
+        "from": "entry-cli-addon-enable",
+        "to": "svc-addon-lookup",
+        "kind": "calls",
+        "label": "warns and skips unreachable registries instead of failing the install"
+      },
+      {
+        "from": "entry-cli-addon-list",
+        "to": "svc-versioned-registry",
+        "kind": "calls",
+        "label": "surfaces per-registry errors when a registry is named"
+      },
+      {
+        "from": "entry-cli-addon-push",
+        "to": "svc-push-cmd",
+        "kind": "calls",
+        "label": "--password-stdin keeps short-lived tokens off the command line"
+      },
+      {
+        "from": "svc-push-cmd",
+        "to": "svc-registry-datastore",
+        "kind": "reads",
+        "label": "only when the target is a registry name rather than a direct URL"
+      },
+      {
+        "from": "svc-push-cmd",
+        "to": "svc-push-oci",
+        "kind": "calls",
+        "label": "oci:// target or an OCI-backed named registry"
+      },
+      {
+        "from": "svc-push-cmd",
+        "to": "svc-push-chartmuseum",
+        "kind": "calls",
+        "label": "fallback for classic chart repositories"
+      },
+      {
+        "from": "svc-push-oci",
+        "to": "ext-oci-registry",
+        "kind": "writes",
+        "label": "pushes the packaged addon chart"
+      },
+      {
+        "from": "svc-push-oci",
+        "to": "ext-aws-ecr",
+        "kind": "writes",
+        "label": "ECR push authenticated with a piped login token"
+      },
+      {
+        "from": "svc-push-oci",
+        "to": "svc-oci-catalog-publish",
+        "kind": "calls",
+        "label": "catalog update failure is a warning, the chart is already published"
+      },
+      {
+        "from": "svc-oci-catalog-publish",
+        "to": "ext-oci-registry",
+        "kind": "writes",
+        "label": "read-merge-publish with backoff and a pre-push tag re-check"
+      },
+      {
+        "from": "svc-push-chartmuseum",
+        "to": "ext-chartmuseum",
+        "kind": "writes",
+        "label": "uploads the packaged chart"
+      },
+      {
+        "from": "svc-legacy-readers",
+        "to": "ext-github",
+        "kind": "reads"
+      },
+      {
+        "from": "svc-legacy-readers",
+        "to": "ext-gitlab",
+        "kind": "reads"
+      },
+      {
+        "from": "svc-legacy-readers",
+        "to": "ext-gitee",
+        "kind": "reads"
+      },
+      {
+        "from": "svc-legacy-readers",
+        "to": "ext-alibaba-oss",
+        "kind": "reads"
+      },
+      {
+        "from": "entry-e2e-suite",
+        "to": "svc-mock-registry",
+        "kind": "calls",
+        "label": "test-only: probes the mock registry endpoint before running"
+      },
+      {
+        "from": "svc-mock-registry",
+        "to": "store-registry-configmap",
+        "kind": "writes",
+        "label": "test-only: repoints the default registry at a cluster-reachable address"
+      },
+      {
+        "from": "entry-e2e-suite",
+        "to": "store-child-app",
+        "kind": "reads",
+        "label": "test-only: asserts the child app runs and is garbage-collected"
+      },
+      {
+        "from": "entry-e2e-suite",
+        "to": "store-resourcetracker",
+        "kind": "reads",
+        "label": "test-only: asserts the two-level ownership split"
+      },
+      {
+        "from": "svc-compat-checker",
+        "to": "svc-addon-error-taxonomy",
+        "kind": "reads",
+        "label": "denies only on ErrVersionMismatch, fails open on operational errors"
+      },
+      {
+        "from": "svc-addon-lookup",
+        "to": "svc-addon-error-taxonomy",
+        "kind": "reads",
+        "label": "classifies which registry failures are skippable"
+      },
+      {
+        "from": "svc-oci-catalog-fallback",
+        "to": "svc-addon-error-taxonomy",
+        "kind": "reads",
+        "label": "catalog-absent is distinct from a failed catalog read"
+      },
+      {
+        "from": "svc-oci-catalog-publish",
+        "to": "svc-addon-error-taxonomy",
+        "kind": "reads",
+        "label": "only an explicit absence authorizes rebuilding the catalog"
+      },
+      {
+        "from": "svc-legacy-def-lookup",
+        "to": "svc-backend-dispatch",
+        "kind": "calls",
+        "label": "re-reads the package from chart-backed registries when annotations are absent"
+      },
+      {
+        "from": "svc-legacy-def-lookup",
+        "to": "store-k8s-api",
+        "kind": "reads",
+        "label": "checks whether other Applications still use the addon's definitions"
+      },
+      {
+        "from": "svc-godef-conflict",
+        "to": "svc-addon-lookup",
+        "kind": "reads",
+        "label": "local-dir install compares packaged CUE definitions against compiled Go definitions"
+      }
+    ]
+  }
+}

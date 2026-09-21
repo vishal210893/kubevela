@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: rttest-app
+  namespace: default
+spec:
+  components:
+    - name: cfg
+      type: rttest-merge
+      properties:
+        name: rttest-merged-config
+        left:  ["app=foo", "tier=web"]
+        right: ["env=prod", "version=1"]

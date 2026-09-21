@@ -1,0 +1,200 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Show or set current spec association"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec:*)"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "optional-passthrough"
+# hint = "[[project:]spec[:ctx1,ctx2]]"
+# description = "Spec name in composite format to associate (defaults to showing current). Errors if spec doesn't exist."
+#
+# [tool.claude.output]
+# prompt = "If showing (get): display the current spec association for the branch. If setting: confirm the spec association. Show spec name, branch, and storage location. If contexts were set, show them too."
+# examples = [
+#   "Spec 'auth' on branch 'sclaussen/680/feature/auth'\n  Path: /workspaces/src/specs/dev/specs/auth/",
+#   "No spec associated with branch 'main'",
+#   "OK Associated spec 'feature-auth' with branch 'feature-auth'\n\nDetails:\n  Branch: feature-auth\n  Spec: .dev/specs/feature-auth/\n  Stored: dev.yaml spec.ai-dev.branches.feature-auth.spec"
+# ]
+# ///
+
+"""
+Show or set current spec association.
+
+No args: shows the current spec association (get).
+With args: associates the named spec with the current branch (set).
+Supports composite format: [project:]spec[:ctx1,ctx2]
+Errors if the spec doesn't exist — use /spec:create to create one first.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_current_branch, get_associated_spec, spec_path, in_git_repo,
+    associate_spec, set_branch_project, set_contexts, resolve_context_path,
+    parse_spec_and_ctx, get_repo_name
+)
+
+
+def read_spec_file(spec_dir: Path, filename: str) -> str | None:
+    """Read a spec file if it exists."""
+    file_path = spec_dir / filename
+    if file_path.exists():
+        return file_path.read_text()
+    return None
+
+
+def output_spec_context(spec_name: str, branch: str, spec_dir: Path):
+    """Output spec context to be injected into session."""
+    output_parts = []
+    output_parts.append(f"# Spec Context: {spec_name}")
+    output_parts.append(f"Branch `{branch}` is associated with spec `{spec_name}`.")
+    output_parts.append("")
+
+    for filename, title in [
+        ('requirements.md', 'Requirements'),
+        ('req.md', 'Requirements'),
+        ('design.md', 'Design'),
+        ('tasks.md', 'Tasks'),
+    ]:
+        content = read_spec_file(spec_dir, filename)
+        if content:
+            output_parts.append(f"## {title}")
+            output_parts.append(f"File: `{spec_dir}/{filename}`")
+            output_parts.append("")
+            output_parts.append(content.strip())
+            output_parts.append("")
+
+    print('\n'.join(output_parts))
+
+
+
+def do_get(branch):
+    """Show current spec association."""
+    spec_name = get_associated_spec(branch)
+
+    # If no association, try using branch name as spec name
+    if not spec_name:
+        candidate = spec_path(branch)
+        if candidate.exists():
+            spec_name = branch
+
+    path = str(spec_path(spec_name)) if spec_name else None
+    exists = Path(path).exists() if path else False
+
+    data = {
+        'branch': branch,
+        'spec': spec_name,
+        'path': path,
+        'exists': exists
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if not spec_name:
+            print(f"No spec associated with branch '{branch}'")
+            print("Use /spec <name> to associate a spec, or /spec:create <name> to create one")
+        else:
+            print(f"Spec '{spec_name}' on branch '{branch}'")
+            if exists:
+                print(f"  Path: {path}/")
+            else:
+                print(f"  Path: {path}/ (not found)")
+
+
+def do_set(project, spec_name, context_refs, branch):
+    """Associate spec with current branch."""
+    # Check spec exists (with optional project override)
+    spec_dir = spec_path(spec_name, project)
+    if not spec_dir.is_dir():
+        print(f"Error: Spec '{spec_name}' not found at {spec_dir}/", file=sys.stderr)
+        print(f"Run '/spec:create {spec_name}' to create it first.", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate contexts before writing anything
+    context_resolved = []
+    if context_refs:
+        missing = []
+        for ref in context_refs:
+            path = resolve_context_path(ref, project)
+            if not path.exists():
+                missing.append(ref)
+            context_resolved.append({'ref': ref, 'path': str(path)})
+        if missing:
+            print(f"Error: Context(s) not found: {', '.join(missing)}", file=sys.stderr)
+            print(f"Run '/spec:ctx:create <name>' to create them first.", file=sys.stderr)
+            sys.exit(1)
+
+    # Associate spec with branch
+    associated = associate_spec(spec_name, branch)
+
+    if not associated:
+        print("Error: Failed to store association in dev.yaml", file=sys.stderr)
+        sys.exit(1)
+
+    # Persist project override when explicitly provided
+    if project:
+        set_branch_project(branch, project)
+
+    # Set contexts (already validated above)
+    if context_refs:
+        set_contexts(context_refs, branch)
+
+    # Build output data
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(spec_dir),
+        'branch': branch,
+        'config_key': f'spec.{repo}.branches.{branch}.spec' if (repo := get_repo_name()) else f'spec.{branch}.spec'
+    }
+    if context_refs:
+        data['contexts'] = context_resolved
+        data['context_refs'] = context_refs
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"[OK] Associated spec '{spec_name}' with branch '{branch}'")
+        if context_refs:
+            print(f"[OK] Set {len(context_refs)} context(s): {', '.join(context_refs)}")
+        print()
+        print("Details:")
+        print(f"  Branch: {branch}")
+        print(f"  Spec: {spec_dir}/")
+        if context_refs:
+            print(f"  Contexts: {', '.join(context_refs)}")
+        print(f"  Stored: dev.yaml {data['config_key']}")
+        print()
+        output_spec_context(spec_name, branch, spec_dir)
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    project, spec_name, context_refs = parse_spec_and_ctx(sys.argv)
+
+    if spec_name:
+        do_set(project, spec_name, context_refs, branch)
+    else:
+        do_get(branch)
+
+
+if __name__ == "__main__":
+    main()

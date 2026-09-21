@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# npmrc-doctor -- catch the npm/Artifactory misconfigurations that silently
+# break `dev pull`, `npx @aidev/dev`, and MCP launchers.
+#
+# Three distinct, all-silent failure modes have bitten this team (each one cost
+# a debugging session before the cause was found):
+#
+#   1. EXPIRED _authToken. Artifactory issues npm tokens as JWTs with a ~30-day
+#      life; they expire silently. npm wraps the 401 in a generic npmjs-flavored
+#      "E401 / Incorrect or missing password" that does not name Artifactory.
+#      This doctor decodes each token's JWT `exp` and warns on expired / near.
+#
+#   2. MALFORMED registry key. A miscopied `//registry=https://.../...` line
+#      (note the leading `//` with no host) is parsed by npm as a URL-scoped
+#      config key, not a registry -- `npm warn Unknown user config "//registry"`,
+#      and the intended registry is silently orphaned.
+#
+#   3. DEFAULT registry pointed at a publish-only repo. If `registry=` points at
+#      `gwai-npm-release` (publish-only) rather than a proxy, public packages
+#      404 on install -> MCP launchers fail with a -32000 startup error.
+#
+# It NEVER prints a token value -- only the token's expiry and the registry host.
+# Read-only (no --fix): the remediation is a host-side ~/.npmrc / `npm login`
+# change the user must make, so we guide rather than act.
+#
+# Usage:   npmrc-doctor [--format text|json]
+# Exit:    0 = npmrc healthy (advisories may print), 1 = a real problem,
+#          2 = usage error.
+#
+# Test hook: NPMRC_DOCTOR_FILE overrides the npmrc path (default ~/.npmrc);
+# NPMRC_DOCTOR_NOW overrides "now" (epoch seconds) for deterministic expiry tests.
+#
+# Doctor contract (shared with mcp-github-doctor, ccbridge-doctor,
+# zshenv-secrets-doctor): a *-doctor script in ~/.claude/scripts/ that exits
+# 0/1/2 and prints findings as WARNING/impact/fix triplets; the profile-doctor
+# aggregator runs all of them.
+
+set -uo pipefail
+
+SECTION=npmrc
+FORMAT=text
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --format) FORMAT="${2:-text}"; shift; [ $# -gt 0 ] && shift ;;
+        --format=*) FORMAT="${1#*=}"; shift ;;
+        -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Unknown argument: $1 (try --help)" >&2; exit 2 ;;
+    esac
+done
+case "$FORMAT" in text|json) ;; *) echo "Invalid --format: $FORMAT" >&2; exit 2 ;; esac
+
+NPMRC="${NPMRC_DOCTOR_FILE:-$HOME/.npmrc}"
+# Publish-only Artifactory repos that must NOT be the default registry.
+PUBLISH_ONLY_RE='gwai-npm-release|gwai-npm-dev'
+NEAR_EXPIRY_DAYS=7
+
+PROBLEMS=0
+JSON_ROWS=""
+note() { # <status: ok|warn|problem> <key> <single-line message...>
+    local s="$1" k="$2"; shift 2
+    local msg="$*" em
+    [ "$s" = problem ] && PROBLEMS=$((PROBLEMS + 1))
+    em="${msg//\\/\\\\}"; em="${em//\"/\\\"}"
+    JSON_ROWS="${JSON_ROWS:+$JSON_ROWS,}{\"section\":\"$SECTION\",\"status\":\"$s\",\"key\":\"$k\",\"message\":\"$em\"}"
+}
+say() { [ "$FORMAT" = text ] && printf '%s\n' "$*" >&2 || true; }
+guide() { # <what> <impact> <fix>
+    [ "$FORMAT" = text ] || return 0
+    printf '  WARNING: %s\n' "$1" >&2
+    printf '           impact: %s\n' "$2" >&2
+    printf '           fix:    %s\n' "$3" >&2
+}
+
+# base64url-decode the JWT payload and pull out "exp" (epoch seconds). Pure
+# shell + base64; prints the exp integer or nothing. Never echoes other claims.
+jwt_exp() { # <jwt>
+    local tok="$1" payload pad json
+    case "$tok" in *.*.*) ;; *) return 1 ;; esac     # not a 3-part JWT
+    payload="${tok#*.}"; payload="${payload%%.*}"
+    payload="${payload//-/+}"; payload="${payload//_/\/}"   # base64url -> base64
+    case $(( ${#payload} % 4 )) in 2) pad='==' ;; 3) pad='=' ;; *) pad='' ;; esac
+    json="$(printf '%s%s' "$payload" "$pad" | base64 -d 2>/dev/null)" || return 1
+    # extract "exp": <digits> without printing anything else
+    printf '%s' "$json" | grep -oE '"exp"[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+$' | head -1
+}
+
+now_epoch() {
+    if [ -n "${NPMRC_DOCTOR_NOW:-}" ]; then printf '%s' "$NPMRC_DOCTOR_NOW"; else date +%s; fi
+}
+
+say "npmrc doctor -- is ~/.npmrc healthy? (tokens, registry, syntax)"
+
+if [ ! -f "$NPMRC" ]; then
+    note ok npmrc_absent "no ${NPMRC/#$HOME/~} -- nothing to check (npm uses the public default registry)."
+else
+    NOW="$(now_epoch)"
+
+    # --- mode 2: malformed //registry config key --------------------------------
+    # A line like `//registry=...` (URL-scoped key with no host) -- npm warns
+    # "Unknown user config". A legitimate auth line is `//HOST/path/:_authToken=`.
+    if grep -qE '^[[:space:]]*//registry[[:space:]]*=' "$NPMRC"; then
+        note problem npmrc_malformed_key "~/.npmrc has a malformed '//registry=' key (npm: Unknown user config)."
+        guide "~/.npmrc contains a '//registry=...' line -- the leading // with no host makes npm treat it as a bogus URL-scoped key." \
+              "npm warns 'Unknown user config \"//registry\"' and the intended registry is silently ignored." \
+              "Delete that line. Set the default with 'registry=<url>' (no //) and per-registry auth with '//<host>/<path>/:_authToken=<tok>'."
+    fi
+
+    # --- mode 3: default registry points at a publish-only repo ------------------
+    def_reg="$(grep -E '^[[:space:]]*registry[[:space:]]*=' "$NPMRC" | tail -1 | sed -E 's/^[[:space:]]*registry[[:space:]]*=[[:space:]]*//; s/[[:space:]]*$//')"
+    if [ -n "$def_reg" ]; then
+        if printf '%s' "$def_reg" | grep -qE "$PUBLISH_ONLY_RE"; then
+            note problem npmrc_default_publish_only "default registry points at a publish-only repo ($(printf '%s' "$def_reg" | grep -oE "$PUBLISH_ONLY_RE"))."
+            guide "The default 'registry=' points at a publish-only Artifactory repo (matches $PUBLISH_ONLY_RE)." \
+                  "Public packages 404 on install; MCP launchers that 'npm ci' fail to start (-32000)." \
+                  "Point the default registry at a proxy (e.g. .../api/npm/npm-registry-remote/) and keep publish repos scoped (@aidev:registry=.../gwai-npm-release/)."
+        else
+            note ok npmrc_default_ok "default registry is a proxy/public registry (not publish-only)."
+        fi
+    fi
+
+    # --- mode 1: _authToken expiry (JWT exp) -------------------------------------
+    # Read every `:_authToken=<tok>` (and bare `_authToken=`); decode JWT exp.
+    # Never print the token; key the finding by the registry host only.
+    tok_lines="$(grep -nE '_authToken[[:space:]]*=' "$NPMRC" || true)"
+    checked=0; expired=0
+    if [ -n "$tok_lines" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            tok="${line#*_authToken=}"; tok="${tok%%[[:space:]]*}"
+            [ -n "$tok" ] || continue
+            # registry host: text before //...:_authToken, else "(default)"
+            host="$(printf '%s' "$line" | grep -oE '//[^:]+:_authToken' | sed -E 's#^//##; s#:_authToken$##')"
+            [ -n "$host" ] || host='(default)'
+            checked=$((checked + 1))
+            exp="$(jwt_exp "$tok")" || exp=""
+            if [ -z "$exp" ]; then
+                note ok npmrc_token_opaque "auth token for $host is not a decodable JWT (opaque token -- expiry not checkable here)."
+                continue
+            fi
+            if [ "$exp" -le "$NOW" ]; then
+                expired=$((expired + 1))
+                note problem npmrc_token_expired "auth token for $host is EXPIRED."
+                guide "The npm auth token for $host has expired (JWT exp is in the past)." \
+                      "'dev pull' / 'npx @aidev/dev' / MCP installs fail with E401 (npm reports it as a generic 'Incorrect or missing password', not an Artifactory error)." \
+                      "Re-auth: npm login --registry=https://$host/ --auth-type=web --scope=@<scope>  (then it writes a fresh token to ~/.npmrc)."
+            else
+                days=$(( (exp - NOW) / 86400 ))
+                if [ "$days" -le "$NEAR_EXPIRY_DAYS" ]; then
+                    note warn npmrc_token_near_expiry "auth token for $host expires in ${days}d."
+                    guide "The npm auth token for $host expires in ${days} day(s)." \
+                          "It will start 401ing 'dev pull' / npx / MCP installs once it lapses (silently -- as a generic E401)." \
+                          "Refresh proactively: npm login --registry=https://$host/ --auth-type=web --scope=@<scope>."
+                else
+                    note ok npmrc_token_valid "auth token for $host valid (${days}d remaining)."
+                fi
+            fi
+        done <<EOF_TOKS
+$tok_lines
+EOF_TOKS
+    fi
+    [ "$checked" = 0 ] && note ok npmrc_no_tokens "no _authToken entries in ~/.npmrc (anonymous npm access)."
+fi
+
+if [ "$FORMAT" = json ]; then
+    ok=true; [ "$PROBLEMS" -gt 0 ] && ok=false
+    printf '{"schema_version":1,"doctor":"%s","problems":%s,"ok":%s,"checks":[%s]}\n' \
+        "$SECTION" "$PROBLEMS" "$ok" "$JSON_ROWS"
+else
+    if [ "$PROBLEMS" -eq 0 ]; then
+        say "[OK] ~/.npmrc healthy (tokens valid, registry + syntax good)."
+    else
+        say "[PROBLEM] npmrc has $PROBLEMS issue(s) above -- npm/dev-pull/MCP installs will fail until fixed."
+    fi
+fi
+
+[ "$PROBLEMS" -eq 0 ] || exit 1
+exit 0

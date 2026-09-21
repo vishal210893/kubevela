@@ -1,0 +1,28 @@
+# Example software-catalog.yaml (update values for your repo)
+ServiceId: AID-PL-e2epolnodbdar1        # Must follow AID-<servicename> and stay stable
+CheckmarxProjectName: sunnyvale-e2epolnodbdar1
+ServiceName: e2epolnodbdar1             # Alphanumeric only, no spaces or special chars
+Description: 'e2epolnodbdar1 description.'
+ServiceStatus: Active                   # Active or Inactive
+ExternalBusinessName: e2epolnodbdar1
+RepoUrl: 'https://github.com/gwre-pdo/ccsp-e2epolnodbdar1.git'
+JiraProjectKey: DE
+CIUrl: 'https://gwre-devexp-ci-production-devci.gwre-devops.net/project/Prototypes_DevExGcli_E2epolnodbdar1'
+DepartmentCode: 275
+ApplicationOwner: Sunnyvale
+PodOwner: sunnyvale
+BusinessOwner: 'Anoop Gopalakrishnan'
+Type: Microservice
+ProductFamily: gwcp
+ReleaseCadence: continuously
+AppInCloudOrSelfManaged: Cloud
+Exposure: internal
+GwreApplicationsDependentOn: 'Nova,Jutro'
+GwreApplicationsProvidesIntegrationTo: Jutro
+BusinessRisk: Low
+SecurityRisk: Low
+EmergencyContact: 'https://guidewire.pagerduty.com/service-directory/PEH3JO1'
+SlackChannelName: 'nova-community'
+ContactEmail: 'dl-owning-team@guidewire.com'
+ServiceLifecycleStatus: Production
+ExcludeScanner: IaC

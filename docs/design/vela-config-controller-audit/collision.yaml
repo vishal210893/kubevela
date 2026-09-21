@@ -1,0 +1,21 @@
+# Reproducible fixture for the Vela Config controller audit.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: audit-collision
+  namespace: cfg-audit-7105
+type: Opaque
+stringData:
+  protected: do-not-overwrite
+---
+apiVersion: config.oam.dev/v1alpha1
+kind: Config
+metadata:
+  name: audit-collision
+  namespace: cfg-audit-7105
+spec:
+  templateRef:
+    name: audit-sensitive
+    namespace: cfg-audit-7105
+  properties:
+    token: attempted-overwrite

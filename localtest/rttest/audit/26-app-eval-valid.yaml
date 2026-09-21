@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: audit-app-evalvalid
+  namespace: default
+spec:
+  components:
+    - name: cfg
+      type: audit-eval-error
+      properties:
+        name: audit-evalvalid-cm
+        a: "hello"
+        b: "world"

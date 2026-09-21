@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: audit-app-fixed
+  namespace: default
+spec:
+  components:
+    - name: cfg
+      type: audit-merge
+      properties:
+        name: audit-fixed-cm
+        left:  ["a=1", "b=2"]
+        right: ["c=3"]

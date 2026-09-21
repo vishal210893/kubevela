@@ -1,0 +1,66 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+#
+# [tool.claude]
+# description = "Close GitHub issue"
+# model = "haiku"
+#
+# [[tool.claude.argument]]
+# name = "args"
+# type = "required-passthrough"
+# hint = "<issue-number> [comment]"
+# description = "Issue number and optional closing comment"
+#
+# [tool.claude.output]
+# prompt = """Parse the arguments: first token is the issue number, everything after is an optional comment.
+#
+# If a comment was provided, use it EXACTLY as given - do not modify, expand, or rewrite it:
+# 1. Run: gh issue comment <number> --body "<comment>"
+# 2. Run: gh issue close <number>
+#
+# If no comment:
+# - Run: gh issue close <number>
+#
+# Only use the Bash tool. Do not output any text before or after the tool calls."""
+# ///
+
+"""Close a GitHub issue with an optional comment."""
+
+import subprocess
+import sys
+
+
+def main():
+    if len(sys.argv) < 2:
+        print('Usage: issue-close <issue-number> [comment]', file=sys.stderr)
+        sys.exit(1)
+
+    issue_number = sys.argv[1]
+    comment = ' '.join(sys.argv[2:]) if len(sys.argv) > 2 else None
+
+    # Post comment if provided
+    if comment:
+        result = subprocess.run(
+            ['gh', 'issue', 'comment', issue_number, '--body', comment],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print(f'Error commenting on issue: {result.stderr}', file=sys.stderr)
+            sys.exit(1)
+        print(f'Commented on #{issue_number}')
+
+    # Close the issue
+    result = subprocess.run(
+        ['gh', 'issue', 'close', issue_number],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f'Error closing issue: {result.stderr}', file=sys.stderr)
+        sys.exit(1)
+    print(f'Closed #{issue_number}')
+
+
+if __name__ == '__main__':
+    main()

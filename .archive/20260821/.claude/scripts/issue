@@ -1,0 +1,511 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Create or use issue, create branch, and drive implementation pipeline"
+# model = "opus"
+# allowed-tools = [
+#   "Bash($WSROOT/.claude/scripts/issue *)",
+#   "Bash($WSROOT/.claude/scripts/pr-create *)",
+#   "Bash($WSROOT/.claude/scripts/pr-poll *)",
+#   "Bash($WSROOT/.claude/scripts/git-sync *)",
+#   "Bash(gh issue *)",
+#   "Bash(git *)",
+#   "Bash(npm test *)",
+#   "Bash(gh run view *)",
+#   "Read",
+#   "Edit",
+#   "Glob",
+#   "Grep"
+# ]
+#
+# [[tool.claude.argument]]
+# name = "title"
+# type = "optional-passthrough"
+# hint = "title"
+# description = "Issue title (for creating new issues). Omit to use an existing issue instead."
+#
+# [[tool.claude.argument]]
+# name = "spec"
+# type = "optional-passthrough"
+# hint = "--spec [project.][name][:ctx1,ctx2]"
+# description = "Spec in composite format to create or associate with the branch. Spec can be empty (e.g., project::ctx1,ctx2) to set only project and/or contexts."
+#
+# [[tool.claude.argument]]
+# name = "body"
+# type = "optional-passthrough"
+# hint = "--body text"
+# description = "Issue body (for new issues only)"
+#
+# [[tool.claude.argument]]
+# name = "impl"
+# type = "optional-passthrough"
+# hint = "--impl|-i"
+# description = "Begin implementation immediately after setup"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "pr"
+# type = "optional-passthrough"
+# hint = "--pr|-p"
+# description = "After implementation, commit and create a PR (requires --impl)"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "poll"
+# type = "optional-passthrough"
+# hint = "--poll|-o"
+# description = "Poll CI checks after PR creation (implies --pr)"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "fix"
+# type = "optional-passthrough"
+# hint = "--fix|-f"
+# description = "Auto-fix CI failures (up to 30 attempts, implies --poll)"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "merge"
+# type = "optional-passthrough"
+# hint = "--merge|-m"
+# description = "Admin merge + delete branch after CI passes (implies --fix --poll --pr --impl)"
+# flag = true
+#
+# [[tool.claude.argument]]
+# name = "qualifier"
+# type = "always-llm-generated"
+# description = "Short dash-cased branch qualifier derived from the issue title"
+#
+# [tool.claude.argument.llm-generation]
+# prompt = """Based on the issue title, generate a short dash-cased qualifier for the branch name.
+# Examples: 'add-auth', 'fix-login', 'update-deps'
+# Keep it short (2-4 words max), lowercase, dashes between words."""
+#
+# [tool.claude.output]
+# prompt = """Confirm issue creation/fetch (show number and URL), branch creation (show full name), and spec status if applicable. Remind user to rename session: /rename <branch-name>
+#
+# Pipeline stages (execute in order based on output flags):
+# 1. impl: If impl_started is true, implement the feature using issue_context. After completing
+#    implementation: (1) Verify spec exists and is associated with branch, (2) Update relevant
+#    docs if needed, (3) Generate/update tests, (4) Update docs/release-notes.md,
+#    (5) Build: node dev.js capability build && node dev.js profile build
+# 2. pr/poll/fix/merge: If pr_requested is true, invoke /pr-create once passing through applicable
+#    flags (--poll if poll_requested, --fix if fix_requested, --merge if merge_requested).
+#    pr-create handles the full pipeline: commit, push, create PR, poll CI, auto-fix failures,
+#    and admin merge. Do NOT invoke /pr-poll separately -- pr-create handles it when given the flags.
+#    Note: --merge implies --fix and --poll. If --fix is provided (or implied via
+#    --merge), and CI fails, the fix loop is handled by the pr-create/pr-poll output prompt."""
+# examples = [
+#   "OK Created issue #123: Add authentication flow\n  https://github.com/owner/repo/issues/123\nOK Created branch 'sclaussen/add-auth' from origin/main (prefix: sclaussen)\nOK Pushed to remote with upstream tracking\n\nTip: Rename this session to match: /rename sclaussen/add-auth",
+#   "OK Using existing issue #456: Fix login timeout\n  https://github.com/owner/repo/issues/456\nOK Created branch 'sclaussen/fix-login' from origin/main (prefix: sclaussen)\nOK Pushed to remote with upstream tracking\n\nTip: Rename this session to match: /rename sclaussen/fix-login"
+# ]
+# ///
+
+"""Create or use issue, create branch, and drive implementation pipeline."""
+
+import sys
+import os
+import argparse
+import subprocess
+import json
+from pathlib import Path
+
+# Add bin directory to path to import gitlib
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    get_repo_url,
+    run_git,
+    output_result,
+    get_template_from_metadata,
+    require_not_in_worktree,
+    branch_exists,
+    remote_branch_exists,
+    get_default_branch,
+    error
+)
+from lib.devyaml import get as yaml_get
+
+try:
+    from lib.ghlib import fetch_issue, format_issue_for_context, get_gh_repo_args, get_configured_issue_repo, get_effective_issue_repo
+    GH_AVAILABLE = True
+except ImportError:
+    GH_AVAILABLE = False
+
+# Import speclib for composite spec parsing
+try:
+    spec_scripts_dir = os.path.join(bin_dir, '..', '..', '..', '..', 'spec', 'src', 'claude', 'scripts')
+    spec_scripts_dir = os.path.abspath(spec_scripts_dir)
+    sys.path.insert(0, spec_scripts_dir)
+    from lib.speclib import parse_composite_spec, doc_root
+    SPECLIB_AVAILABLE = True
+except ImportError:
+    SPECLIB_AVAILABLE = False
+
+
+def _get_repo_name():
+    """Extract repo name from origin remote URL."""
+    result = subprocess.run(
+        ['git', 'remote', 'get-url', 'origin'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return None
+    url = result.stdout.strip()
+    if not url:
+        return None
+    if url.endswith('.git'):
+        url = url[:-4]
+    url = url.rstrip('/')
+    name = url.split('/')[-1]
+    return name.lower() if name else None
+
+
+def get_aidev_config(key):
+    """Read a git workflow config value from dev.yaml."""
+    repo = _get_repo_name()
+    if not repo:
+        return None
+    value = yaml_get(f'git.{repo}.{key}')
+    return str(value) if value is not None else None
+
+
+def spec_exists(name):
+    """Check if a spec directory exists using speclib's doc_root resolution."""
+    if SPECLIB_AVAILABLE:
+        try:
+            spec_path = doc_root() / 'specs' / name
+            return spec_path.is_dir()
+        except (SystemExit, Exception):
+            pass
+    return False
+
+
+def run_spec_script(script_name, spec_name):
+    """Run a spec script and return its output."""
+    script_dir = bin_dir
+    script_path = os.path.join(script_dir, script_name)
+
+    if not os.path.exists(script_path):
+        workspace_root = os.getenv('WSROOT', '')
+        if workspace_root:
+            script_path = os.path.join(workspace_root, '.claude', 'scripts', script_name)
+
+    if not os.path.exists(script_path):
+        spec_scripts_dir = os.path.join(bin_dir, '..', '..', '..', '..', 'spec', 'src', 'claude', 'scripts')
+        spec_scripts_dir = os.path.abspath(spec_scripts_dir)
+        script_path = os.path.join(spec_scripts_dir, script_name)
+
+    if not os.path.exists(script_path):
+        return {'success': False, 'action': f'Script {script_name} not found'}
+
+    env = os.environ.copy()
+    env['CC'] = '1'
+
+    cmd = [script_path, spec_name]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+
+    if result.returncode == 0:
+        action = 'created' if script_name == 'spec-create' else 'associated'
+        return {'success': True, 'action': action}
+    else:
+        return {'success': False, 'action': result.stderr.strip()}
+
+
+def main():
+    require_not_in_worktree()
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('title', nargs='?', default=None, help='Issue title (for new issues)')
+    parser.add_argument('--spec', default=None, help='Spec name or qualified spec (project:spec:context)')
+    parser.add_argument('--body', default='', help='Issue body (for new issues only)')
+    parser.add_argument('--impl', '-i', action='store_true',
+                       help='Begin implementation immediately after setup')
+    parser.add_argument('--pr', '-p', action='store_true',
+                       help='After implementation, commit and create a PR')
+    parser.add_argument('--poll', '-o', action='store_true',
+                       help='Poll CI checks after PR creation (implies --pr)')
+    parser.add_argument('--fix', '-f', action='store_true',
+                       help='Auto-fix CI failures (up to 30 attempts, implies --poll)')
+    parser.add_argument('--merge', '-m', action='store_true',
+                       help='Admin merge + delete branch after CI passes (implies --fix --poll --pr --impl)')
+    parser.add_argument('--qualifier', default='',
+                       help='Short dash-cased branch qualifier (LLM-generated)')
+    args = parser.parse_args()
+
+    if not GH_AVAILABLE:
+        error("GitHub CLI library not available")
+        sys.exit(1)
+
+    # If no title provided, exit asking for a title or issue number
+    if not args.title:
+        error("Provide a title (to create a new issue) or an issue number (to use an existing issue)")
+        sys.exit(1)
+
+    # Apply pipeline-default if no explicit pipeline flag given
+    if not args.pr and not args.poll and not args.fix and not args.merge:
+        try:
+            repo = _get_repo_name()
+            pipeline_default = yaml_get(f'git.{repo}.pipeline-default') if repo else None
+            if pipeline_default == 'pr':
+                args.pr = True
+            elif pipeline_default in ('poll', 'pr-poll'):
+                args.pr = True
+                args.poll = True
+            elif pipeline_default in ('fix', 'pr-fix'):
+                args.pr = True
+                args.poll = True
+                args.fix = True
+            elif pipeline_default in ('merge', 'pr-merge'):
+                args.pr = True
+                args.poll = True
+                args.fix = True
+                args.merge = True
+        except Exception:
+            pass
+
+    # Apply flag implications (escalation ladder: merge > fix > poll > pr > impl)
+    if args.merge:
+        args.fix = True
+        args.poll = True
+        args.pr = True
+        args.impl = True
+    if args.fix:
+        args.poll = True
+    if args.poll:
+        args.pr = True
+
+    # Validate pipeline flag dependencies
+    if args.pr and not args.impl:
+        error("--pr requires --impl")
+        sys.exit(1)
+
+    # Determine if title is an issue number (digits only) or a new issue title
+    title = args.title
+    issue_number = None
+    if title.isdigit():
+        issue_number = int(title)
+        title = None
+    spec_name = args.spec
+    spec_project = None
+    spec_contexts = []
+    ctx_mode = None
+
+    # Parse composite spec format if provided (e.g., project:spec)
+    if spec_name and ':' in spec_name and SPECLIB_AVAILABLE:
+        spec_project, spec_name, spec_contexts, ctx_mode = parse_composite_spec(spec_name)
+
+    # Read config
+    # gh_issue_repo: use configured value (gen2 global or gen1 local), or current repo as default
+    gh_issue_repo = get_effective_issue_repo() if GH_AVAILABLE else get_aidev_config('gh-issue-repo')
+    prefix = get_aidev_config('branch-prefix')
+    issue_in_branch = get_aidev_config('issue-in-branch')
+    spec_in_branch = get_aidev_config('spec-in-branch')
+
+    repo_args = get_gh_repo_args(gh_issue_repo)
+
+    # Step 1: Get or create issue
+    issue_created = False
+    issue_url = None
+    issue_title = None
+    issue_body = None
+
+    if issue_number:
+        # Existing issue - fetch details
+        issue = fetch_issue(issue_number, repo=gh_issue_repo)
+        if not issue:
+            error(f"Issue #{issue_number} not found")
+            sys.exit(1)
+        issue_title = issue['title']
+        issue_body = issue.get('body', '')
+        issue_url = issue['html_url']
+        print(f"[OK] Using existing issue #{issue_number}: {issue_title}", file=sys.stderr)
+    else:
+        # New issue - create it
+        if not title:
+            error("Title is required for new issues")
+            sys.exit(1)
+
+        gh_cmd = ['gh', 'issue', 'create', '--title', title, '--body', args.body or '']
+        gh_cmd.extend(repo_args)
+
+        result = subprocess.run(gh_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            error("Failed to create issue", command=gh_cmd, stderr_output=result.stderr)
+            sys.exit(1)
+
+        # Parse issue URL from output
+        issue_url = result.stdout.strip()
+        # Extract issue number from URL
+        issue_number = int(issue_url.split('/')[-1])
+        issue_title = title
+        issue_body = args.body
+        issue_created = True
+        print(f"[OK] Created issue #{issue_number}: {issue_title}", file=sys.stderr)
+
+    # Step 2: Determine branch name components
+    qualifier = args.qualifier  # LLM-generated
+
+    if not qualifier:
+        error("--qualifier is required (should be LLM-generated from issue title)")
+        sys.exit(1)
+
+    # Step 3: Construct branch name
+    # Format: <prefix>/<qualifier>
+    include_issue = issue_in_branch != 'false'
+    include_spec = spec_in_branch != 'false'
+
+    parts = []
+    if include_issue:
+        parts.append(str(issue_number))
+    if spec_name and include_spec:
+        parts.append(spec_name)
+
+    if parts:
+        branch = f"{'/'.join(parts)}/{qualifier}"
+    else:
+        branch = qualifier
+
+    # Apply prefix
+    unprefixed_branch = branch
+    if prefix:
+        branch = f"{prefix}/{branch}"
+
+    # Step 4: Create branch
+    default_branch = get_default_branch()
+
+    if branch_exists(branch):
+        error(f"Branch '{branch}' already exists locally")
+        sys.exit(1)
+
+    repo_url = get_repo_url()
+
+    if remote_branch_exists(branch, repo_url):
+        error(f"Branch '{branch}' already exists on remote")
+        sys.exit(1)
+
+    run_git(
+        ['pull', repo_url, default_branch],
+        operation_description=f"pull latest {default_branch}",
+        context=default_branch
+    )
+
+    run_git(
+        ['checkout', '-b', branch],
+        operation_description="create branch",
+        context=branch
+    )
+
+    run_git(
+        ['push', repo_url, f'HEAD:refs/heads/{branch}'],
+        operation_description="push branch",
+        context=branch
+    )
+
+    run_git(
+        ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'],
+        operation_description="set full fetch refspec",
+        context='origin'
+    )
+
+    run_git(
+        ['fetch', repo_url, f'{branch}:refs/remotes/origin/{branch}'],
+        operation_description="fetch remote tracking ref",
+        context=branch
+    )
+
+    run_git(
+        ['branch', '--set-upstream-to', f'origin/{branch}'],
+        operation_description="set upstream tracking",
+        context=branch
+    )
+
+    push_status = "[OK] Pushed to remote with upstream tracking"
+
+    # Step 5: Handle spec (spec_name may be None for project/context-only)
+    spec_status = None
+    if spec_name:
+        if spec_exists(spec_name):
+            result = run_spec_script('spec', args.spec)
+            if result['success']:
+                spec_status = f"[OK] Associated existing spec '{spec_name}' with branch"
+            else:
+                spec_status = f"[WARNING] Failed to associate spec: {result['action']}"
+        else:
+            result = run_spec_script('spec-create', args.spec)
+            if result['success']:
+                spec_status = f"[OK] Created spec '{spec_name}' and associated with branch"
+            else:
+                spec_status = f"[WARNING] Failed to create spec: {result['action']}"
+    elif args.spec and (spec_project or spec_contexts):
+        # No spec name but project/contexts provided -- set those only
+        result = run_spec_script('spec', args.spec)
+        if result['success']:
+            parts = []
+            if spec_project:
+                parts.append(f"project '{spec_project}'")
+            if spec_contexts:
+                parts.append(f"context(s) {', '.join(spec_contexts)}")
+            spec_status = f"[OK] Set {' and '.join(parts)}" if parts else None
+        else:
+            spec_status = f"[WARNING] Failed to set project/context: {result['action']}"
+
+    # Step 6: Build output
+    data = {
+        'issue_number': issue_number,
+        'issue_url': issue_url,
+        'issue_title': issue_title,
+        'issue_created': issue_created,
+        'branch': branch,
+        'qualifier': qualifier,
+        'push_status': push_status
+    }
+
+    if issue_body:
+        data['issue_body'] = issue_body
+
+    if gh_issue_repo:
+        data['gh_issue_repo'] = gh_issue_repo
+        # Mark whether it was explicitly configured or derived from current remote
+        if GH_AVAILABLE and get_configured_issue_repo() is None:
+            data['gh_issue_repo_is_default'] = True
+
+    if prefix:
+        data['prefix_applied'] = prefix
+
+    if spec_status:
+        data['spec_status'] = spec_status
+        data['spec_name'] = spec_name
+
+    if args.impl:
+        issue_context = format_issue_for_context({
+            'number': issue_number,
+            'title': issue_title,
+            'body': issue_body or '',
+            'html_url': issue_url,
+            'state': 'open',
+            'labels': [],
+        })
+        data['issue_context'] = issue_context
+        data['impl_started'] = True
+        print("[OK] Implementation requested - will begin after setup", file=sys.stderr)
+
+    if args.pr:
+        data['pr_requested'] = True
+    if args.poll:
+        data['poll_requested'] = True
+    if args.fix:
+        data['fix_requested'] = True
+    if args.merge:
+        data['merge_requested'] = True
+
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

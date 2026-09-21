@@ -1,0 +1,34 @@
+name: sync-api
+on:
+  push:
+    paths:
+      - 'apis/**'
+      - 'pkg/oam/**'
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  sync-core-api:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608
+
+      - name: Setup Env
+        uses: ./.github/actions/env-setup
+
+      - name: Get the version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Sync to kubevela-core-api Repo
+        env:
+          SSH_DEPLOY_KEY: ${{ secrets.VELA_API_DEPLOY }}
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          COMMIT_ID: ${{ github.sha }}
+        run: |
+          bash ./hack/apis/clientgen.sh
+          bash ./hack/apis/sync.sh sync

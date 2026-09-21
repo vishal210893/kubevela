@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>checkWorkflowRestart and valuesfrom_fingerprint.go</title>
+<style>
+  :root {
+    --fg: #1f2328;
+    --fg-muted: #57606a;
+    --bg: #ffffff;
+    --bg-soft: #f6f8fa;
+    --bg-code: #f6f8fa;
+    --border: #d0d7de;
+    --accent: #0969da;
+    --warn: #bf8700;
+    --danger: #cf222e;
+    --ok: #1a7f37;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.6;
+    font-size: 16px;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    min-height: 100vh;
+  }
+  nav.toc {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 24px 18px;
+    border-right: 1px solid var(--border);
+    background: var(--bg-soft);
+    font-size: 14px;
+  }
+  nav.toc h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-muted);
+    margin: 0 0 12px;
+  }
+  nav.toc ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    counter-reset: toc;
+  }
+  nav.toc li {
+    margin: 6px 0;
+    counter-increment: toc;
+  }
+  nav.toc li::before {
+    content: counter(toc) ". ";
+    color: var(--fg-muted);
+  }
+  nav.toc a {
+    color: var(--fg);
+    text-decoration: none;
+  }
+  nav.toc a:hover { text-decoration: underline; }
+  main {
+    max-width: 880px;
+    padding: 40px 48px 80px;
+  }
+  h1 {
+    font-size: 26px;
+    margin: 0 0 8px;
+    font-weight: 600;
+  }
+  .subtitle {
+    color: var(--fg-muted);
+    margin: 0 0 28px;
+    font-size: 15px;
+  }
+  h2 {
+    font-size: 20px;
+    margin: 38px 0 10px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+  }
+  h3 {
+    font-size: 16px;
+    margin: 22px 0 6px;
+    font-weight: 600;
+  }
+  p { margin: 10px 0; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--bg-code);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.9em;
+    border: 1px solid #eaeef2;
+  }
+  pre {
+    background: #0d1117;
+    color: #e6edf3;
+    padding: 14px 18px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 12px 0;
+  }
+  pre code {
+    background: transparent;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    font-size: inherit;
+  }
+  .ascii {
+    background: #0d1117;
+    color: #e6edf3;
+    padding: 16px 20px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.45;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre;
+    margin: 14px 0;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 14.5px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--bg-soft); font-weight: 600; }
+  .filename {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    color: var(--accent);
+    font-size: 0.92em;
+  }
+  .lineref {
+    color: var(--fg-muted);
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 0.85em;
+  }
+  .note {
+    border-left: 3px solid var(--border);
+    padding: 8px 14px;
+    margin: 14px 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-size: 14.5px;
+  }
+  .note p:first-child { margin-top: 0; }
+  .note p:last-child { margin-bottom: 0; }
+  .note.warn { border-left-color: var(--warn); background: #fff8c5; }
+  .note.danger { border-left-color: var(--danger); background: #ffebe9; }
+  .note.ok { border-left-color: var(--ok); background: #dafbe1; }
+  .note .label {
+    font-size: 12px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  hr {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 32px 0;
+  }
+  .footer {
+    color: var(--fg-muted);
+    font-size: 13px;
+    margin-top: 40px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc {
+      position: static;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    main { padding: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#two-fingerprints">Two fingerprints, don't confuse them</a></li>
+    <li><a href="#entry">Where the gate gets called from</a></li>
+    <li><a href="#flow">Reconcile order</a></li>
+    <li><a href="#gate">Inside checkWorkflowRestart</a></li>
+    <li><a href="#calculator">Inside valuesfrom_fingerprint.go</a></li>
+    <li><a href="#hashone">How one entry is hashed</a></li>
+    <li><a href="#crossns">The duplicated cross-namespace rule</a></li>
+    <li><a href="#client">Why the uncached client</a></li>
+    <li><a href="#separation">Who owns what</a></li>
+    <li><a href="#timeline">A walkthrough of one CM edit</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<h1>checkWorkflowRestart and valuesfrom_fingerprint.go</h1>
+<p class="subtitle">Notes for someone reading this code for the first time. All line numbers are against current master.</p>
+
+<h2 id="tldr">TL;DR</h2>
+
+<p>If you edit a ConfigMap or Secret that a helmchart references through <code>valuesFrom</code>, KubeVela needs some way to notice and restart the workflow. It does this by hashing the referenced content on every reconcile and sticking the hash onto the Application's revision string as a <code>-vf-&lt;hex&gt;</code> suffix. When the content changes, the hash changes, the suffix changes, and the gate that compares revisions fails. The workflow restarts.</p>
+
+<p>Two files share the work. <span class="filename">workflow.go</span> owns the gate logic. <span class="filename">valuesfrom_fingerprint.go</span> computes the hash. They live in the same package, but only one direction of dependency exists: workflow.go imports the fingerprint, not the other way around.</p>
+
+<h2 id="two-fingerprints">Two fingerprints, don't confuse them</h2>
+
+<p>The codebase has two functions with "fingerprint" in the name. They live in different layers and do different jobs. New readers conflate them. Don't.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th></th>
+      <th><span class="filename">valuesfrom_fingerprint.go</span></th>
+      <th><span class="filename">helm.go</span> &middot; <code>computeReleaseFingerprint</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>Layer</th>
+      <td>Controller (<code>pkg/controller/.../application/</code>)</td>
+      <td>Helm provider (<code>pkg/cue/cuex/providers/helm/</code>)</td>
+    </tr>
+    <tr>
+      <th>Called by</th>
+      <td><code>checkWorkflowRestart</code> in workflow.go</td>
+      <td><code>installOrUpgradeChart</code> in helm.go itself</td>
+    </tr>
+    <tr>
+      <th>Hashes what</th>
+      <td>Content of referenced ConfigMaps and Secrets</td>
+      <td><code>(chart version, sha256 of values map)</code></td>
+    </tr>
+    <tr>
+      <th>Decides</th>
+      <td>Whether to restart the workflow</td>
+      <td>Whether to skip a <code>helm upgrade</code> API call</td>
+    </tr>
+    <tr>
+      <th>Stamps onto</th>
+      <td><code>app.Status.Workflow.AppRevision</code> as <code>-vf-&lt;hex&gt;</code></td>
+      <td>In-memory cache + cluster release fingerprint label</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The controller fingerprint is the trigger: did anything content-wise change that should make us re-run? The helm fingerprint is the brake: now that we're re-running, does helm actually need to upgrade the release? They never call each other. They share no code. They're at different layers of the stack on purpose.</p>
+
+<p>If you found yourself wondering whether <span class="filename">valuesfrom_fingerprint.go</span> is called from <span class="filename">helm.go</span>, the answer is no. Only <span class="filename">workflow.go</span> calls it. A <code>grep</code> confirms it: one non-test caller at <span class="lineref">workflow.go:195</span>.</p>
+
+<h2 id="entry">Where the gate gets called from</h2>
+
+<p>The reconciler in <span class="filename">application_controller.go</span> calls two helpers that live in workflow.go. They sound similar, but they handle unrelated things.</p>
+
+<table>
+  <thead><tr><th>Where</th><th>Function</th><th>What it actually does</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="lineref">application_controller.go:151</span></td>
+      <td><code>handleWorkflowRestartAnnotation</code></td>
+      <td>Reads the <code>app.oam.dev/restart-workflow</code> annotation and copies it into a status field. Just an annotation parser. Don't get distracted.</td>
+    </tr>
+    <tr>
+      <td><span class="lineref">application_controller.go:220</span></td>
+      <td><code>checkWorkflowRestart</code></td>
+      <td>The actual gate. This is where the valuesFrom fingerprint plugs in.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>If you're trying to find "where does the controller decide to re-run a workflow when a CM is edited," the answer is the second one, line 220.</p>
+
+<h2 id="flow">Reconcile order</h2>
+
+<p>Within a single reconcile pass, the order matters in two specific ways:</p>
+
+<div class="ascii">┌─────────────────────────────────────────────┐
+│ Reconcile(req)                              │
+│                                             │
+│  L116  Get(app)                             │
+│  L126  if Paused → return                   │
+│  L145  NewAppHandler(...)                   │
+│  L151  handleWorkflowRestartAnnotation()    │  annotation → status field
+│  L153  handleFinalizers()                   │
+│  L165  ApplyApplicationScopeTransforms()    │
+│  L180  GenerateAppFile()                    │
+│  L188  PrepareCurrentAppRevision()          │  builds handler.currentAppRev
+│  L194  FinalizeAndApplyAppRevision()        │
+│  L211  ApplyPolicies()                      │
+│  L220  checkWorkflowRestart()               │  ← the gate runs here
+│  L222  GenerateApplicationSteps()           │
+│  L236  workflowExecutor.ExecuteRunners()    │  reads (possibly wiped) status
+│  L264  app.Status.Workflow = ...            │
+│        gcResourceTrackers / requeue         │
+└─────────────────────────────────────────────┘</div>
+
+<p>Two ordering rules to keep in mind:</p>
+
+<p><code>PrepareCurrentAppRevision</code> at line 188 has to run before the gate. It populates <code>handler.currentAppRev.Name</code>, which is the spec-derived hash that becomes the base of <code>desiredRev</code>. If you ever wonder why <code>desiredRev</code> is non-empty by the time the gate runs, that's why.</p>
+
+<p>The executor at line 236 has to run after the gate. The gate's job is to wipe <code>app.Status.Workflow</code> when a restart is needed. The executor reads that wiped status and starts from step zero. The two are sequential within the reconcile, so there's no concurrency concern.</p>
+
+<h2 id="gate">Inside checkWorkflowRestart</h2>
+
+<p>The function packs four restart triggers into one body. It looks tangled at first. Here's the breakdown.</p>
+
+<div class="ascii">checkWorkflowRestart(ctx, app, handler):
+
+  ┌── trigger 1: scheduled restart ──────────────────────────────────┐
+  │ L106  if app.Status.WorkflowRestartScheduledAt != nil:           │
+  │ L109    if not yet time → return                                 │
+  │ L113    if workflow not finished → return                        │
+  │ L127    clear scheduledAt                                        │
+  │ L143    wipe Services / AppliedResources / Conditions            │
+  │ L155    Workflow = {AppRevision: handler.currentAppRev.Name}     │
+  │ L158    return  ← the scheduled path EXITS here                  │
+  └──────────────────────────────────────────────────────────────────┘
+
+  ┌── triggers 2 + 3 + 4: revision-based restart ────────────────────┐
+  │ L162  desiredRev = handler.currentAppRev.Name                    │ trigger 3 (spec hash)
+  │ L163  currentRev = app.Status.Workflow.AppRevision (or "")       │
+  │ L166  publishVersionPinned = HasAnnotation(...PublishVersion)    │
+  │ L168  if publishVersionPinned:                                   │
+  │ L168     desiredRev = annotation value                           │ trigger 2 (publishVersion)
+  │ L170  else: trim ":&lt;hash&gt;" off currentRev (legacy compat)        │
+  │                                                                  │
+  │ L194  if NOT publishVersionPinned:                               │ trigger 4 starts
+  │ L195    vfFp, err = computeValuesFromContentFingerprint(...)     │ ← FINGERPRINT CALL
+  │ L196    if err:                                                  │
+  │ L197      log V(2) — "fingerprint failed, falling back"          │
+  │ L198      if currentRev starts with "&lt;base&gt;-vf-": reuse it       │ stickiness fallback
+  │ L201    elif vfFp != "":                                         │
+  │ L202      desiredRev += "-vf-" + vfFp[:32]                       │ ← THE SUFFIX
+  │                                                                  │
+  │ L206  if currentRev != "" &amp;&amp; desiredRev == currentRev:           │
+  │ L207    return  ← gate passes, workflow keeps its state          │
+  │                                                                  │
+  │ L211  wipe (same as trigger 1)                                   │
+  │ L234  Workflow = {AppRevision: desiredRev}                       │
+  └──────────────────────────────────────────────────────────────────┘</div>
+
+<p>The first block (the early return on <code>WorkflowRestartScheduledAt</code>) has nothing to do with valuesFrom. It only fires when a user has scheduled a restart through the annotation handler. You can read past it.</p>
+
+<p>The second block is where the work happens. <code>desiredRev</code> starts as the spec-derived name. Then publishVersion overrides it (if pinned), or the valuesFrom fingerprint suffixes it (if not pinned and any helmchart component declares <code>valuesFrom</code>). <code>currentRev</code> comes from whatever was written last reconcile, possibly with its own <code>-vf-</code> suffix already attached.</p>
+
+<p>The string comparison at line 206 is the whole gate. If the strings match, return. If not, wipe status and stamp the new revision.</p>
+
+<h2 id="calculator">Inside valuesfrom_fingerprint.go</h2>
+
+<p>The fingerprint file is small on purpose. It exposes one function and two constants. workflow.go imports those three things and nothing else.</p>
+
+<p>What the file does NOT know about: <code>Reconciler</code>, <code>AppHandler</code>, <code>Status.Workflow</code>, <code>desiredRev</code>, <code>publishVersion</code>, the gate logic. None of it. That's all upstream.</p>
+
+<p>What the file DOES know about: walking helmchart components on the Application, parsing a minimal struct out of their properties, reading the referenced ConfigMaps and Secrets, canonicalising the YAML, and hashing the result.</p>
+
+<p>The narrowness is the point. You can unit-test the hash function without standing up a controller. You can unit-test the gate by handing it a precomputed app and handler. Each side fails or succeeds in isolation.</p>
+
+<div class="ascii">computeValuesFromContentFingerprint(ctx, app) (string, error):
+
+  L101  if app == nil || no components → return "", nil
+  L106  for each component:
+  L107    if ctx.Err() → return ""             (cancellation respected)
+  L110    if comp.Type != "helmchart"  → skip  (only helmchart opts in)
+  L113    if comp.Properties == nil    → skip
+  L117    json.Unmarshal(props.Raw, &amp;helmchartProperties)
+  L122    on parse error → SKIP this component (do not fail)
+  L123    if no valuesFrom on this component → skip
+  L126    releaseNamespace = props.Release.Namespace || app.Namespace
+  L130    for each ref in props.ValuesFrom:
+  L131      append resolvedRef{ref, app.Namespace, releaseNamespace}
+
+  L139  if no refs collected → return "", nil   (no opt-in → no suffix)
+
+  L143  for each resolvedRef:
+  L145    line, err = hashOneSource(...)
+  L147    on error → return "", err              (fail-loud here)
+  L149    append line
+  L151  sort.Strings(lines)                      (order-stable)
+  L152  return sha256(join(lines, "\n"))</div>
+
+<p>Three return shapes, three behaviours in workflow.go:</p>
+
+<table>
+  <thead><tr><th>Return</th><th>What it means</th><th>Workflow.go reaction</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>"", nil</code></td>
+      <td>App has no helmchart with valuesFrom</td>
+      <td>Suffix not applied. App behaves as if this PR didn't exist.</td>
+    </tr>
+    <tr>
+      <td><code>"&lt;hex&gt;", nil</code></td>
+      <td>Content hashed successfully</td>
+      <td>Suffix appended at L202.</td>
+    </tr>
+    <tr>
+      <td><code>"", err</code></td>
+      <td>API hiccup, parse error, cross-namespace reject</td>
+      <td>Logged at V(2). Reuses prior <code>-vf-</code> suffix from currentRev if present, so the gate doesn't flap.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="hashone">How one entry is hashed</h2>
+
+<p>For each <code>valuesFrom</code> entry, <code>hashOneSource</code> at <span class="lineref">lines 167-235</span> emits one line in the aggregate:</p>
+
+<pre><code>ConfigMap:default/podinfo-values/values.yaml=9f2a4c1b0d3e...
+Secret:default/podinfo-overlay/values.yaml=&lt;missing&gt;</code></pre>
+
+<p>If the resource is found and the key exists, you get the hex digest. If the resource is missing and <code>optional: true</code>, you get the literal <code>&lt;missing&gt;</code> placeholder. The line is still emitted, so the aggregate hash stays stable while the resource is absent. The moment the resource shows up, the line flips to a real digest, and the aggregate moves.</p>
+
+<p>If the resource is missing and not optional, the function returns an error. workflow.go then falls back to whatever suffix was already in <code>currentRev</code>, so a transient kube-API blip doesn't flap the revision.</p>
+
+<p><code>canonicalLine</code> at <span class="lineref">lines 245-259</span> is the part that makes the hash edit-stable:</p>
+
+<pre><code>var parsed map[string]interface{}
+yaml.Unmarshal(raw, &amp;parsed)         // tolerate YAML quirks
+canonical, _ := json.Marshal(parsed) // sorted keys, no whitespace
+h := sha256.Sum256(canonical)
+return fmt.Sprintf("%s:%s/%s/%s=%s", kind, ns, name, key, hex(h)), nil</code></pre>
+
+<div class="note">
+  <div class="label">Edit-stability</div>
+  <p>Whitespace edits, comment edits, and key reordering inside the ConfigMap don't move the digest. Only semantic content changes do. That's because the YAML is parsed and then re-marshalled as JSON with sorted keys before hashing. Cosmetic edits round-trip back to the same bytes.</p>
+</div>
+
+<h2 id="crossns">The duplicated cross-namespace rule</h2>
+
+<p>The cross-namespace check exists in two places. Once in helm.go as <code>resolveValuesFromNamespace</code> at <span class="lineref">helm.go:650</span>, and once in valuesfrom_fingerprint.go as <code>resolveNamespace</code> at <span class="lineref">lines 274-283</span>. Same rule both times:</p>
+
+<table>
+  <thead><tr><th>Input namespace</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>empty</td><td>release namespace</td></tr>
+    <tr><td>matches release ns</td><td>release ns</td></tr>
+    <tr><td>matches app ns</td><td>app ns</td></tr>
+    <tr><td>anything else</td><td>error (cross-tenant attempt)</td></tr>
+  </tbody>
+</table>
+
+<div class="note warn">
+  <div class="label">Why the duplication</div>
+  <p>The helm provider lives under <code>pkg/cue/cuex/providers/helm</code>, which pulls in CUE, the helm SDK, and chart fetching. Importing any of that into the controller would create a circular dependency and bloat. So the rule was copied. There's a comment at line 269 calling this out. If you change the rule in one place, change it in the other. No compile-time guard exists.</p>
+</div>
+
+<h2 id="client">Why the uncached client</h2>
+
+<p><code>hashOneSource</code> at line 177 calls <code>singleton.KubeClient.Get()</code> directly. That's the uncached client, not the controller-runtime cached client.</p>
+
+<p>The reason matters for production sizing. The cached client registers an informer for whatever type you Get. The first time you read a ConfigMap through it, you've registered a cluster-wide ConfigMap informer. The controller's memory now holds every ConfigMap in the cluster. Same for Secrets. That's not a trade we want.</p>
+
+<p>The cost we pay instead is one direct API read per valuesFrom source per reconcile. For a typical app with one or two valuesFrom entries reconciling every five minutes, that's nothing. The comment at <span class="lineref">lines 162-166</span> spells this out.</p>
+
+<h2 id="separation">Who owns what</h2>
+
+<div class="ascii">┌──────────────────────────────────────────────────────────────────┐
+│ workflow.go (the orchestrator)                                   │
+│                                                                  │
+│  Owns:                                                           │
+│   • the gate (desiredRev == currentRev short-circuit)            │
+│   • publishVersion suppression                                   │
+│   • stickiness fallback on transient errors                      │
+│   • status wipe + new revision stamping                          │
+│   • the four restart triggers                                    │
+│                                                                  │
+│  Imports from valuesfrom_fingerprint.go:                         │
+│   ─ computeValuesFromContentFingerprint(...)                     │
+│   ─ valuesFromSuffixSeparator                                    │
+│   ─ valuesFromSuffixHexLen                                       │
+└──────────────────────────────────────────────────────────────────┘
+                           │
+                           ▼   function call only — no shared state
+┌──────────────────────────────────────────────────────────────────┐
+│ valuesfrom_fingerprint.go (the calculator)                       │
+│                                                                  │
+│  Owns:                                                           │
+│   • walking helmchart components                                 │
+│   • parsing a minimal helmchartProperties shape                  │
+│   • the duplicated cross-namespace rule                          │
+│   • reading CM/Secret content (uncached client)                  │
+│   • optional handling (&lt;missing&gt; sentinel)                       │
+│   • YAML→JSON canonicalisation                                   │
+│   • sha256 + sort + hex                                          │
+│                                                                  │
+│  Knows nothing about:                                            │
+│   • desiredRev / currentRev / status.Workflow                    │
+│   • the gate logic                                               │
+│   • publishVersion                                               │
+│   • Reconciler / AppHandler                                      │
+└──────────────────────────────────────────────────────────────────┘</div>
+
+<p>The coupling is one-directional and minimal. workflow.go calls one function and uses two constants. There's no shared state, no shared types beyond the function signature. If you wanted to swap the fingerprint algorithm tomorrow, you'd touch one file.</p>
+
+<h2 id="timeline">A walkthrough of one CM edit</h2>
+
+<p>Suppose you've applied <span class="filename">localtest/helm-job-workflow-restart-test.yaml</span>. Here's what each reconcile actually does.</p>
+
+<div class="ascii">T=0    user kubectl applies the manifest
+       Reconcile #1:
+         PrepareCurrentAppRevision → currentAppRev.Name = "cm-fingerprint-test-v1-&lt;hash&gt;"
+         checkWorkflowRestart:
+           desiredRev := "cm-fingerprint-test-v1-&lt;hash&gt;"
+           currentRev := ""           (status.Workflow is nil)
+           computeValuesFromContentFingerprint → "9f2a4c..."
+           desiredRev := desiredRev + "-vf-" + "9f2a4c1b0d3e..."[:32]
+           gate: currentRev == "" → fall through (early-return needs both sides set)
+           wipe + stamp: app.Status.Workflow = {AppRevision: desiredRev}
+         ExecuteRunners → all 3 steps run for the first time
+
+T=2m   Reconcile #2 (periodic resync, no changes):
+         checkWorkflowRestart:
+           desiredRev := same base name
+           currentRev := same "-vf-9f2a4c..." (from status)
+           computeValuesFromContentFingerprint → "9f2a4c..." (CM unchanged)
+           desiredRev := same suffix
+           gate: desiredRev == currentRev → RETURN (no-op)
+         ExecuteRunners sees existing step status → all steps already complete
+
+T=5m   user: kubectl patch configmap cm-fingerprint-test-values ...
+         (controller doesn't see this — CM watch isn't wired)
+
+T=10m  Reconcile #3 (next periodic resync):
+         checkWorkflowRestart:
+           desiredRev := same base name
+           currentRev := "-vf-9f2a4c..."
+           computeValuesFromContentFingerprint → "8b1d3e..."  ← MOVED
+           desiredRev := base + "-vf-8b1d3e..."[:32]
+           gate: desiredRev != currentRev → fall through
+           wipe + stamp: app.Status.Workflow = {AppRevision: desiredRev (new)}
+         ExecuteRunners sees no step status → re-runs all 3 steps:
+           stamp-when-ran            → status updated
+           apply-job                 → renders identical Job → 3-way merge no-op
+           apply-helm                → renders new values → helm upgrade fires → rev 2</div>
+
+<p>Three reconciles. Two were no-ops at the gate. The third was a state wipe and a full workflow re-run. The CM edit sat in the cluster for five minutes between when the user made it and when KubeVela reacted to it. That gap is the periodic resync interval, and it's what Ayush flagged as a follow-up issue (configurable resync rate at the app level).</p>
+
+<div class="footer">
+  <p>References, all relative to repo root:</p>
+  <ul>
+    <li><span class="filename">pkg/controller/core.oam.dev/v1beta1/application/application_controller.go</span></li>
+    <li><span class="filename">pkg/controller/core.oam.dev/v1beta1/application/workflow.go</span></li>
+    <li><span class="filename">pkg/controller/core.oam.dev/v1beta1/application/valuesfrom_fingerprint.go</span></li>
+    <li><span class="filename">pkg/controller/core.oam.dev/v1beta1/application/valuesfrom_fingerprint_test.go</span></li>
+    <li><span class="filename">pkg/controller/core.oam.dev/v1beta1/application/revision.go</span></li>
+    <li><span class="filename">pkg/cue/cuex/providers/helm/helm.go</span></li>
+    <li><span class="filename">localtest/helm-job-workflow-restart-test.yaml</span></li>
+  </ul>
+</div>
+
+</main>
+</div>
+
+</body>
+</html>

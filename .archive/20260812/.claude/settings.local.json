@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__jira__addCommentToJiraIssue",
+      "Read(//home/node/.claude/plugins/**)",
+      "Read(//home/node/.claude/plugins/marketplaces/**)",
+      "Read(//home/node/.claude/**)",
+      "Read(//home/node/.claude/skills/**)",
+      "Bash(echo \"bun exit: $?\")",
+      "Bash(command -v sonar)",
+      "Bash(command -v docker)",
+      "Read(//home/node/**)",
+      "mcp__plugin_claude-mem_mcp-search__search",
+      "mcp__plugin_claude-mem_mcp-search__get_observations"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "confluence",
+    "jira",
+    "devassistant",
+    "figma",
+    "github",
+    "guidewire-docs",
+    "guidewire-docs-staging",
+    "jutro-developer-assistant"
+  ]
+}

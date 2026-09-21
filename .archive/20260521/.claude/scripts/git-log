@@ -1,0 +1,48 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Display commit history"
+# model = "haiku"
+# context = "fork"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/git-log)"]
+#
+# [tool.claude.output]
+# prompt = "Start with a branch relationship summary: show commits ahead/behind main, ahead/behind origin/main, and ahead/behind your remote tracking branch if it exists. Then display recent commits in scannable format showing hash, date, author, message, and branch pointers."
+# examples = [
+#   "Branch: feature-auth\n  5 commits ahead of main\n  2 commits ahead of origin/main\n  0 commits ahead of origin/feature-auth (up to date)\n\nabc1234 2024-03-15 John feat: add auth (HEAD -> feature-auth)\ndef5678 2024-03-14 Jane fix: bug (origin/main, main)"
+# ]
+# ///
+
+"""Display commit history."""
+
+import sys
+from pathlib import Path
+
+# Load shared library
+exec(open(Path(__file__).parent / 'lib/gitlib.py').read())
+
+
+def main():
+    """Show commit history with colors and decoration."""
+    # Get log output with pretty format matching design.md spec
+    result = run_git(
+        ['log', '--pretty=format:%Cblue%h %ad %Cgreen%cn %Creset%s %Cred%d',
+         '--decorate', '--date=short', '-n', '20'],
+        operation_description="get log",
+        capture_output=True
+    )
+
+    # Prepare output data
+    data = {
+        "log": result.stdout
+    }
+
+    # Output in appropriate format
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

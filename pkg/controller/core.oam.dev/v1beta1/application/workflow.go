@@ -191,15 +191,56 @@ func (r *Reconciler) checkWorkflowRestart(ctx monitorContext.Context, app *v1bet
 	// a persistent failure (e.g. RBAC change deleting CM read) does not produce
 	// alert-storms across the fleet — the persistent failure surfaces during
 	// the next Render() with a clearer error than could be produced here.
+	valuesFromFellBack := false
 	if !publishVersionPinned {
 		if vfFp, err := computeValuesFromContentFingerprint(ctx, app); err != nil {
 			klog.V(2).InfoS("failed to compute valuesFrom fingerprint; falling back to spec-only workflow gate",
 				"err", err, "appName", app.Name, "namespace", app.Namespace)
 			if currentRev != "" && strings.HasPrefix(currentRev, desiredRev+valuesFromSuffixSeparator) {
 				desiredRev = currentRev
+				valuesFromFellBack = true
 			}
 		} else if vfFp != "" {
 			desiredRev = desiredRev + valuesFromSuffixSeparator + vfFp[:valuesFromSuffixHexLen]
+		}
+	}
+
+	// Append a fingerprint of what each type: addon and type: module component's
+	// registry currently holds, so a push to a registry moves desiredRev and
+	// restarts the workflow on the next reconcile. Without it nothing re-reads
+	// the registry once the workflow has succeeded: the executor returns early
+	// when every step is done, so no step renders, and StateKeep goes on
+	// re-applying the manifest captured at the last render.
+	//
+	// Suppressed when publishVersion is set, for the same reason the valuesFrom
+	// suffix is: an explicit pin from the user is hard, and a registry push must
+	// not move the revision until the user bumps the pin.
+	//
+	// Suppressed too when the valuesFrom step already fell back to currentRev,
+	// because currentRev carries both suffixes. Appending to it would build a
+	// token that can never match the one in status, which would restart the
+	// workflow on every reconcile -- the loop this whole feature has to avoid.
+	//
+	// On error the previous suffix is reused rather than dropped. An unreachable
+	// registry says nothing about whether the package moved, and dropping the
+	// suffix would itself move desiredRev and trigger a restart.
+	if !publishVersionPinned && !valuesFromFellBack {
+		if rrFp, err := computeRegistryRevisionFingerprint(ctx, r.Client, app); err != nil {
+			klog.V(2).InfoS("failed to compute registry revision fingerprint; reusing the previous workflow gate",
+				"err", err, "appName", app.Name, "namespace", app.Namespace)
+			if currentRev != "" && strings.HasPrefix(currentRev, desiredRev+registryRevSuffixSeparator) {
+				desiredRev = currentRev
+			}
+		} else if rrFp != "" {
+			desiredRev = desiredRev + registryRevSuffixSeparator + rrFp[:registryRevSuffixHexLen]
+			if currentRev != "" && currentRev != desiredRev {
+				// Default verbosity: this fires only when a registry actually
+				// moved, so it is rare, and it is the one line that says why an
+				// Application is about to re-render.
+				klog.InfoS("registry revision moved; restarting workflow",
+					"appName", app.Name, "namespace", app.Namespace,
+					"current", currentRev, "desired", desiredRev)
+			}
 		}
 	}
 

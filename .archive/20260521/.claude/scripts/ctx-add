@@ -1,0 +1,114 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Add context items to current branch"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/ctx-add:*)"]
+#
+# [[tool.claude.argument]]
+# name = "context"
+# type = "required-passthrough"
+# hint = "<context>..."
+# description = "Comma-separated context refs: steering, auth, team2:billing"
+#
+# [tool.claude.output]
+# prompt = "Confirm which contexts were added. Show resolved paths."
+# examples = [
+#   "[OK] Added 2 context(s) to branch 'feature-auth'\n\n  + steering -> .dev/steering/\n  + auth -> .dev/context/auth.md\n\nCurrent contexts: steering, auth"
+# ]
+# ///
+
+"""Add context items to current branch."""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_current_branch, in_git_repo,
+    get_contexts, set_contexts, resolve_context_path
+)
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    if len(sys.argv) < 2:
+        print("Error: Context refs required", file=sys.stderr)
+        print("Usage: ctx-add <context>...", file=sys.stderr)
+        print("Example: ctx-add steering,auth,team2:billing", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse comma-separated refs from all args
+    new_refs = []
+    for arg in sys.argv[1:]:
+        for ref in arg.split(','):
+            ref = ref.strip()
+            if ref:
+                new_refs.append(ref)
+
+    existing = get_contexts(branch)
+    added = []
+    skipped = []
+
+    missing = []
+    for ref in new_refs:
+        if ref in existing:
+            skipped.append(ref)
+        else:
+            try:
+                path = resolve_context_path(ref)
+                path_str = str(path)
+                if not path.exists():
+                    missing.append(ref)
+            except SystemExit:
+                missing.append(ref)
+                path_str = None
+            added.append({'ref': ref, 'path': path_str})
+
+    if missing:
+        print(f"Error: Context(s) not found: {', '.join(missing)}", file=sys.stderr)
+        print(f"Run '/spec:ctx:create <name>' to create them first.", file=sys.stderr)
+        sys.exit(1)
+
+    for item in added:
+        existing.append(item['ref'])
+
+    set_contexts(existing, branch)
+
+    data = {
+        'branch': branch,
+        'added': added,
+        'skipped': skipped,
+        'current': existing
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if added:
+            print(f"[OK] Added {len(added)} context(s) to branch '{branch}'")
+            print()
+            for item in added:
+                print(f"  + {item['ref']} -> {item['path']}")
+        if skipped:
+            print()
+            print(f"Skipped (already present): {', '.join(skipped)}")
+        print()
+        print(f"Current contexts: {', '.join(existing)}")
+
+
+if __name__ == "__main__":
+    main()

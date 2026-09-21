@@ -1,0 +1,25 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+#
+# [tool.claude]
+# description = "Find and fix low-effort bugs surfaced by prior code reviews"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/harness-bug-squish *)"]
+#
+# [[tool.claude.argument]]
+# name = "days"
+# type = "optional"
+# hint = "[--days N] [--dry-run]"
+# description = "Number of days to look back for code review comments (default: 30). Use --dry-run to preview without opening PRs."
+# ///
+"""Bug-squish: find and fix low-effort bugs from prior code reviews. TODO: implement."""
+import sys
+
+def main():
+    print("harness:bug-squish: not yet implemented", file=sys.stderr)
+    sys.exit(1)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,19 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: oci-addon-app
+  namespace: default
+spec:
+  components:
+    - name: oci-widget
+      type: addon
+      properties:
+        # The addon, and where to get it. The registry is an OCI one on Docker
+        # Hub, so resolving it reads a manifest rather than crawling a git tree.
+        addon: oci-widget
+        registry: my-oci-addons
+        version: "1.1.0"
+        # The addon's own parameters, passed through to its templates.
+        properties:
+          namespace: oci-widget-system
+          message: pushed from localtest

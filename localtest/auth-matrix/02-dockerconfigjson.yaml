@@ -1,0 +1,53 @@
+# =============================================================================
+# Auth matrix #2 — kubernetes.io/dockerconfigjson Secret
+#
+# This is the Secret type produced by `docker login` and by:
+#   kubectl create secret docker-registry ...
+# It encodes the entire ~/.docker/config.json contents as a single base64
+# blob under the .dockerconfigjson key.
+#
+# RECOMMENDED — generate it directly from kubectl so the base64 encoding
+# is correct, then pipe into kubectl apply:
+#
+#   kubectl create secret docker-registry dockerhub-creds-dockerconfig \
+#     -n arc-system \
+#     --docker-server=registry-1.docker.io \
+#     --docker-username=vishal210893 \
+#     --docker-password='dckr_pat_<your-pat>' \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+# Then apply this file (Namespace + Application only, no Secret).
+#
+# The dispatcher (auth.go:282-328) accepts both shapes inside the JSON:
+#   - explicit "username"/"password" fields, OR
+#   - the legacy "auth" field (base64 of "user:pass"), decoded at runtime.
+# =============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: arc-system
+---
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: oci-auth-dockerconfig
+  namespace: arc-system
+spec:
+  components:
+    - name: arc-crds
+      type: helmchart
+      properties:
+        chart:
+          source: oci://registry-1.docker.io/vishal210893/arc-crds
+          version: "0.1.0"
+          auth:
+            secretRef:
+              name: dockerhub-creds-dockerconfig
+        release:
+          name: arc-crds-dockerconfig
+          namespace: arc-system
+        options:
+          createNamespace: true
+          includeCRDs: true
+          skipTests: true

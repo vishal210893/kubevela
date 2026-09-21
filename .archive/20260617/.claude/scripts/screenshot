@@ -1,0 +1,62 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = []
+#
+# [tool.claude]
+# description = "Display the most recent screenshot"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Read", "Bash"]
+#
+# [tool.claude.output]
+# format = "text"
+# prompt = "Read and display the screenshot image. If not found, provide setup instructions."
+# ///
+
+"""Display the most recent screenshot."""
+
+import sys
+from pathlib import Path
+import os
+
+def get_most_recent_screenshot():
+    """Find the most recent screenshot."""
+    # First, try the symlinked ~/img.png
+    home_img = Path.home() / 'img.png'
+    if home_img.exists():
+        return home_img
+
+    # If symlink doesn't exist, search screenshots directory
+    screenshots_dir = Path('/workspaces/.screenshots')
+    if screenshots_dir.exists():
+        png_files = sorted(screenshots_dir.glob('*.png'), key=os.path.getmtime, reverse=True)
+        if png_files:
+            return png_files[0]
+
+    return None
+
+def main():
+    """Show the most recent screenshot."""
+    screenshot = get_most_recent_screenshot()
+
+    if screenshot:
+        # Output the path for Claude to read and display
+        print(f"Most recent screenshot: {screenshot}")
+        sys.exit(0)
+
+    # No screenshots found
+    print("No screenshots found.", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("To use screenshot integration:", file=sys.stderr)
+    print("1. Screenshot capability needs to be enabled in your profile", file=sys.stderr)
+    print("2. Run 'dev profile install' with a profile that includes screenshots", file=sys.stderr)
+    print("3. Take a screenshot with Cmd+Shift+4 on macOS", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Tips:", file=sys.stderr)
+    print("- ~/img.png - Most recent screenshot", file=sys.stderr)
+    print("- ~/img2.png through ~/img5.png - Previous screenshots", file=sys.stderr)
+    print("- /screenshot:list - List all available screenshots", file=sys.stderr)
+    sys.exit(1)
+
+if __name__ == "__main__":
+    main()

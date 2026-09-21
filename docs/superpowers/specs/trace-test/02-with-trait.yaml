@@ -1,0 +1,18 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: trace-with-trait
+  namespace: trace-test
+spec:
+  components:
+    - name: scaled-web
+      type: webservice
+      properties:
+        image: nginx:1.21
+      traits:
+        - type: scaler
+          properties:
+            replicas: 3
+        - type: labels
+          properties:
+            app.oam.dev/test: trace-trait

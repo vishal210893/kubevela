@@ -1,0 +1,38 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: trace-full-stack
+  namespace: trace-test
+spec:
+  components:
+    - name: frontend
+      type: webservice
+      properties:
+        image: nginx:1.21
+      traits:
+        - type: scaler
+          properties:
+            replicas: 2
+        - type: labels
+          properties:
+            tier: frontend
+    - name: backend
+      type: worker
+      properties:
+        image: busybox
+        cmd: ["sleep", "3600"]
+  policies:
+    - name: gc-policy
+      type: garbage-collect
+      properties:
+        keepLegacyResource: true
+  workflow:
+    steps:
+      - name: deploy-frontend
+        type: apply-component
+        properties:
+          component: frontend
+      - name: deploy-backend
+        type: apply-component
+        properties:
+          component: backend

@@ -1,0 +1,373 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "SpokeCluster Provision Mode",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "viewBox": [
+      1380,
+      720
+    ],
+    "views": [
+      {
+        "id": "provision-path",
+        "label": "Provision path",
+        "focus": [
+          "hub_api",
+          "provision_ctrl",
+          "blueprint_ctrl",
+          "plane_ctrl",
+          "crossplane"
+        ],
+        "note": "One SpokeCluster becomes an ordered set of plane claims on the hub."
+      },
+      {
+        "id": "cloud-side",
+        "label": "Cloud side",
+        "focus": [
+          "crossplane",
+          "shared_infra",
+          "eks_cluster"
+        ],
+        "note": "Where the prerequisites are built and where the cluster itself appears."
+      },
+      {
+        "id": "reuse-and-limits",
+        "label": "Reuse and limits",
+        "focus": [
+          "admission",
+          "provider_def",
+          "shared_infra",
+          "gateway"
+        ],
+        "note": "The gate, the provider contract, the shared plane, and the exit to connect mode."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "admission",
+      "type": "security",
+      "label": "Admission and CEL",
+      "sublabel": "opens the provision seam",
+      "tag": "EnableClusterProvisioning",
+      "pos": [
+        60,
+        100
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "hub_api",
+      "type": "cloud",
+      "label": "Hub API server",
+      "sublabel": "stores the desired cluster",
+      "tag": "SpokeCluster + 3 new CRDs",
+      "pos": [
+        60,
+        340
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "provider_def",
+      "type": "database",
+      "label": "Provider definition",
+      "sublabel": "maps cloud states to phases",
+      "tag": "ClusterProviderDefinition",
+      "pos": [
+        450,
+        100
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "provision_ctrl",
+      "type": "backend",
+      "label": "Provision controller",
+      "sublabel": "drives the phase machine",
+      "tag": "hub-side",
+      "pos": [
+        450,
+        336
+      ],
+      "size": [
+        200,
+        80
+      ]
+    },
+    {
+      "id": "gateway",
+      "type": "external",
+      "label": "cluster-gateway",
+      "sublabel": "hands over to connect mode",
+      "tag": "same Secret contract",
+      "pos": [
+        450,
+        580
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "blueprint_ctrl",
+      "type": "backend",
+      "label": "ClusterBlueprint",
+      "sublabel": "orders the planes",
+      "tag": "dependsOn",
+      "pos": [
+        840,
+        100
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "plane_ctrl",
+      "type": "backend",
+      "label": "ClusterPlane",
+      "sublabel": "runs planes, wires outputs",
+      "tag": "inputs.fromPlane",
+      "pos": [
+        840,
+        340
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "crossplane",
+      "type": "external",
+      "label": "Crossplane",
+      "sublabel": "turns claims into API calls",
+      "tag": "provider-aws-*",
+      "pos": [
+        840,
+        580
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "shared_infra",
+      "type": "cloud",
+      "label": "Prereq infrastructure",
+      "sublabel": "reused by clusters in region",
+      "tag": "scope: shared",
+      "pos": [
+        1140,
+        340
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "eks_cluster",
+      "type": "cloud",
+      "label": "Bare-minimum EKS",
+      "sublabel": "the cluster that comes out",
+      "tag": "scope: perCluster",
+      "pos": [
+        1140,
+        580
+      ],
+      "size": [
+        200,
+        72
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Hub cluster, created outside KubeVela",
+      "wraps": [
+        "admission",
+        "hub_api",
+        "provider_def",
+        "provision_ctrl",
+        "gateway",
+        "blueprint_ctrl",
+        "plane_ctrl",
+        "crossplane"
+      ],
+      "pad": 26
+    },
+    {
+      "kind": "security-group",
+      "label": "provider IRSA role with create rights",
+      "wraps": [
+        "crossplane"
+      ],
+      "pad": 13
+    },
+    {
+      "kind": "region",
+      "label": "AWS account of the spoke",
+      "wraps": [
+        "shared_infra",
+        "eks_cluster"
+      ],
+      "pad": 22
+    }
+  ],
+  "connections": [
+    {
+      "from": "hub_api",
+      "to": "admission",
+      "label": "gate and CEL check",
+      "variant": "security"
+    },
+    {
+      "from": "hub_api",
+      "to": "provision_ctrl",
+      "label": "watch provision mode",
+      "variant": "emphasis"
+    },
+    {
+      "from": "provision_ctrl",
+      "to": "provider_def",
+      "label": "resolves aws-eks"
+    },
+    {
+      "from": "provision_ctrl",
+      "to": "blueprint_ctrl",
+      "label": "reconciles on the hub",
+      "variant": "emphasis"
+    },
+    {
+      "from": "blueprint_ctrl",
+      "to": "plane_ctrl",
+      "label": "ordered planes",
+      "variant": "emphasis",
+      "labelDy": 30
+    },
+    {
+      "from": "plane_ctrl",
+      "to": "crossplane",
+      "label": "applies claims",
+      "variant": "emphasis",
+      "labelDy": 30
+    },
+    {
+      "from": "crossplane",
+      "to": "shared_infra",
+      "label": "ec2, iam, route53",
+      "variant": "emphasis"
+    },
+    {
+      "from": "crossplane",
+      "to": "eks_cluster",
+      "label": "provider-aws-eks",
+      "labelDy": 24
+    },
+    {
+      "from": "shared_infra",
+      "to": "eks_cluster",
+      "label": "vpcId, subnets, oidc",
+      "variant": "emphasis",
+      "labelDy": 30
+    },
+    {
+      "from": "provision_ctrl",
+      "to": "gateway",
+      "label": "endpoint and CA",
+      "variant": "emphasis",
+      "labelDy": 30
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Admission and CEL",
+      "items": [
+        "Connect mode was shipped with provision deliberately closed. The webhook and the CEL rules both reject it today, and this epic is what opens them.",
+        "The relaxation is additive and sits behind a new gate. With the gate off, a provision-mode object is rejected with a message that names the gate.",
+        "adopt stays rejected either way, so the mode triad is still only two thirds open after this lands."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Hub API server",
+      "items": [
+        "SpokeCluster grows spec.provider and spec.infraProvisioning.blueprintRef, plus a status tree carrying per-plane and per-component state and outputs.",
+        "The phase machine is Pending, Provisioning, Ready, Failed, with startedAt and an estimated completion so a long create is legible while it runs.",
+        "Three CRDs arrive alongside it: ClusterProviderDefinition, ClusterPlane and ClusterBlueprint. All three exist today only as KEP text."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Provision controller",
+      "items": [
+        "Runs on the hub and needs no connectivity to the spoke, because at the point it starts there is no spoke to reach.",
+        "It resolves the provider definition, reconciles the infraProvisioning blueprint, then translates cloud states such as CREATING and ACTIVE into the phase machine.",
+        "A mid-provision failure names the failing component in a condition and one event, keeps what was already created, and converges on retry without manual cloud cleanup."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "ClusterBlueprint and ClusterPlane",
+      "items": [
+        "The blueprint composes planes and orders them with dependsOn. The plane controller runs the components inside one plane and publishes its outputs.",
+        "Outputs are the ordering mechanism. A component whose upstream output is missing stays Pending with a condition naming the unmet dependency instead of failing.",
+        "No EKS call happens before vpcId and the private subnets exist, and no node group call happens before the cluster reports ACTIVE."
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Crossplane",
+      "items": [
+        "The only backend implemented. The provider definition keeps schematic arms for CAPI, tf-controller, ACK and KRO in the schema, with nothing behind them.",
+        "The AWS providers are already installed and enabled in Atmos, serving data-service compositions. Nothing has pointed them at cluster-shaped infrastructure yet.",
+        "The provider role needs VPC, IAM and EKS create rights. That is a real privilege expansion over today's scope and needs a security review, not a broad grant."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Shared prereq and per-cluster",
+      "items": [
+        "The prereq plane builds the VPC, three availability zones of subnets, NAT and IGW, the cluster IAM roles and the OIDC provider, with the Kubernetes ELB subnet tags.",
+        "A second SpokeCluster naming the same blueprint consumes those outputs rather than building a second VPC, and the plane lists both consumers.",
+        "A consumer-check finalizer refuses to delete a shared plane while anything still consumes it, and names the consumers in the refusal. Terraform state layout gives this only by convention."
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "cluster-gateway handoff",
+      "items": [
+        "Provision ends where connect begins. Connectivity is derived from plane outputs, so there is no static kubeconfig anywhere in this path.",
+        "The Secret uses the contract connect mode already established, which is why vela cluster list and topology policies work against a provisioned cluster with no change.",
+        "The bare-minimum target is a private endpoint, IRSA, and one small system node group. No add-on stack, no Flux bootstrap, no Atmos NG parity."
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Teardown and what is left out",
+      "items": [
+        "Cleanup runs in reverse phase order and is checked against the cloud account, so no VPC, NAT gateway, IAM role, OIDC provider or node group is left orphaned.",
+        "Re-applying an unchanged specification makes no mutating cloud call, and the reconcile rate is measured so amplification is detectable.",
+        "Out of scope: provisioning the hub, the rollout engine, drift detection, revision publishing, non-AWS providers, and replacing Terraform as the Atmos path."
+      ]
+    }
+  ]
+}

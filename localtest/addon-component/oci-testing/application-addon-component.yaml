@@ -1,0 +1,30 @@
+# The addon component resolving a pinned version from an OCI registry.
+#
+# The outer Application tracks the child Application the addon renders to; the
+# child tracks and heals the addon's own auxiliaries. Unlike `vela addon enable`,
+# the registry is resolved by the controller, so this needs a controller built
+# from the branch under test.
+#
+# Apply after localtest/addon-component/oci-testing/04-add-registry.sh has
+# registered the "zot-oci" registry.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: oci-addon-pinned
+  namespace: vela-system
+spec:
+  components:
+    - name: example
+      type: addon
+      properties:
+        # Defaults to the component name; stated here to keep the test explicit.
+        addon: example
+        # The only version published by 03-push-addon.sh.
+        version: "1.0.1"
+        registry: zot-oci
+        properties:
+          example: hello-oci
+        # The example fixture declares no SystemRequirements, but a controller
+        # built from source reports a non-release version, which the check
+        # rejects. This mirrors the imperative skipVersionValidate escape hatch.
+        skipVersionValidation: true

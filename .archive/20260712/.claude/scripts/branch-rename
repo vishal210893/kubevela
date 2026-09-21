@@ -1,0 +1,137 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Rename current branch"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/branch-rename *)"]
+#
+# [[tool.claude.argument]]
+# name = "new-name"
+# type = "required-passthrough"
+# hint = "<new-name>"
+# description = "New name for the current branch"
+#
+# [tool.claude.output]
+# prompt = "Confirm rename. Show old and new names. Note if remote was updated."
+# examples = [
+#   "[OK] Renamed branch 'feture-auth' to 'feature-auth'\n[OK] Updated remote tracking"
+# ]
+# ///
+
+import sys
+import os
+import argparse
+
+# Add bin directory to path to import gitlib
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    get_repo_url,
+    get_current_branch,
+    run_git,
+    output_result,
+    get_template_from_metadata,
+    remote_branch_exists,
+    error,
+    get_default_branch
+)
+try:
+    from lib.speclib import get_associated_spec, associate_spec, disassociate_spec
+    SPECLIB_AVAILABLE = True
+except ImportError:
+    SPECLIB_AVAILABLE = False
+
+def main():
+    """
+    Rename current branch.
+
+    Idempotent: No (fails if branch already has that name)
+    Worktree Constraints: Works for both WT & Branch flows (has logic handling both)
+    """
+    # Parse arguments
+    parser = argparse.ArgumentParser(description='Rename current branch')
+    parser.add_argument('new_name', metavar='new-name',
+                       help='New name for the current branch')
+
+    args = parser.parse_args()
+    new_name = args.new_name
+
+    # For colon format, convert to dash format
+    new_name_git = new_name.replace(':', '-')
+
+    # Get current branch name
+    old_name = get_current_branch()
+    default_branch = get_default_branch()
+
+    # Get existing spec association from dev.yaml
+    spec_name = get_associated_spec(old_name) if SPECLIB_AVAILABLE else None
+
+    # Can't rename default branch
+    if old_name == default_branch:
+        error(f"Cannot rename {default_branch} branch")
+        sys.exit(1)
+
+    # Check if already has the desired name
+    if old_name == new_name_git:
+        error(f"Branch is already named '{new_name_git}'")
+        sys.exit(1)
+
+    # Remove the old branch spec association from dev.yaml
+    if SPECLIB_AVAILABLE:
+        disassociate_spec(old_name)
+
+    # Try to get repo_url only if it might be used
+    try:
+        repo_url = get_repo_url()
+    except Exception:
+        # If no remote is configured, set repo_url to None
+        repo_url = None
+
+    # Rename local branch to git-friendly name
+    run_git(
+        ['branch', '-m', new_name_git],
+        operation_description="rename branch",
+        context=f"{old_name} -> {new_name_git}"
+    )
+
+    # Restore spec association with new branch name in dev.yaml
+    if spec_name and SPECLIB_AVAILABLE:
+        associate_spec(spec_name, new_name_git)
+
+    # Check if old branch exists on remote
+    if repo_url and remote_branch_exists(old_name, repo_url):
+        # Delete old remote branch
+        run_git(
+            ['push', repo_url, '--delete', old_name],
+            operation_description="delete old remote branch",
+            context=old_name
+        )
+
+        # Push new branch to remote
+        run_git(
+            ['push', '-u', repo_url, new_name_git],
+            operation_description="push renamed branch",
+            context=new_name_git
+        )
+
+        remote_status = "[OK] Updated remote tracking"
+    else:
+        remote_status = "(Local only - no remote to update)"
+
+    # Output result
+    data = {
+        'old_name': old_name,
+        'new_name': new_name_git,
+        'original_name': new_name,  # Preserve the original colon name if applicable
+        'remote_status': remote_status
+    }
+
+    template = get_template_from_metadata(script_path=__file__)
+    output_result(data, template)
+
+if __name__ == "__main__":
+    main()

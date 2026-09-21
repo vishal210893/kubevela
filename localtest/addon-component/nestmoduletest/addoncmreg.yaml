@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vela-addon-registry
+  namespace: vela-system
+data:
+  registries: '{
+  "my-addons":{
+    "name": "my-addons",
+    "git": {
+      "url": "https://github.com/<you>/<your-repo>",
+      "path": "addons",
+      "token": "<your-PAT>"
+    }
+  }
+}'
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vela-module-registry
+  namespace: vela-system
+data:
+  registries: '{
+  "my-modules":{
+    "name": "my-modules",
+    "git": {
+      "url": "https://github.com/<you>/<your-repo>",
+      "path": "modules",
+      "token": "<your-PAT>"
+    }
+  }
+}'

@@ -1,0 +1,22 @@
+apiVersion: core.oam.dev/v1beta1
+kind: WorkflowStepDefinition
+metadata:
+  name: mk-step
+  namespace: vela-system
+spec:
+  schematic:
+    cue:
+      template: |
+        import "vela/builtin"
+
+        // Marker workflow step. Emits a no-op message; we only need it
+        // present in App.spec.workflow so the WorkflowStepDefinition
+        // ends up in the ApplicationRevision snapshot, then we mutate
+        // its template body to test autoUpdate.
+        // stepMarker: v2
+        msg: builtin.#Message & {
+          $params: {message: "mk-step v2: \(parameter.message)"}
+        }
+        parameter: {
+          message: *"noop" | string
+        }

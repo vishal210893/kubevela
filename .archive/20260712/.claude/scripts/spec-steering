@@ -1,0 +1,312 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Analyze codebase and generate steering documents"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-steering)", "Read", "Write", "Glob", "Grep"]
+#
+# [tool.claude.output]
+# prompt = """Based on the script output, generate lightweight project steering documents in the steering/ directory.
+#
+# Steering documents provide always-on project identity loaded at the start of every session.
+# They are lightweight (not exhaustive) and focus on what Claude needs to know to work effectively.
+#
+# ## Existing Steering Files
+#
+# If files already exist (listed in existing_files), READ each one before regenerating.
+# Refine and improve them rather than replacing from scratch.
+# If a file is missing from existing_files, generate it fresh from the codebase analysis.
+#
+# ## Files to Generate
+#
+# Generate (or refine) these files in the steering_dir shown in script output:
+#
+# ### product.md
+# Answers: What is this project? Who uses it? What problem does it solve?
+# Derive from: README content, package description, existing docs.
+# Structure:
+# ```markdown
+# # Product Overview
+#
+# ## Purpose
+# [1-3 sentences: what it does and why it exists]
+#
+# ## Target Users
+# [Who uses this: developers, ops, end users, etc.]
+#
+# ## Key Features
+# - [Feature 1]
+# - [Feature 2]
+#
+# ## Constraints
+# - [Technical or business constraint]
+# ```
+#
+# ### tech.md
+# Answers: What technology stack? What are the build tools and conventions?
+# Derive from: package.json, go.mod, pom.xml, config files, build scripts.
+# Structure:
+# ```markdown
+# # Technology Stack
+#
+# ## Runtime & Language
+# [Language, version, runtime]
+#
+# ## Key Dependencies
+# | Package | Purpose |
+# |---------|---------|
+# | [name]  | [what it does] |
+#
+# ## Build & Development
+# [Build tools, dev commands, test commands]
+#
+# ## Conventions
+# - [Naming conventions]
+# - [Code style]
+# - [File organization patterns]
+# ```
+#
+# ### structure.md
+# Answers: How is the codebase organized? What are the naming patterns?
+# Derive from: directory tree, import patterns, file naming.
+# Structure:
+# ```markdown
+# # Project Structure
+#
+# ## Directory Layout
+# ```
+# [ASCII tree of key directories -- not exhaustive, just the important ones]
+# ```
+#
+# ## Key Directories
+# | Path | Purpose |
+# |------|---------|
+# | [path] | [what it contains] |
+#
+# ## Naming Conventions
+# - [File naming pattern]
+# - [Directory naming pattern]
+#
+# ## Architecture Notes
+# [1-3 sentences on the overall architecture pattern]
+# ```
+#
+# ## Constitution (Optional)
+#
+# If has_constitution is false AND the user asked to create one:
+# Generate constitution.md via interactive Q&A. Ask the user:
+# 1. "What are the immutable principles for this project?" (coding standards, patterns to always use)
+# 2. "What patterns or approaches should NEVER be used?"
+# 3. "What quality standards must always be maintained?"
+# Then generate constitution.md with numbered articles.
+#
+# If has_constitution is false and the user did NOT ask for a constitution:
+# After generating the three standard files, offer:
+# "Steering documents generated. Would you like to also create a constitution.md with immutable
+#  project principles? This gets injected into all spec generation commands as a compliance constraint."
+#
+# ## Constitution Content as Constraint
+#
+# If constitution_content is provided, it contains existing constitution rules.
+# Ensure all generated steering documents are consistent with these principles.
+#
+# ## Output
+#
+# After writing files, report:
+# - Which files were created/updated
+# - Key facts extracted for each document
+# - Whether to run /spec:steering again to refine further"""
+# examples = [
+#   "[OK] Generated steering documents in /path/to/steering/\n\n  product.md  - CLI tool for managing Docker devcontainers, targets developers\n  tech.md     - Node.js 20, Commander.js, YAML parsing, npm package\n  structure.md - capabilities/, profiles/, src/, bin/ layout\n\nRun /spec:steering again to refine. Add /constitution to create immutable project principles."
+# ]
+# ///
+
+"""
+Analyze codebase and gather context for steering document generation.
+
+Scans the git root for codebase metadata (package.json, README, directory tree,
+git log patterns) and the steering/ directory for existing documents.
+Outputs JSON for Claude to generate product.md, tech.md, and structure.md.
+"""
+
+import sys
+import os
+import json
+import subprocess
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import get_git_root, steering_path, in_git_repo, doc_root
+
+
+TECH_FILES = [
+    'package.json',
+    'pom.xml',
+    'go.mod',
+    'requirements.txt',
+    'pyproject.toml',
+    'Cargo.toml',
+    'build.gradle',
+    'build.gradle.kts',
+    'composer.json',
+    'Gemfile',
+    '.ruby-version',
+    '.nvmrc',
+    '.node-version',
+]
+
+README_NAMES = ['README.md', 'readme.md', 'README.rst', 'README.txt', 'README']
+
+
+def read_file_safe(path, max_chars=8000):
+    """Read a file safely, truncating if too large."""
+    try:
+        content = path.read_text(encoding='utf-8', errors='replace')
+        if len(content) > max_chars:
+            content = content[:max_chars] + f'\n... [truncated at {max_chars} chars]'
+        return content
+    except Exception:
+        return None
+
+
+def get_dir_tree(root, max_depth=3, max_entries=60):
+    """Generate a compact directory tree, skipping common noise directories."""
+    skip_dirs = {
+        'node_modules', '.git', '__pycache__', '.pytest_cache',
+        'dist', 'build', 'target', '.next', '.nuxt', 'vendor',
+        'bld', 'bld-plugin', '.venv', 'venv', '.env',
+        'coverage', '.coverage', '.mypy_cache', '.tox',
+    }
+
+    lines = []
+    count = [0]
+
+    def walk(path, prefix='', depth=0):
+        if depth > max_depth or count[0] >= max_entries:
+            return
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (p.is_file(), p.name))
+        except PermissionError:
+            return
+
+        dirs = [e for e in entries if e.is_dir() and e.name not in skip_dirs and not e.name.startswith('.')]
+        files = [e for e in entries if e.is_file() and not e.name.startswith('.')]
+
+        for entry in dirs + files:
+            if count[0] >= max_entries:
+                lines.append(f"{prefix}... [truncated]")
+                return
+            connector = '[D] ' if entry.is_dir() else '    '
+            lines.append(f"{prefix}{connector}{entry.name}")
+            count[0] += 1
+            if entry.is_dir():
+                walk(entry, prefix + '  ', depth + 1)
+
+    walk(root)
+    return '\n'.join(lines)
+
+
+def get_git_log_summary(git_root):
+    """Get recent git log summary for pattern detection."""
+    result = subprocess.run(
+        ['git', 'log', '--oneline', '--no-decorate', '-20'],
+        capture_output=True, text=True, cwd=str(git_root)
+    )
+    return result.stdout.strip() if result.returncode == 0 else ''
+
+
+def main():
+    if not in_git_repo():
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': 'Not in a git repository'}))
+        else:
+            print('Error: Not in a git repository', file=sys.stderr)
+        sys.exit(1)
+
+    git_root = get_git_root()
+
+    # Gather codebase metadata from git root
+    tech_files = {}
+    for name in TECH_FILES:
+        path = git_root / name
+        if path.exists():
+            content = read_file_safe(path)
+            if content:
+                tech_files[name] = content
+
+    # Read README
+    readme_content = None
+    readme_file = None
+    for name in README_NAMES:
+        path = git_root / name
+        if path.exists():
+            readme_content = read_file_safe(path, max_chars=4000)
+            readme_file = str(path)
+            break
+
+    # Directory tree
+    dir_tree = get_dir_tree(git_root)
+
+    # Git log for patterns
+    git_log = get_git_log_summary(git_root)
+
+    # Steering directory
+    try:
+        steer_dir = steering_path()
+    except SystemExit:
+        # doc_root() might exit if config is incomplete
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': 'Could not resolve doc root. Run /spec:setup first.'}))
+        else:
+            print('Error: Could not resolve doc root. Run /spec:setup first.', file=sys.stderr)
+        sys.exit(1)
+
+    existing_files = []
+    existing_contents = {}
+    if steer_dir.is_dir():
+        for md_file in sorted(steer_dir.glob('*.md')):
+            existing_files.append(md_file.name)
+            content = read_file_safe(md_file)
+            if content:
+                existing_contents[md_file.name] = content
+
+    constitution_file = steer_dir / 'constitution.md'
+    has_constitution = constitution_file.exists()
+    constitution_content = read_file_safe(constitution_file) if has_constitution else None
+
+    data = {
+        'git_root': str(git_root),
+        'steering_dir': str(steer_dir),
+        'existing_files': existing_files,
+        'existing_contents': existing_contents,
+        'has_constitution': has_constitution,
+        'constitution_content': constitution_content,
+        'readme_file': readme_file,
+        'readme_content': readme_content,
+        'tech_files': tech_files,
+        'dir_tree': dir_tree,
+        'git_log': git_log,
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f'Steering directory: {steer_dir}')
+        print(f'Git root analyzed: {git_root}')
+        if existing_files:
+            print(f'Existing steering files: {", ".join(existing_files)}')
+        else:
+            print('No existing steering files (will generate fresh)')
+        if tech_files:
+            print(f'Tech files found: {", ".join(tech_files.keys())}')
+        if readme_file:
+            print(f'README found: {readme_file}')
+        print('Run with CC=1 to get JSON output for Claude')
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,119 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "List available projects"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-project-list)"]
+#
+# [tool.claude.output]
+# prompt = "Display projects in a formatted list showing name and spec/subsystem counts. Mark the current project with an asterisk."
+# examples = [
+#   "Projects\n==========\n\n  * dev (current)\n    platform\n    billing\n\nCurrent: dev"
+# ]
+# ///
+
+"""
+List available projects by scanning the project scan directory.
+
+Discovers project subdirectories and shows spec/subsystem counts for each.
+Marks the currently active project.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_project, get_spec_repo_directory, in_git_repo
+)
+
+
+def count_subdirs(path):
+    """Count immediate subdirectories in a path."""
+    if not path.exists():
+        return 0
+    return sum(1 for d in path.iterdir() if d.is_dir())
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    scan_dir = Path(os.path.expandvars(get_spec_repo_directory()))
+    if not scan_dir.exists():
+        data = {'error': 'scan directory not found', 'scan_dir': str(scan_dir), 'projects': []}
+        if os.getenv('CC') == '1':
+            print(json.dumps(data))
+        else:
+            print(f"Project scan directory not found: {scan_dir}")
+        sys.exit(1)
+
+    current = get_project()
+    projects = []
+
+    for d in sorted(scan_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        # Skip hidden directories and common non-project dirs
+        if d.name.startswith('.'):
+            continue
+        # A project directory should have specs/, ctx/, or steering/ subdirectory
+        has_specs = (d / 'specs').is_dir()
+        has_ctx = (d / 'ctx').is_dir()
+        has_steering = (d / 'steering').is_dir()
+        if not (has_specs or has_ctx or has_steering):
+            continue
+
+        spec_count = count_subdirs(d / 'specs') if has_specs else 0
+        ctx_count = count_subdirs(d / 'ctx') if has_ctx else 0
+
+        projects.append({
+            'name': d.name,
+            'current': d.name == current,
+            'spec_count': spec_count,
+            'ctx_count': ctx_count
+        })
+
+    data = {
+        'projects': projects,
+        'current': current,
+        'scan_dir': str(scan_dir),
+        'total': len(projects)
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if not projects:
+            print(f"No projects found in {scan_dir}/")
+            print("Projects need specs/, ctx/, or steering/ subdirectories")
+            return
+
+        print("Projects")
+        print("========")
+        print()
+        for c in projects:
+            marker = " (current)" if c['current'] else ""
+            specs = c['spec_count']
+            ctxs = c['ctx_count']
+            spec_label = "spec" if specs == 1 else "specs"
+            ctx_label = "context" if ctxs == 1 else "contexts"
+            prefix = "  * " if c['current'] else "    "
+            print(f"{prefix}{c['name']}{marker} - {specs} {spec_label}, {ctxs} {ctx_label}")
+
+        print()
+        if current:
+            print(f"Current: {current}")
+        else:
+            print("No project selected")
+
+
+if __name__ == "__main__":
+    main()

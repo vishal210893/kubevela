@@ -1,0 +1,127 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/gwre-pdo/ai-dev/main/ns/harness/capabilities/ci/src/claude/files/harness-schema.json
+# =============================================================================
+# .harness.yaml -- ai-harness pipeline configuration
+# Schema: https://raw.githubusercontent.com/gwre-pdo/ai-dev/main/ns/harness/capabilities/ci/src/claude/files/harness-schema.json
+# Run `/harness:validate` to verify this file against the schema.
+# =============================================================================
+
+version: 1.0.0
+
+# ---------------------------------------------------------------------------
+# assess-risk: classify each PR into exactly one tier (critical -> low).
+# Walks tiers from most-severe to least-severe; first pattern hit wins.
+# max-lines / max-files (optional) escalate to this tier when exceeded
+# even if no pattern matched.
+# ---------------------------------------------------------------------------
+assess-risk:
+  enabled: true
+  categories:
+    # ---- CRITICAL: things that can break production or leak secrets ----
+    critical:
+      patterns:
+        - .github/workflows/       # CI/CD definitions
+        - .github/actions/         # custom composite actions
+        # Uncomment paths your repo treats as production-critical:
+        # - infra/
+        # - terraform/
+        # - kustomize/overlays/prod/
+        # - charts/**/values-prod.yaml
+        # - Dockerfile
+        # - .dockerignore
+
+    # ---- HIGH: shipped source code + tests ----
+    high:
+      max-lines: "*"               # "*" = unlimited; set an int to escalate by size
+      max-files: "*"
+      patterns:
+        - src/                     # most-common source root
+        - lib/                     # common library root
+        - app/                     # Rails/Next style
+        - internal/                # Go style
+        - pkg/                     # Go style
+        - test/
+        - tests/
+        - "**/*test*"              # any file or dir named *test*
+
+    # ---- MEDIUM: build / dependency / tooling config ----
+    medium:
+      max-lines: "*"               # "*" = unlimited; set an int to escalate by size
+      max-files: "*"
+      patterns:
+        - .harness.yaml            # this file -- changes affect the pipeline
+        # Common manifests + lockfiles across ecosystems:
+        - "**/package.json"        # JS / TS
+        - "**/package-lock.json"
+        - "**/yarn.lock"
+        - "**/pnpm-lock.yaml"
+        - "**/pyproject.toml"      # Python
+        - "**/requirements*.txt"
+        - "**/poetry.lock"
+        - "**/uv.lock"
+        - "**/go.mod"              # Go
+        - "**/go.sum"
+        - "**/Cargo.toml"          # Rust
+        - "**/Cargo.lock"
+        - "**/pom.xml"             # Java
+        - "**/build.gradle*"
+        - "**/Gemfile"             # Ruby
+        - "**/Gemfile.lock"
+
+    # ---- LOW: docs + metadata + governance files ----
+    low:
+      max-lines: "*"               # "*" = unlimited; set an int to escalate by size
+      max-files: "*"
+      patterns:
+        - docs/
+        - "**/*.md"
+        - "**/*.mdx"
+        - "**/*.txt"
+        - "**/*.rst"
+        - LICENSE*
+        - NOTICE*
+        - CODEOWNERS               # access governance
+        - .gitignore
+        - .gitattributes
+        - .editorconfig
+
+# ---------------------------------------------------------------------------
+# code-review: Claude code review on PR push. `models.default` is the
+# fallback; per-tier keys override it. Set a tier to "skip" to disable.
+#
+# `prompt:` describes WHAT to look for in your repo. The harness handles
+# output format, file posting, and verdict marker automatically -- you do
+# NOT need to mention .review/, gh pr comment, or CLAUDE_VERDICT here.
+# ---------------------------------------------------------------------------
+code-review:
+  enabled: true
+  models:
+    default: claude-sonnet-4-6
+    # Per-tier overrides (uncomment to customise):
+    # critical: claude-opus-4-8
+    # low:      skip
+  prompt: |
+    You are a code reviewer for this repository. Be concise and actionable.
+    Only flag issues you are >80% confident are real.
+
+    Customise this prompt with what matters most in this repo:
+    - Invariants that must hold
+    - Common bug classes to watch for
+    - File-path conventions or hot spots
+    - What counts as a [CRITICAL] vs [LOW] in this codebase
+
+# ---------------------------------------------------------------------------
+# reviewer-brief: one-page brief for the human reviewer. Posted after
+# code-review. Set models.default to "skip" to disable entirely.
+#
+# Like code-review, the prompt describes WHAT to surface; the harness
+# handles the comment marker, upsert mechanic, and field template.
+# ---------------------------------------------------------------------------
+reviewer-brief:
+  enabled: true
+  models:
+    default: claude-sonnet-4-6
+  prompt: |
+    Surface what a human reviewer needs to decide quickly: goal,
+    approach, risk rationale, focus area, backwards-compat, test
+    coverage, estimated review time. One sentence per field. Cite
+    evidence from the diff -- do not speculate.

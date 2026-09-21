@@ -1,0 +1,451 @@
+Index: docs/design/config-component-definition/README.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># ComponentDefinition-backed Config Design\n\n## Summary\n\nThis design uses the existing `ComponentDefinition` API as the registry for\nconfig templates. A new `Config` custom resource references one restricted\n`ComponentDefinition` and supplies properties. The Config controller renders\nthe definition into a primary Kubernetes Secret and optional auxiliary\nresources.\n\nThe design removes the need for a separate `ConfigTemplate` CRD and\nConfigTemplate controller. It does not remove the Config controller: a\ncontroller must still watch Config resources, render their definitions, apply\nthe resulting objects, report status, and clean resources up.\n\n```text\nComponentDefinition (marked as a config template)\n                         |\n                         | referenced by\n                         v\n                     Config CR\n                         |\n                         | rendered by Config controller\n                         v\n            Primary Secret + optional outputs\n```\n\n## Background\n\nKubeVela's existing config subsystem is a templating layer for reusable\nconfiguration. A platform team publishes a CUE config template, and application\nteams instantiate it with different properties. The primary rendered object is\na Secret. A template may also render arbitrary Kubernetes resources through its\n`outputs` block.\n\nThe existing contract includes more than CUE evaluation:\n\n- `template.output` must produce the primary Secret.\n- `template.outputs` may produce auxiliary Kubernetes objects.\n- KubeVela adds protected labels and annotations to the Secret.\n- The original input properties are stored in the Secret for non-sensitive\n  read and list operations.\n- Sensitive configs cannot be returned by config read paths.\n- Auxiliary object references are tracked for deletion.\n- Expanded writers may send rendered configuration to an external system.\n- Distribution uses an Application and topology policies to deliver the Secret\n  to other clusters or namespaces.\n\nThe proposed declarative API must either preserve these behaviors or explicitly\nidentify them as compatibility gaps.\n\n## Why ComponentDefinition fits\n\n`ComponentDefinition` already provides the capabilities needed to register a\nreusable CUE template:\n\n- CUE parameter schema generation\n- definition validation\n- definition revisions\n- `output` and `outputs` rendering\n- namespaced and system-level definition lookup\n- existing CLI and documentation tooling\n\nCreating another template API duplicates much of this machinery. A dedicated\nConfigTemplate controller currently compiles the CUE template, extracts its\nparameter schema, and writes readiness information. The existing\nComponentDefinition controller already performs the corresponding definition\nregistration, schema, and revision work.\n\nThe two concepts are not completely interchangeable. A normal component is\nrendered as part of an Application and may use traits, policies, workflow data,\nand the full Application context. A Config has a smaller lifecycle and a stable\nSecret-oriented contract. For that reason, Config should reuse the definition\nformat and rendering engine without pretending to be a complete Application.\n\n## Decision\n\nUse labeled `ComponentDefinition` resources as config templates and retain one\nfocused Config controller.\n\nA ComponentDefinition is eligible for use by Config only when it has:\n\n```yaml\nmetadata:\n  labels:\n    config.oam.dev/template: \"true\"\n```\n\nThe Config controller enforces these additional restrictions:\n\n1. The definition's declared workload kind must be `Secret` in API version\n   `v1`.\n2. The primary `output` must render a valid Secret.\n3. `outputs` may contain arbitrary Kubernetes resources.\n4. Traits, policies, dependencies, workflow inputs, and workflow outputs are\n   not part of the Config API.\n5. Only `context.name` and `context.namespace` are guaranteed to templates.\n\nThis boundary retains the existing meaning of a KubeVela config while reusing\nthe ComponentDefinition infrastructure.\n\n## Alternatives considered\n\n### Config backed by ComponentDefinition\n\nThe Config controller loads and renders a marked ComponentDefinition directly.\nThis reuses definition registration while keeping config-specific lifecycle and\nsecurity behavior in one place.\n\nThis is the selected approach.\n\n### Config creates a child Application\n\nThe Config controller could translate every Config into a one-component\nApplication. This would reuse the complete Application rendering and apply\npipeline, but it would introduce ApplicationRevisions and ResourceTrackers for\neach Config. It would also make sensitive properties easier to expose through\nApplication specs, revisions, or status and would complicate config status and\ndistribution.\n\n### Use Application directly\n\nUsers could instantiate a config ComponentDefinition in an Application without\nintroducing a Config CRD. This requires no Config controller, but loses the\ndedicated config API, config CLI behavior, sensitive reads, config listing,\nSecret metadata contract, and independent config lifecycle.\n\n## API design\n\n### Config template definition\n\nThe following definition renders an image registry Secret and an optional\nConfigMap containing non-sensitive registry metadata.\n\n```yaml\napiVersion: core.oam.dev/v1beta1\nkind: ComponentDefinition\nmetadata:\n  name: image-registry-config\n  namespace: vela-system\n  labels:\n    config.oam.dev/template: \"true\"\n  annotations:\n    config.oam.dev/alias: Image Registry\n    config.oam.dev/description: Docker registry authentication\n    config.oam.dev/scope: namespace\n    config.oam.dev/sensitive: \"true\"\nspec:\n  workload:\n    definition:\n      apiVersion: v1\n      kind: Secret\n  schematic:\n    cue:\n      template: |\n        import (\n          \"encoding/base64\"\n          \"encoding/json\"\n        )\n\n        output: {\n          apiVersion: \"v1\"\n          kind:       \"Secret\"\n          metadata: {\n            name:      context.name\n            namespace: context.namespace\n          }\n          type: \"kubernetes.io/dockerconfigjson\"\n          stringData: {\n            \".dockerconfigjson\": json.Marshal({\n              auths: {\n                \"\\(parameter.registry)\": {\n                  username: parameter.username\n                  password: parameter.password\n                  auth: base64.Encode(\n                    null,\n                    parameter.username + \":\" + parameter.password,\n                  )\n                }\n              }\n            })\n          }\n        }\n\n        outputs: registryInfo: {\n          apiVersion: \"v1\"\n          kind:       \"ConfigMap\"\n          metadata: {\n            name:      context.name + \"-info\"\n            namespace: context.namespace\n          }\n          data: {\n            registry: parameter.registry\n          }\n        }\n\n        parameter: {\n          registry: *\"index.docker.io\" | string\n          username: string\n          password: string\n        }\n\n        errs: [\n          if parameter.username == \"\" {\n            \"username must not be empty\"\n          },\n          if parameter.password == \"\" {\n            \"password must not be empty\"\n          },\n        ]\n```\n\nUnlike the legacy config-template format, the CUE follows the normal\nComponentDefinition structure. `output`, `outputs`, `parameter`, and `errs`\nare at the root; there is no outer `template: { ... }` block inside the CUE.\n\n### Config with inline properties\n\n```yaml\napiVersion: config.oam.dev/v1alpha1\nkind: Config\nmetadata:\n  name: team-a-registry\n  namespace: team-a\nspec:\n  definitionRef:\n    name: image-registry-config\n    namespace: vela-system\n  properties:\n    registry: index.docker.io\n    username: example-user\n    password: example-token\n  alias: Team A registry\n  description: Registry credentials used by Team A workloads\n```\n\nInline properties are useful for non-sensitive examples. They should not hold\nreal credentials because Config resources are not protected like Secrets.\n\n### Config with sensitive properties\n\nReal credentials should be stored in a Secret:\n\n```yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: team-a-registry-properties\n  namespace: team-a\ntype: Opaque\nstringData:\n  properties: |\n    {\n      \"registry\": \"index.docker.io\",\n      \"username\": \"team-a\",\n      \"password\": \"replace-me\"\n    }\n---\napiVersion: config.oam.dev/v1alpha1\nkind: Config\nmetadata:\n  name: team-a-registry\n  namespace: team-a\nspec:\n  definitionRef:\n    name: image-registry-config\n    namespace: vela-system\n  propertiesFrom:\n    secretRef:\n      name: team-a-registry-properties\n      key: properties\n```\n\n`properties` and `propertiesFrom` are mutually exclusive. The referenced\nproperties Secret must be in the same namespace as the Config.\n\n### Definition revisions\n\nAn optional revision makes rendering reproducible:\n\n```yaml\nspec:\n  definitionRef:\n    name: image-registry-config\n    namespace: vela-system\n    revision: image-registry-config-v2\n```\n\nWhen no revision is supplied, the Config controller uses the current definition\nand re-renders the Config when that definition changes.\n\n### Config status\n\n```yaml\nstatus:\n  observedGeneration: 2\n  phase: Available\n  definition:\n    name: image-registry-config\n    namespace: vela-system\n    revision: image-registry-config-v3\n  secretRef:\n    name: team-a-registry\n  resources:\n    - apiVersion: v1\n      kind: Secret\n      name: team-a-registry\n      namespace: team-a\n    - apiVersion: v1\n      kind: ConfigMap\n      name: team-a-registry-info\n      namespace: team-a\n  conditions:\n    - type: Ready\n      status: \"True\"\n      reason: ReconcileSuccess\n```\n\nThe resolved definition revision in status records exactly which template\nproduced the current resources.\n\n## Reconciliation\n\nFor each Config, the controller performs the following sequence:\n\n1. Resolve `definitionRef`, including its namespace and optional revision.\n2. Verify that the definition is labeled as a config template.\n3. Verify that its declared primary workload is a `v1/Secret`.\n4. Load properties from `spec.properties` or `spec.propertiesFrom`.\n5. Render the definition with the shared ComponentDefinition CUE engine.\n6. Validate that the primary output is a Secret.\n7. Apply protected config metadata to the Secret.\n8. Store input properties when allowed by the sensitive-data contract.\n9. Apply the Secret and all auxiliary outputs.\n10. Remove resources that were present in the previous render but not the new\n    render.\n11. Record the resolved revision and resource inventory in status.\n\nThe controller watches Config resources, referenced ComponentDefinitions,\nreferenced DefinitionRevisions, input-property Secrets, and owned rendered\nresources. A definition or input change requeues affected Config resources.\n\n### Ownership and deletion\n\nThe primary Secret and same-namespace namespaced outputs can use controller\nowner references. Owner references cannot cover cross-namespace or\ncluster-scoped outputs. Therefore, Config needs a finalizer and an explicit\nresource inventory for complete cleanup.\n\nDeletion proceeds as follows:\n\n1. Delete every tracked auxiliary resource.\n2. Delete resources that cannot be garbage-collected through owner references.\n3. Allow Kubernetes garbage collection to remove owned resources.\n4. Remove the Config finalizer.\n\nThe controller must not delete an object it no longer owns. Apply metadata must\ninclude a stable Config UID so cleanup can verify ownership before deletion.\n\n### Updates and conflicts\n\nChanging `definitionRef.name` or the primary Secret type after the first\nsuccessful render should be rejected, matching the existing config behavior.\nProperty changes and unpinned definition updates re-render the resources.\n\nServer-side apply should use a dedicated field manager. A conflict on a field\nowned by another manager must surface as a Ready=False condition rather than\nsilently overwriting the field.\n\n## Security\n\n- Definitions marked sensitive must require `propertiesFrom` for declarative\n  Config resources. This prevents credentials from being stored in Config\n  specs, audit events, or ordinary API reads.\n- Sensitive input properties must not be copied into Config status.\n- Config read operations must continue to reject sensitive configs.\n- Protected labels and annotations are set by the controller after rendering,\n  so templates cannot override their values.\n- Definition lookup and output application must respect Kubernetes RBAC.\n- Templates must not receive an Application context implicitly. Only the\n  documented Config context is stable.\n\n## CLI compatibility\n\nThe existing commands can remain as a compatibility facade:\n\n- `vela config-template apply` translates legacy config-template CUE into a\n  marked ComponentDefinition.\n- `vela config-template list` lists ComponentDefinitions with\n  `config.oam.dev/template=true`.\n- `vela config-template show` reads the ComponentDefinition parameter schema.\n- `vela config-template delete` deletes the marked ComponentDefinition.\n- `vela config create` creates or updates a Config CR.\n- `vela config list`, `delete`, and `distribute` keep their existing user-facing\n  behavior.\n\nDuring migration, template loading may fall back to legacy\n`config-template-<name>` ConfigMaps. New writes should use ComponentDefinition.\nThe fallback can be removed in a later compatibility-breaking release.\n\nDistribution remains Application-backed because topology policies and resource\ntracking already solve the multi-cluster delivery problem. The Config controller\ndoes not need to duplicate that machinery.\n\n## Expanded writers\n\nExpanded writers are not part of ComponentDefinition rendering. Preserving this\nfeature requires one of these explicit choices:\n\n1. Store expanded-writer metadata in ComponentDefinition annotations or\n   `spec.extension` and execute it from the Config controller.\n2. Deprecate expanded writers for Config CRs while retaining them only for the\n   legacy imperative path.\n\nFor full backward compatibility, this design selects the first option. The\nexpanded-writer configuration belongs under `spec.extension.config` so it is\nversioned with the definition instead of spread across annotations.\n\n## Proposed code organization\n\n```text\napis/config.oam.dev/v1alpha1/\n└── config_types.go\n\ncharts/vela-core/crds/\n└── config.oam.dev_configs.yaml\n\npkg/config/\n├── component_definition.go\n├── renderer.go\n├── metadata.go\n└── compatibility.go\n\npkg/controller/config.oam.dev/v1alpha1/config/\n├── config_controller.go\n├── resource_apply.go\n├── resource_cleanup.go\n└── config_controller_test.go\n\npkg/webhook/config.oam.dev/v1alpha1/config/\n├── validating_handler.go\n└── validating_handler_test.go\n\nreferences/cli/\n├── config.go\n├── config_crd.go\n└── config_definition.go\n```\n\nThe following ConfigTemplate-specific files become unnecessary after migration:\n\n```text\napis/config.oam.dev/v1alpha1/configtemplate_types.go\ncharts/vela-core/crds/config.oam.dev_configtemplates.yaml\npkg/controller/config.oam.dev/v1alpha1/configtemplate/\npkg/webhook/config.oam.dev/v1alpha1/configtemplate/\n```\n\n## Testing\n\nUnit and integration tests should cover:\n\n- accepting a correctly labeled Secret ComponentDefinition\n- rejecting an unmarked ComponentDefinition\n- rejecting a non-Secret primary workload\n- rendering inline and Secret-backed properties\n- rejecting both property sources together\n- rendering and updating auxiliary outputs\n- deleting stale and finalizer-managed outputs\n- re-rendering after an unpinned definition update\n- retaining a pinned definition revision\n- refusing to expose sensitive properties\n- preserving protected labels and annotations\n- reporting CUE validation and apply conflicts in status\n- falling back to legacy template ConfigMaps during migration\n- preserving expanded-writer behavior\n- distributing the resulting Secret through the existing Application path\n\n## Migration sequence\n\n1. Add ComponentDefinition-backed loading to the Config controller and CLI.\n2. Teach `vela config-template apply` to create marked ComponentDefinitions.\n3. Retain read fallback for ConfigTemplate CRs and legacy ConfigMaps during the\n   compatibility window.\n4. Migrate built-in and addon config templates to ComponentDefinitions.\n5. Remove the ConfigTemplate controller and stop installing its CRD.\n6. Remove legacy read fallbacks in a later breaking release.\n\n## Consequences\n\n### Benefits\n\n- One definition API and one definition registration controller\n- Reuse of schema generation and definition revisions\n- Less duplicated CUE compilation code\n- Config templates become compatible with existing definition tooling\n- A focused Config controller retains config-specific security and lifecycle\n\n### Costs\n\n- Config still requires a controller; ComponentDefinition alone cannot\n  materialize Config resources.\n- The Config controller needs an adapter around the shared component renderer.\n- Config-specific metadata must be represented through labels, annotations, or\n  `spec.extension`.\n- Arbitrary outputs require finalizers and explicit resource tracking.\n- Legacy CUE templates need translation from the nested config-template shape\n  to the ComponentDefinition shape.\n\n## Final recommendation\n\nRemove the dedicated ConfigTemplate CRD and controller. Register config\ntemplates as marked ComponentDefinitions and retain a single Config controller\nthat renders them under the established Secret-oriented config contract. Reuse\nthe ComponentDefinition schema and revision machinery, but do not turn Config\ninto an alias for Application.\n
+===================================================================
+diff --git a/docs/design/config-component-definition/README.md b/docs/design/config-component-definition/README.md
+--- a/docs/design/config-component-definition/README.md	(revision 523c8be3c188993a2802fcf392b5f4b4de7b43c9)
++++ b/docs/design/config-component-definition/README.md	(date 1786598730435)
+@@ -1,17 +1,15 @@
+-# ComponentDefinition-backed Config Design
++# Config templates as ComponentDefinitions
+ 
+ ## Summary
+ 
+-This design uses the existing `ComponentDefinition` API as the registry for
+-config templates. A new `Config` custom resource references one restricted
+-`ComponentDefinition` and supplies properties. The Config controller renders
+-the definition into a primary Kubernetes Secret and optional auxiliary
+-resources.
++Use the existing `ComponentDefinition` API to store config templates. A
++`Config` resource points to a restricted `ComponentDefinition` and provides the
++properties needed to render it. The Config controller produces one primary
++Secret and, when the template defines them, additional Kubernetes resources.
+ 
+-The design removes the need for a separate `ConfigTemplate` CRD and
+-ConfigTemplate controller. It does not remove the Config controller: a
+-controller must still watch Config resources, render their definitions, apply
+-the resulting objects, report status, and clean resources up.
++This removes the separate `ConfigTemplate` CRD and its controller. The Config
++controller stays. Something still has to watch Config resources, render their
++definitions, apply the objects, update status, and clean up after deletion.
+ 
+ ```text
+ ComponentDefinition (marked as a config template)
+@@ -27,13 +25,12 @@
+ 
+ ## Background
+ 
+-KubeVela's existing config subsystem is a templating layer for reusable
+-configuration. A platform team publishes a CUE config template, and application
+-teams instantiate it with different properties. The primary rendered object is
+-a Secret. A template may also render arbitrary Kubernetes resources through its
+-`outputs` block.
++KubeVela's config subsystem lets a platform team publish a CUE template once
++and lets application teams create instances with their own properties. Each
++instance produces a Secret. The template can also produce other Kubernetes
++objects through `outputs`.
+ 
+-The existing contract includes more than CUE evaluation:
++Rendering the CUE is only part of the existing contract:
+ 
+ - `template.output` must produce the primary Secret.
+ - `template.outputs` may produce auxiliary Kubernetes objects.
+@@ -46,13 +43,13 @@
+ - Distribution uses an Application and topology policies to deliver the Secret
+   to other clusters or namespaces.
+ 
+-The proposed declarative API must either preserve these behaviors or explicitly
+-identify them as compatibility gaps.
++The declarative API should preserve each behavior. Any exception needs to be a
++documented compatibility break, not an accidental omission.
+ 
+ ## Why ComponentDefinition fits
+ 
+-`ComponentDefinition` already provides the capabilities needed to register a
+-reusable CUE template:
++`ComponentDefinition` already has most of the machinery needed for a reusable
++CUE template:
+ 
+ - CUE parameter schema generation
+ - definition validation
+@@ -61,22 +58,21 @@
+ - namespaced and system-level definition lookup
+ - existing CLI and documentation tooling
+ 
+-Creating another template API duplicates much of this machinery. A dedicated
+-ConfigTemplate controller currently compiles the CUE template, extracts its
+-parameter schema, and writes readiness information. The existing
+-ComponentDefinition controller already performs the corresponding definition
+-registration, schema, and revision work.
++Another template API would duplicate this work. The ConfigTemplate controller
++in the current proposal compiles CUE, extracts the parameter schema, and records
++whether the template is ready. The ComponentDefinition controller already
++registers definitions, generates schemas, and manages revisions.
+ 
+-The two concepts are not completely interchangeable. A normal component is
+-rendered as part of an Application and may use traits, policies, workflow data,
+-and the full Application context. A Config has a smaller lifecycle and a stable
+-Secret-oriented contract. For that reason, Config should reuse the definition
+-format and rendering engine without pretending to be a complete Application.
++The concepts still differ in one important way. Applications render normal
++components with traits, policies, workflow data, and the full Application
++context. Config has a smaller lifecycle and a specific contract centered on a
++Secret. It should reuse the definition format and renderer, but it should not
++behave like a one-component Application.
+ 
+ ## Decision
+ 
+-Use labeled `ComponentDefinition` resources as config templates and retain one
+-focused Config controller.
++Store config templates as labeled `ComponentDefinition` resources. Keep one
++Config controller for rendering and lifecycle management.
+ 
+ A ComponentDefinition is eligible for use by Config only when it has:
+ 
+@@ -86,7 +82,7 @@
+     config.oam.dev/template: "true"
+ ```
+ 
+-The Config controller enforces these additional restrictions:
++The Config controller applies these restrictions:
+ 
+ 1. The definition's declared workload kind must be `Secret` in API version
+    `v1`.
+@@ -96,41 +92,38 @@
+    not part of the Config API.
+ 5. Only `context.name` and `context.namespace` are guaranteed to templates.
+ 
+-This boundary retains the existing meaning of a KubeVela config while reusing
+-the ComponentDefinition infrastructure.
++These rules preserve the current meaning of a KubeVela config while sharing the
++definition infrastructure.
+ 
+ ## Alternatives considered
+ 
+-### Config backed by ComponentDefinition
++### Config backed by ComponentDefinition (recommended)
+ 
+ The Config controller loads and renders a marked ComponentDefinition directly.
+-This reuses definition registration while keeping config-specific lifecycle and
+-security behavior in one place.
+-
+-This is the selected approach.
++Definition registration remains shared, while config-specific lifecycle and
++security rules stay in the Config controller.
+ 
+ ### Config creates a child Application
+ 
+-The Config controller could translate every Config into a one-component
+-Application. This would reuse the complete Application rendering and apply
+-pipeline, but it would introduce ApplicationRevisions and ResourceTrackers for
+-each Config. It would also make sensitive properties easier to expose through
+-Application specs, revisions, or status and would complicate config status and
+-distribution.
++The Config controller could translate each Config into a one-component
++Application. That would reuse the complete Application renderer and apply
++pipeline, at the cost of an ApplicationRevision and ResourceTrackers for every
++Config. Sensitive properties could then appear in Application specs, revisions,
++or status. Config status and distribution would also become harder to follow.
+ 
+ ### Use Application directly
+ 
+-Users could instantiate a config ComponentDefinition in an Application without
+-introducing a Config CRD. This requires no Config controller, but loses the
+-dedicated config API, config CLI behavior, sensitive reads, config listing,
+-Secret metadata contract, and independent config lifecycle.
++Users could put a config ComponentDefinition directly in an Application. This
++needs no Config controller, but it drops the dedicated config API, CLI behavior,
++sensitive-read checks, config listing, Secret metadata contract, and independent
++config lifecycle.
+ 
+ ## API design
+ 
+ ### Config template definition
+ 
+-The following definition renders an image registry Secret and an optional
+-ConfigMap containing non-sensitive registry metadata.
++This definition renders an image registry Secret and a ConfigMap containing
++non-sensitive registry metadata.
+ 
+ ```yaml
+ apiVersion: core.oam.dev/v1beta1
+@@ -210,9 +203,9 @@
+         ]
+ ```
+ 
+-Unlike the legacy config-template format, the CUE follows the normal
+-ComponentDefinition structure. `output`, `outputs`, `parameter`, and `errs`
+-are at the root; there is no outer `template: { ... }` block inside the CUE.
++The legacy config-template format wraps these fields in `template: { ... }`.
++ComponentDefinition CUE does not. Its `output`, `outputs`, `parameter`, and
++`errs` fields live at the root.
+ 
+ ### Config with inline properties
+ 
+@@ -234,12 +227,14 @@
+   description: Registry credentials used by Team A workloads
+ ```
+ 
+-Inline properties are useful for non-sensitive examples. They should not hold
+-real credentials because Config resources are not protected like Secrets.
++This YAML shows the inline property shape. The image registry definition above
++is marked sensitive, so the webhook would reject this particular combination.
++Use inline properties only with a non-sensitive definition, and never put real
++credentials in a Config spec.
+ 
+ ### Config with sensitive properties
+ 
+-Real credentials should be stored in a Secret:
++Put real credentials in a Secret and reference them from the Config:
+ 
+ ```yaml
+ apiVersion: v1
+@@ -276,7 +271,7 @@
+ 
+ ### Definition revisions
+ 
+-An optional revision makes rendering reproducible:
++Pin a definition revision when the rendered result must remain reproducible:
+ 
+ ```yaml
+ spec:
+@@ -286,8 +281,8 @@
+     revision: image-registry-config-v2
+ ```
+ 
+-When no revision is supplied, the Config controller uses the current definition
+-and re-renders the Config when that definition changes.
++Without a revision, the controller uses the current definition and renders the
++Config again whenever that definition changes.
+ 
+ ### Config status
+ 
+@@ -316,12 +311,12 @@
+       reason: ReconcileSuccess
+ ```
+ 
+-The resolved definition revision in status records exactly which template
++Status records the resolved revision so an operator can tell which template
+ produced the current resources.
+ 
+ ## Reconciliation
+ 
+-For each Config, the controller performs the following sequence:
++The controller reconciles a Config in this order:
+ 
+ 1. Resolve `definitionRef`, including its namespace and optional revision.
+ 2. Verify that the definition is labeled as a config template.
+@@ -336,53 +331,53 @@
+     render.
+ 11. Record the resolved revision and resource inventory in status.
+ 
+-The controller watches Config resources, referenced ComponentDefinitions,
+-referenced DefinitionRevisions, input-property Secrets, and owned rendered
+-resources. A definition or input change requeues affected Config resources.
++The controller watches Config resources and anything that can change their
++rendered output: referenced ComponentDefinitions, DefinitionRevisions,
++input-property Secrets, and owned resources. When one changes, the controller
++requeues the affected Configs.
+ 
+ ### Ownership and deletion
+ 
+-The primary Secret and same-namespace namespaced outputs can use controller
+-owner references. Owner references cannot cover cross-namespace or
+-cluster-scoped outputs. Therefore, Config needs a finalizer and an explicit
+-resource inventory for complete cleanup.
++The primary Secret and namespaced outputs in the same namespace can use
++controller owner references. Cross-namespace and cluster-scoped outputs cannot.
++Config therefore needs both a finalizer and an explicit resource inventory.
+ 
+-Deletion proceeds as follows:
++On deletion, the controller:
+ 
+-1. Delete every tracked auxiliary resource.
+-2. Delete resources that cannot be garbage-collected through owner references.
+-3. Allow Kubernetes garbage collection to remove owned resources.
+-4. Remove the Config finalizer.
++1. Deletes every tracked auxiliary resource.
++2. Deletes resources that owner references cannot garbage-collect.
++3. Lets Kubernetes garbage collection remove owned resources.
++4. Removes the Config finalizer.
+ 
+-The controller must not delete an object it no longer owns. Apply metadata must
+-include a stable Config UID so cleanup can verify ownership before deletion.
++The controller must leave behind any object it no longer owns. It adds the
++Config UID to apply metadata and checks that UID before deleting an object.
+ 
+ ### Updates and conflicts
+ 
+-Changing `definitionRef.name` or the primary Secret type after the first
+-successful render should be rejected, matching the existing config behavior.
+-Property changes and unpinned definition updates re-render the resources.
++After the first successful render, a user cannot change `definitionRef.name` or
++the primary Secret type. This matches the current config behavior. Property
++changes and updates to an unpinned definition trigger another render.
+ 
+-Server-side apply should use a dedicated field manager. A conflict on a field
+-owned by another manager must surface as a Ready=False condition rather than
+-silently overwriting the field.
++The controller uses server-side apply with its own field manager. If another
++manager owns a conflicting field, the controller reports `Ready=False` instead
++of overwriting it.
+ 
+ ## Security
+ 
+-- Definitions marked sensitive must require `propertiesFrom` for declarative
+-  Config resources. This prevents credentials from being stored in Config
+-  specs, audit events, or ordinary API reads.
+-- Sensitive input properties must not be copied into Config status.
+-- Config read operations must continue to reject sensitive configs.
+-- Protected labels and annotations are set by the controller after rendering,
+-  so templates cannot override their values.
+-- Definition lookup and output application must respect Kubernetes RBAC.
+-- Templates must not receive an Application context implicitly. Only the
+-  documented Config context is stable.
++- The admission webhook requires `propertiesFrom` when a definition is marked
++  sensitive. Credentials therefore stay out of Config specs, audit events, and
++  ordinary Config API responses.
++- The controller never copies sensitive input properties into Config status.
++- Config read operations continue to reject sensitive configs.
++- The controller sets protected labels and annotations after rendering, so a
++  template cannot override them.
++- Definition lookup and output application follow Kubernetes RBAC.
++- Templates receive only the documented Config context, not an implicit
++  Application context.
+ 
+ ## CLI compatibility
+ 
+-The existing commands can remain as a compatibility facade:
++The existing commands can keep their current interface:
+ 
+ - `vela config-template apply` translates legacy config-template CUE into a
+   marked ComponentDefinition.
+@@ -394,27 +389,27 @@
+ - `vela config list`, `delete`, and `distribute` keep their existing user-facing
+   behavior.
+ 
+-During migration, template loading may fall back to legacy
+-`config-template-<name>` ConfigMaps. New writes should use ComponentDefinition.
+-The fallback can be removed in a later compatibility-breaking release.
++During migration, reads can fall back to legacy `config-template-<name>`
++ConfigMaps. All new templates use ComponentDefinition. A later breaking release
++can remove the fallback.
+ 
+-Distribution remains Application-backed because topology policies and resource
+-tracking already solve the multi-cluster delivery problem. The Config controller
+-does not need to duplicate that machinery.
++Distribution continues to use an Application. Topology policies and resource
++tracking already handle delivery across clusters, so the Config controller does
++not need a second implementation.
+ 
+ ## Expanded writers
+ 
+-Expanded writers are not part of ComponentDefinition rendering. Preserving this
+-feature requires one of these explicit choices:
++ComponentDefinition rendering does not know about expanded writers. There are
++two ways to handle them:
+ 
+ 1. Store expanded-writer metadata in ComponentDefinition annotations or
+    `spec.extension` and execute it from the Config controller.
+ 2. Deprecate expanded writers for Config CRs while retaining them only for the
+    legacy imperative path.
+ 
+-For full backward compatibility, this design selects the first option. The
+-expanded-writer configuration belongs under `spec.extension.config` so it is
+-versioned with the definition instead of spread across annotations.
++Choose the first option for backward compatibility. Store the expanded-writer
++configuration under `spec.extension.config`, where it is versioned with the
++definition rather than split across annotations.
+ 
+ ## Proposed code organization
+ 
+@@ -447,7 +442,7 @@
+ └── config_definition.go
+ ```
+ 
+-The following ConfigTemplate-specific files become unnecessary after migration:
++Remove these ConfigTemplate-specific files after migration:
+ 
+ ```text
+ apis/config.oam.dev/v1alpha1/configtemplate_types.go
+@@ -455,62 +450,3 @@
+ pkg/controller/config.oam.dev/v1alpha1/configtemplate/
+ pkg/webhook/config.oam.dev/v1alpha1/configtemplate/
+ ```
+-
+-## Testing
+-
+-Unit and integration tests should cover:
+-
+-- accepting a correctly labeled Secret ComponentDefinition
+-- rejecting an unmarked ComponentDefinition
+-- rejecting a non-Secret primary workload
+-- rendering inline and Secret-backed properties
+-- rejecting both property sources together
+-- rendering and updating auxiliary outputs
+-- deleting stale and finalizer-managed outputs
+-- re-rendering after an unpinned definition update
+-- retaining a pinned definition revision
+-- refusing to expose sensitive properties
+-- preserving protected labels and annotations
+-- reporting CUE validation and apply conflicts in status
+-- falling back to legacy template ConfigMaps during migration
+-- preserving expanded-writer behavior
+-- distributing the resulting Secret through the existing Application path
+-
+-## Migration sequence
+-
+-1. Add ComponentDefinition-backed loading to the Config controller and CLI.
+-2. Teach `vela config-template apply` to create marked ComponentDefinitions.
+-3. Retain read fallback for ConfigTemplate CRs and legacy ConfigMaps during the
+-   compatibility window.
+-4. Migrate built-in and addon config templates to ComponentDefinitions.
+-5. Remove the ConfigTemplate controller and stop installing its CRD.
+-6. Remove legacy read fallbacks in a later breaking release.
+-
+-## Consequences
+-
+-### Benefits
+-
+-- One definition API and one definition registration controller
+-- Reuse of schema generation and definition revisions
+-- Less duplicated CUE compilation code
+-- Config templates become compatible with existing definition tooling
+-- A focused Config controller retains config-specific security and lifecycle
+-
+-### Costs
+-
+-- Config still requires a controller; ComponentDefinition alone cannot
+-  materialize Config resources.
+-- The Config controller needs an adapter around the shared component renderer.
+-- Config-specific metadata must be represented through labels, annotations, or
+-  `spec.extension`.
+-- Arbitrary outputs require finalizers and explicit resource tracking.
+-- Legacy CUE templates need translation from the nested config-template shape
+-  to the ComponentDefinition shape.
+-
+-## Final recommendation
+-
+-Remove the dedicated ConfigTemplate CRD and controller. Register config
+-templates as marked ComponentDefinitions and retain a single Config controller
+-that renders them under the established Secret-oriented config contract. Reuse
+-the ComponentDefinition schema and revision machinery, but do not turn Config
+-into an alias for Application.
+Index: apis/config.oam.dev/v1alpha1/zz_generated.deepcopy.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>//go:build !ignore_autogenerated\n\n/*\nCopyright 2023 The KubeVela Authors.\n\nLicensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy of the License at\n\n    http://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an \"AS IS\" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the License for the specific language governing permissions and\nlimitations under the License.\n*/\n\n// Code generated by controller-gen. DO NOT EDIT.\n\npackage v1alpha1\n\nimport (\n\tv1 \"k8s.io/api/core/v1\"\n\t\"k8s.io/apimachinery/pkg/runtime\"\n)\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *Config) DeepCopyInto(out *Config) {\n\t*out = *in\n\tout.TypeMeta = in.TypeMeta\n\tin.ObjectMeta.DeepCopyInto(&out.ObjectMeta)\n\tin.Spec.DeepCopyInto(&out.Spec)\n\tin.Status.DeepCopyInto(&out.Status)\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new Config.\nfunc (in *Config) DeepCopy() *Config {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(Config)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyObject is an autogenerated deepcopy function, copying the receiver, creating a new runtime.Object.\nfunc (in *Config) DeepCopyObject() runtime.Object {\n\tif c := in.DeepCopy(); c != nil {\n\t\treturn c\n\t}\n\treturn nil\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *ConfigList) DeepCopyInto(out *ConfigList) {\n\t*out = *in\n\tout.TypeMeta = in.TypeMeta\n\tin.ListMeta.DeepCopyInto(&out.ListMeta)\n\tif in.Items != nil {\n\t\tin, out := &in.Items, &out.Items\n\t\t*out = make([]Config, len(*in))\n\t\tfor i := range *in {\n\t\t\t(*in)[i].DeepCopyInto(&(*out)[i])\n\t\t}\n\t}\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ConfigList.\nfunc (in *ConfigList) DeepCopy() *ConfigList {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(ConfigList)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyObject is an autogenerated deepcopy function, copying the receiver, creating a new runtime.Object.\nfunc (in *ConfigList) DeepCopyObject() runtime.Object {\n\tif c := in.DeepCopy(); c != nil {\n\t\treturn c\n\t}\n\treturn nil\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *ConfigSpec) DeepCopyInto(out *ConfigSpec) {\n\t*out = *in\n\tif in.TemplateRef != nil {\n\t\tin, out := &in.TemplateRef, &out.TemplateRef\n\t\t*out = new(ConfigTemplateReference)\n\t\t**out = **in\n\t}\n\tif in.Properties != nil {\n\t\tin, out := &in.Properties, &out.Properties\n\t\t*out = new(runtime.RawExtension)\n\t\t(*in).DeepCopyInto(*out)\n\t}\n\tif in.PropertiesFrom != nil {\n\t\tin, out := &in.PropertiesFrom, &out.PropertiesFrom\n\t\t*out = new(PropertiesReference)\n\t\t**out = **in\n\t}\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ConfigSpec.\nfunc (in *ConfigSpec) DeepCopy() *ConfigSpec {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(ConfigSpec)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *ConfigStatus) DeepCopyInto(out *ConfigStatus) {\n\t*out = *in\n\tin.ConditionedStatus.DeepCopyInto(&out.ConditionedStatus)\n\tif in.SecretRef != nil {\n\t\tin, out := &in.SecretRef, &out.SecretRef\n\t\t*out = new(v1.LocalObjectReference)\n\t\t**out = **in\n\t}\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ConfigStatus.\nfunc (in *ConfigStatus) DeepCopy() *ConfigStatus {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(ConfigStatus)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *ConfigTemplate) DeepCopyInto(out *ConfigTemplate) {\n\t*out = *in\n\tout.TypeMeta = in.TypeMeta\n\tin.ObjectMeta.DeepCopyInto(&out.ObjectMeta)\n\tout.Spec = in.Spec\n\tin.Status.DeepCopyInto(&out.Status)\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ConfigTemplate.\nfunc (in *ConfigTemplate) DeepCopy() *ConfigTemplate {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(ConfigTemplate)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyObject is an autogenerated deepcopy function, copying the receiver, creating a new runtime.Object.\nfunc (in *ConfigTemplate) DeepCopyObject() runtime.Object {\n\tif c := in.DeepCopy(); c != nil {\n\t\treturn c\n\t}\n\treturn nil\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *ConfigTemplateList) DeepCopyInto(out *ConfigTemplateList) {\n\t*out = *in\n\tout.TypeMeta = in.TypeMeta\n\tin.ListMeta.DeepCopyInto(&out.ListMeta)\n\tif in.Items != nil {\n\t\tin, out := &in.Items, &out.Items\n\t\t*out = make([]ConfigTemplate, len(*in))\n\t\tfor i := range *in {\n\t\t\t(*in)[i].DeepCopyInto(&(*out)[i])\n\t\t}\n\t}\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ConfigTemplateList.\nfunc (in *ConfigTemplateList) DeepCopy() *ConfigTemplateList {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(ConfigTemplateList)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyObject is an autogenerated deepcopy function, copying the receiver, creating a new runtime.Object.\nfunc (in *ConfigTemplateList) DeepCopyObject() runtime.Object {\n\tif c := in.DeepCopy(); c != nil {\n\t\treturn c\n\t}\n\treturn nil\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *ConfigTemplateReference) DeepCopyInto(out *ConfigTemplateReference) {\n\t*out = *in\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ConfigTemplateReference.\nfunc (in *ConfigTemplateReference) DeepCopy() *ConfigTemplateReference {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(ConfigTemplateReference)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *ConfigTemplateSpec) DeepCopyInto(out *ConfigTemplateSpec) {\n\t*out = *in\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ConfigTemplateSpec.\nfunc (in *ConfigTemplateSpec) DeepCopy() *ConfigTemplateSpec {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(ConfigTemplateSpec)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *ConfigTemplateStatus) DeepCopyInto(out *ConfigTemplateStatus) {\n\t*out = *in\n\tin.ConditionedStatus.DeepCopyInto(&out.ConditionedStatus)\n\tif in.Schema != nil {\n\t\tin, out := &in.Schema, &out.Schema\n\t\t*out = new(runtime.RawExtension)\n\t\t(*in).DeepCopyInto(*out)\n\t}\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ConfigTemplateStatus.\nfunc (in *ConfigTemplateStatus) DeepCopy() *ConfigTemplateStatus {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(ConfigTemplateStatus)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *PropertiesReference) DeepCopyInto(out *PropertiesReference) {\n\t*out = *in\n\tout.SecretRef = in.SecretRef\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new PropertiesReference.\nfunc (in *PropertiesReference) DeepCopy() *PropertiesReference {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(PropertiesReference)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n\n// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.\nfunc (in *SecretKeySelector) DeepCopyInto(out *SecretKeySelector) {\n\t*out = *in\n}\n\n// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new SecretKeySelector.\nfunc (in *SecretKeySelector) DeepCopy() *SecretKeySelector {\n\tif in == nil {\n\t\treturn nil\n\t}\n\tout := new(SecretKeySelector)\n\tin.DeepCopyInto(out)\n\treturn out\n}\n
+===================================================================
+diff --git a/apis/config.oam.dev/v1alpha1/zz_generated.deepcopy.go b/apis/config.oam.dev/v1alpha1/zz_generated.deepcopy.go
+--- a/apis/config.oam.dev/v1alpha1/zz_generated.deepcopy.go	(revision 523c8be3c188993a2802fcf392b5f4b4de7b43c9)
++++ b/apis/config.oam.dev/v1alpha1/zz_generated.deepcopy.go	(date 1786598822802)
+@@ -21,7 +21,7 @@
+ package v1alpha1
+ 
+ import (
+-	v1 "k8s.io/api/core/v1"
++	"k8s.io/api/core/v1"
+ 	"k8s.io/apimachinery/pkg/runtime"
+ )
+ 

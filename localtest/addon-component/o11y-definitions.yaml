@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-o11y-definitions
+  namespace: vela-system
+spec:
+  components:
+    - name: o11y-definitions
+      type: addon
+      properties:
+        skipVersionValidation: true

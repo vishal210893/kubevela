@@ -1,0 +1,406 @@
+---
+title: Unify HTTP and OCI Add-on Chart Registries
+kind: plan
+status: review
+localOnly: true
+source: codex
+repoPath: /Users/viskumar/Open_Source/kubevela
+---
+for testing you can deplothe application using addon component in a registry using zot and then if it passes then i will give you docker credential of
+mine. there you can test. use this cluster
+# Unify HTTP and OCI Add-on Chart Registries
+
+## Recommendation
+
+Replace the separate `ociRegistry` implementation with one Helm-chart registry façade whose backend is selected from the repository URL. An `http://` or `https://` URL uses the indexed Helm-repository backend; an `oci://` URL uses the OCI backend. Keep OCI-only mechanics—tag enumeration, registry-client pull/push, portable catalog discovery, and catalog publication—inside that backend.
+
+“Done” means every consumer resolves a chart-backed add-on through one construction path and one shared package-loading implementation, while existing `{"oci": ...}` registry records and `--type oci` commands continue to work during a deprecation window. Git, Gitee, GitLab, OSS, local installation, rendering, and the add-on component contract remain unchanged.
+
+<Callout id="decision" tone="decision">
+
+**Proceed with a façade plus two transport backends.** The duplication is real at the `VersionedRegistry` method and chart-decoding layers. The OCI catalog and registry-client operations are not duplication; they compensate for capabilities an HTTP Helm repository gets from `index.yaml`.
+
+</Callout>
+
+### Scope and non-goals
+
+This plan is grounded in all source and test files under `pkg/addon`, the registry and push CLI, the CueX add-on provider, the render-only service, the compatibility webhook, the generated ComponentDefinition, the add-on component e2e, and Helm 3.14.4's local implementation.
+
+In scope: registry construction, configuration normalization, credentials, chart listing/resolution/pull, push routing, cache/install/helper branches, backward compatibility, and tests.
+
+Out of scope: changing the add-on package format; changing Git/OSS readers; redesigning the add-on component CUE API; removing OCI catalog support; changing the chart component's separate `repoType: oci`; or silently standardizing prerelease semantics during the structural refactor.
+
+## Current architecture
+
+<Diagram id="current-architecture" frame="hide" caption="Current registry and add-on lifecycle boundaries.">
+
+```html
+<div class="diagram-panel current-grid" data-rough>
+  <section class="diagram-box">
+    <span class="diagram-pill">Configuration</span>
+    <div class="diagram-node">ConfigMap: vela-addon-registry</div>
+    <div class="diagram-card">Registry.Helm</div>
+    <div class="diagram-card">Registry.OCI</div>
+    <div class="diagram-card">Git / Gitee / GitLab / OSS</div>
+    <div class="diagram-muted">OCI tokens use Secrets; Helm passwords remain inline.</div>
+  </section>
+  <section class="diagram-box">
+    <span class="diagram-pill">Resolution</span>
+    <div class="diagram-card">AsyncReader path<br><small>source tree → UIData / InstallPackage</small></div>
+    <div class="diagram-card">versionedRegistry<br><small>index.yaml → HTTP chart</small></div>
+    <div class="diagram-card">ociRegistry<br><small>catalog + tags → OCI chart</small></div>
+    <div class="diagram-muted">Helm and OCI separately implement the same VersionedRegistry surface.</div>
+  </section>
+  <section class="diagram-box">
+    <span class="diagram-pill">Consumption</span>
+    <div class="diagram-node">MemoryReader + loadAddonPackage</div>
+    <div class="diagram-card">Cache / CLI listing</div>
+    <div class="diagram-card">Imperative Installer</div>
+    <div class="diagram-card">Addon component render service</div>
+    <div class="diagram-muted">Both chart paths converge only after archive download.</div>
+  </section>
+</div>
+```
+
+```css
+.current-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+.current-grid .diagram-box { display:flex; flex-direction:column; gap:10px; padding:16px; }
+.current-grid small { color:var(--wf-muted); }
+@media (max-width:760px){ .current-grid{grid-template-columns:1fr;} }
+```
+
+</Diagram>
+
+### Add-on lifecycle
+
+**Imperative enable.** `EnableAddon` creates an `Installer`; `loadInstallPackage` resolves either a version-capable chart registry or an `AsyncReader` source. The installer validates package/system requirements, resolves and installs dependencies across registries, renders the child Application plus definitions/config templates/schemas/views, applies auxiliaries, persists arguments in a Secret, and continues or restarts the child workflow.
+
+**Add-on as a component.** A `type: addon` component invokes `vela/addon.#Render`. The feature-gated CueX provider calls the render-only service, which resolves latest or an exact version, validates system requirements, renders the child Application, folds auxiliaries into deterministic `k8s-objects` components, disables implicit apply-once, and returns the child Application as component output. The outer Application tracks the child; the child tracks and heals its auxiliaries. Admission validation resolves the same registry data and fails open on lookup failures, denying only a concrete version mismatch.
+
+The registry refactor sits below both lifecycles, so their external contracts should not change.
+
+## Current Helm and OCI flows
+
+<Table id="flow-comparison" density="compact" columns={["Concern","HTTP Helm repository","OCI Helm repository"]} rows={[
+  ["Configuration","Registry.Helm with URL, username/password, insecureSkipTLS","Registry.OCI with URL, username/token/tokenSecretRef"],
+  ["Discovery","Download and parse index.yaml","Pull portable catalog chart; fall back to /v2/_catalog"],
+  ["Versions","repo.ChartVersions from index; chooseVersion supports v-prefix matching and stable default","Helm registry Client.Tags; strict-semver filtering; current default is first sorted tag"],
+  ["Pull","HTTP GET one chart URL from the selected index entry","Helm registry client Pull on <prefix>/<addon>:<tag>"],
+  ["Package decode","loader.LoadArchiveFiles → loadAddonPackage","loader.LoadArchiveFiles → loadAddonPackage"],
+  ["Push","ChartMuseum upload API","OCI Push, then best-effort portable catalog update"],
+  ["Authentication","Basic auth in common.HTTPOption","Registry Login basic credentials; legacy secret-backed token field"],
+  ["Catalog failure","Index fetch failure","ErrOCICatalogAbsent distinguishes genuine absence from unsafe read failures"]
+]} />
+
+## Findings
+
+### Duplicated or misleading structure
+
+- `versionedRegistry` and `ociRegistry` duplicate `GetAddonUIData`, `GetAddonInstallPackage`, `GetDetailedAddon`, archive decoding, package projection, registry stamping, and available-version attachment.
+- `IsVersionRegistry` means “has a Helm block,” while `isVersionCapableRegistry` means the actual capability. This naming split caused OCI-specific repairs throughout cache, installer, helper, and CLI code.
+- Callers alternate between `ToVersionedRegistry`, `BuildVersionedRegistry`, and `BuildOCIRegistry`, producing repeated transport switches.
+- `Registry` permits both `Helm` and `OCI`, but precedence is inconsistent: read/list paths prefer Helm, push routes to OCI, and secret lifecycle follows OCI because Helm is not a `TokenSource`. This is accidental operation-specific behavior created by the representation, not a useful domain concept.
+- `OCIAddonSource.Token` is used as a Basic-auth password, making the credential model harder to reason about.
+- `findLegacyAddonDefs` checks only `IsVersionRegistry`; an OCI-installed legacy add-on takes the reader path and cannot build a reader. `getAddonVersionMeetSystemRequirement` is likewise HTTP-Helm-only.
+
+### Genuinely OCI-specific behavior
+
+- OCI has no Helm `index.yaml`, so cross-addon discovery needs the portable catalog and optional Distribution catalog fallback.
+- OCI versions are repository tags and Helm 3.14.4's `Client.Tags` accepts strict semver tags, normalizes build metadata, and drops non-compliant tags such as `v0.0.1`.
+- OCI pull/push and login require Helm's registry client, not the HTTP getter.
+- ECR and other registries may not implement `/v2/_catalog`; `ErrOCICatalogAbsent` and the conservative catalog overwrite checks prevent silent catalog loss.
+- OCI catalog publication has an unavoidable optimistic race because the Distribution API has no conditional put. The existing read/recheck/retry behavior must remain intact.
+
+These differences belong behind a backend boundary, not in a second add-on registry façade.
+
+### Load-bearing code evidence
+
+<TabsBlock id="evidence-tabs" orientation="vertical" tabs={[
+  {
+    id: "tab-versioned",
+    label: "versioned_registry.go",
+    blocks: [
+      {
+        id: "code-versioned",
+        type: "annotated-code",
+        data: {
+          filename: "pkg/addon/versioned_registry.go",
+          language: "go",
+          code: "func ToVersionedRegistry(registry Registry) (VersionedRegistry, error) {\n    if IsOCIRegistry(registry) && !IsVersionRegistry(registry) {\n        return BuildOCIRegistry(registry.Name, registry.OCI.URL,\n            registry.OCI.Username, registry.OCI.Token), nil\n    }\n    if !IsVersionRegistry(registry) {\n        return nil, errors.Errorf(\"registry '%s' is not a versioned registry\", registry.Name)\n    }\n    return BuildVersionedRegistry(registry.Name, registry.Helm.URL, &common.HTTPOption{\n        Username: registry.Helm.Username, Password: registry.Helm.Password,\n        InsecureSkipTLS: registry.Helm.InsecureSkipTLS,\n    }), nil\n}",
+          annotations: [
+            { lines: "2-5", label: "Representation branch", note: "The factory selects by mutually exclusive struct fields instead of the URL and transport capability." },
+            { lines: "9-12", label: "Second constructor", note: "HTTP Helm receives a different concrete implementation despite sharing the VersionedRegistry contract and package decoder." }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    id: "tab-helper",
+    label: "helper.go",
+    blocks: [
+      {
+        id: "code-helper",
+        type: "annotated-code",
+        data: {
+          filename: "pkg/addon/helper.go",
+          language: "go",
+          code: "switch {\ncase IsVersionRegistry(r):\n    vr := BuildVersionedRegistry(r.Name, r.Helm.URL, httpOptions(r.Helm))\n    wholePackage, err := vr.GetDetailedAddon(ctx, addonName, \"\")\ncase IsOCIRegistry(r):\n    or := BuildOCIRegistry(r.Name, r.OCI.URL, r.OCI.Username, r.OCI.Token)\n    wholePackage, err := or.GetDetailedAddon(ctx, addonName, \"\")\ndefault:\n    // AsyncReader source path\n}",
+          annotations: [
+            { lines: "1-7", label: "Repeated dispatch", note: "The same chart-backed operation is duplicated because callers can bypass ToVersionedRegistry." },
+            { lines: "8-9", label: "Real boundary", note: "The meaningful split is chart-backed versus source-backed, not Helm versus OCI." }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    id: "tab-target",
+    label: "target shape",
+    blocks: [
+      {
+        id: "code-target",
+        type: "annotated-code",
+        data: {
+          filename: "pkg/addon/versioned_registry.go",
+          language: "go",
+          code: "type chartBackend interface {\n    ListAddons(context.Context) ([]*UIData, error)\n    Resolve(context.Context, string, string) (*resolvedChart, error)\n    Versions(context.Context, string) ([]*repo.ChartVersion, error)\n}\n\ntype helmRegistry struct {\n    name    string\n    backend chartBackend\n}\n\nfunc NewVersionedRegistry(name, repoURL string, opts *common.HTTPOption) (VersionedRegistry, error) {\n    backend, err := newChartBackend(repoURL, opts)\n    if err != nil { return nil, err }\n    return &helmRegistry{name: name, backend: backend}, nil\n}",
+          annotations: [
+            { lines: "1-5", label: "Transport seam", note: "Only discovery, version resolution, and archive retrieval vary by transport." },
+            { lines: "7-10", label: "Single façade", note: "UIData projection and package decoding live once on helmRegistry." },
+            { lines: "12-16", label: "Checked URL dispatch", note: "oci:// selects the OCI backend; http(s):// selects the indexed HTTP backend; invalid schemes/options return construction errors." }
+          ]
+        }
+      }
+    ]
+  }
+]} />
+
+## Architectural options
+
+<Table id="options-table" density="normal" columns={["Option","Result","Trade-off"]} rows={[
+  ["1. One Helm façade + URL-selected backends (recommended)","Removes the duplicate registry implementation and caller branches while retaining OCI mechanics internally.","Requires a compatibility adapter for persisted OCI records and careful credential migration."],
+  ["2. Share only package-loading helpers","Moves archive decoding and UIData projection into helpers but keeps Registry.OCI, ociRegistry, both factories, and most caller switches.","Lowest migration risk, but preserves the architectural duplication and misleading capability predicates."],
+  ["3. Immediate OCI type removal","Deletes Registry.OCI, OCIAddonSource, --type oci, and BuildOCIRegistry in one change.","Cleanest end state but breaks stored ConfigMaps, external Go callers, scripts, and credential Secrets; unsuitable without a major-version migration."]
+]} />
+
+## Proposed simplified architecture
+
+<Diagram id="target-architecture" frame="hide" caption="Target: one chart-registry façade, two internal transport backends.">
+
+```html
+<div class="diagram-panel target-layout" data-rough>
+  <section class="diagram-box input-zone">
+    <span class="diagram-pill">Inputs</span>
+    <div class="diagram-card">Canonical HelmSource<br><small>URL + shared credentials/TLS options</small></div>
+    <div class="diagram-card">Legacy Registry.OCI adapter<br><small>read compatibility only</small></div>
+  </section>
+  <section class="diagram-box facade-zone">
+    <span class="diagram-pill">Shared façade</span>
+    <div class="diagram-node">helmRegistry : VersionedRegistry</div>
+    <div class="diagram-card">UIData projection</div>
+    <div class="diagram-card">archive → MemoryReader → loadAddonPackage</div>
+    <div class="diagram-card">registry/version/error stamping</div>
+  </section>
+  <section class="diagram-box backend-zone">
+    <span class="diagram-pill">URL-selected backends</span>
+    <div class="backend-pair">
+      <div class="diagram-card"><strong>HTTP backend</strong><br><small>index.yaml · chart URLs · ChartMuseum push</small></div>
+      <div class="diagram-card"><strong>OCI backend</strong><br><small>catalog · tags · registry pull/push</small></div>
+    </div>
+    <div class="diagram-muted">OCI catalog publication remains isolated and conservative.</div>
+  </section>
+  <section class="diagram-box consumers-zone">
+    <span class="diagram-pill">Consumers</span>
+    <div class="diagram-card">Cache and CLI list</div>
+    <div class="diagram-card">Installer and dependency resolver</div>
+    <div class="diagram-card">Render service and webhook</div>
+    <div class="diagram-muted">All call ToVersionedRegistry; no transport switch leaks out.</div>
+  </section>
+</div>
+```
+
+```css
+.target-layout { display:grid; grid-template-columns:1fr 1.35fr; gap:16px; }
+.target-layout .diagram-box { display:flex; flex-direction:column; gap:10px; padding:16px; }
+.target-layout .backend-pair { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.target-layout small { color:var(--wf-muted); }
+@media (max-width:760px){ .target-layout{grid-template-columns:1fr;} .target-layout .backend-pair{grid-template-columns:1fr;} }
+```
+
+</Diagram>
+
+### Target contracts and decisions
+
+1. Add `IsOCIURL` using URL parsing and introduce a checked constructor, `NewVersionedRegistry(...) (VersionedRegistry, error)`, that chooses an HTTP or OCI backend from the scheme and rejects unsupported scheme/option combinations. Keep the exported `BuildVersionedRegistry` and `BuildOCIRegistry` signatures as deprecated adapters during the compatibility window; internal callers use the checked constructor.
+2. Introduce an internal `resolvedChart` carrying archive bytes, selected version metadata, available versions, and whether transport metadata should override package metadata. This prevents the façade from knowing how the chart was fetched.
+3. Put `GetAddonUIData`, `GetAddonInstallPackage`, `GetDetailedAddon`, archive loading, `loadAddonPackage`, and registry stamping on one `helmRegistry`.
+4. Keep HTTP behavior in an `httpHelmBackend`: index loading, URL joining, basic/TLS options, and existing `chooseVersion` semantics.
+5. Keep OCI behavior in an `ociHelmBackend`: repository refs, strict-semver tag listing, pulls, portable catalog preference, Distribution catalog fallback, and `ErrOCICatalogAbsent`.
+6. Keep push as one command-level route selected by the canonical source URL. ChartMuseum upload and OCI push/catalog update remain separate backend operations.
+7. Preserve current version and metadata semantics during this refactor. In particular, do not accidentally align prerelease selection, `v`-prefix handling, pinned `AvailableVersions`, or SystemRequirements overrides without dedicated tests and an explicit compatibility decision. Model these as explicit resolved fields rather than one generic “metadata override” boolean.
+8. Route all chart-backed call sites through `ToVersionedRegistry`; the only remaining high-level branch is chart-backed versus `AsyncReader`-backed.
+9. Keep compatible-version suggestions capability-aware. The HTTP backend may use index annotations as today; the OCI backend returns “no suggestion” until requirements are available without guessing (for example through a future enriched catalog or explicit candidate pulls).
+
+## Backward-compatible configuration migration
+
+- Keep `Registry.OCI`, `OCIAddonSource`, `IsOCIRegistry`, and `BuildOCIRegistry` as deprecated compatibility APIs until an explicit migration completion gate is met. `BuildOCIRegistry` becomes a thin wrapper over the unified URL-based factory; it no longer constructs a separate implementation.
+- Continue decoding existing ConfigMap entries shaped as `{"oci":{"url":"oci://...","username":"...","tokenSecretRef":"..."}}`. Load the referenced Secret first, then adapt the source to the canonical Helm-source runtime shape.
+- During the mixed-version/rollback window, the CLI accepts both `--type oci` and `--type helm --endpoint=oci://...` but continues writing the legacy `Registry.OCI` JSON shape for OCI URLs. This lets older binaries read the record correctly. Canonical Helm-shaped OCI writes begin only after the minimum supported version can read them, or through an explicit migration command that warns rollback is no longer supported.
+- Derive displayed type from the URL, so `registry list/get` still says OCI for an `oci://` source.
+- Preserve current behavior for pre-existing mixed-block records by operation: Helm for read/list/enable, OCI for push, and OCI for secret cleanup. Reject creation or migration of a mixed-block record, and require the migration command to ask which source wins rather than silently choosing.
+- Add `passwordSecretRef` to the canonical Helm source. During the compatibility window, credential Secrets dual-read `password` then legacy `token`, and writes for OCI compatibility retain the `token` key older binaries expect. Do not migrate HTTP Helm passwords in this refactor.
+- Make update cleanup old-record-aware. Before overwriting a registry, load its previous source and delete an obsolete credential Secret when credentials are removed, the source switches, or the secret reference changes. Deletion must remove either legacy OCI or canonical Helm credential Secrets.
+- Do not rewrite every registry record merely because it was read. Provide an explicit `vela addon registry migrate` path (or equivalent one-shot controller job), emit deprecation warnings for legacy records, and remove the legacy fields only after migration telemetry/audit shows no OCI-shaped records within the supported upgrade range. A time-only deprecation window is insufficient.
+
+### Mixed-record compatibility matrix
+
+<Table id="mixed-record-matrix" density="compact" columns={["Operation","Compatibility-window behavior","Canonical end state"]} rows={[
+  ["Read / list / enable","Preserve Helm-first behavior when both blocks exist","One Helm source selected by URL"],
+  ["Push","Preserve current OCI-first behavior for an existing mixed record","Route by canonical URL"],
+  ["Credential load/delete","Honor the legacy OCI secret reference","Use Helm passwordSecretRef"],
+  ["Add / update","Reject creation of a new mixed record","Write exactly one Helm block"],
+  ["Migration","Require an explicit source choice for mixed records","Record the chosen URL and remove the losing block"]
+]} />
+
+### Field-level metadata contract
+
+<Table id="metadata-contract" density="compact" columns={["Field","HTTP backend today","OCI backend today","Refactor rule"]} rows={[
+  ["List name/description/icon/tags","From index entry","From portable catalog; fallback may pull chart metadata","Preserve backend-provided list summary"],
+  ["Resolved package metadata","From metadata.yaml in chart","From metadata.yaml in chart","Always use package metadata as base"],
+  ["SystemRequirements","Overwritten from selected index annotations, including nil when absent","Retained from metadata.yaml","Carry an explicit requirementsOverridePresent flag plus value"],
+  ["AvailableVersions on unpinned resolve","All index versions","All strict-semver OCI tags","Attach backend version list"],
+  ["AvailableVersions on pinned resolve","All index versions","Currently empty","Preserve backend behavior in this refactor"],
+  ["Latest selection","Direct resolve skips prereleases; listing may name sorted head","Sorted strict-semver tag head","Characterize and preserve; normalize separately"]
+]} />
+
+### Error contract
+
+<Table id="error-contract" density="compact" columns={["Failure","Public classification","Consumer behavior"]} rows={[
+  ["Addon/repository has no usable version","ErrNotExist","Dependency resolution may try another registry"],
+  ["Registry unreachable or chart pull/download fails","ErrFetch with underlying cause preserved","Existing skippable/fallback policy remains unchanged per backend"],
+  ["Portable and Distribution catalogs are genuinely absent","ErrOCICatalogAbsent","Listing may treat the OCI registry as empty; first push may bootstrap after confirmation"],
+  ["Pinned version is absent","Preserve the current backend-specific message and errors.Is behavior","Pinned resolver tries the next candidate registry"],
+  ["Archive or add-on package is malformed","Define and test whether ErrFetch wraps it before moving decoding","Webhook fails open on resolution failure; installer reports the underlying cause"],
+  ["System requirement evaluated and not met","ErrVersionMismatch","Webhook denies; installer reports VersionUnMatchError"],
+  ["Authentication/authorization failure","Preserve current backend classification during refactor","Do not silently convert it into catalog absence"]
+]} />
+
+## Ordered implementation plan
+
+1. **Characterize contracts before moving code.** Add tests for URL classification, mixed Helm+OCI precedence, existing ConfigMap decoding, secret-backed legacy OCI auth, exact pins, empty-version resolution, prerelease behavior, SystemRequirements metadata, catalog absence, and error wrapping. Keep the current targeted suites green.
+2. **Introduce checked source normalization.** Add URL classification, `NewVersionedRegistry(...) (VersionedRegistry, error)`, and a registry-to-chart-source adapter in `source.go` / `registry.go`. Extend the canonical credential shape without changing Git/OSS sources or mixed-version writes.
+3. **Freeze error and metadata contracts.** Add the operation-by-operation error matrix and field-level metadata assertions before moving archive decoding. Refactor `versioned_registry.go` only after those tests pin both backends.
+4. **Create the backend seam.** Refactor `versioned_registry.go` into the shared `helmRegistry` façade plus `chartBackend` and an explicit `resolvedChart` result.
+5. **Move HTTP behavior unchanged.** Extract index/list/version/download logic from the current `versionedRegistry` into `httpHelmBackend`; retain `chooseVersion`, relative URL handling, HTTP options, and annotation override behavior.
+6. **Move OCI behavior without weakening safety.** Replace `ociRegistry` with `ociHelmBackend`; keep registry-client construction, tag filtering, portable catalog discovery, pagination-host validation, absence classification, and pull errors. Adapt `oci_catalog.go` to the shared source/credential input.
+7. **Collapse call-site switches selectively.** Update cache, installer, detailed package lookup, exact-version lookup, legacy definition lookup, CLI listing, and compatibility paths to use `ToVersionedRegistry`. Keep compatible-version suggestions backend-capability-aware so OCI never gets a false “compatible” recommendation.
+8. **Unify push routing without changing legacy mixed records.** Resolve unambiguous configured registries to a canonical chart source and select ChartMuseum versus OCI from its URL. For an existing mixed-block record, preserve current OCI-first push behavior until explicit migration.
+9. **Migrate CLI parsing and presentation.** Treat `--type oci` as a deprecated alias and permit `--type helm` with `oci://`, but keep legacy OCI-shaped writes during the rollback window. Show type from URL and validate OCI adds without rejecting a genuinely fresh catalog.
+10. **Add explicit migration and cleanup.** Implement old-record-aware Secret cleanup, deprecation warnings, and a migration command/audit path. Gate canonical writes and eventual field removal on the supported-version policy and migration completion, not elapsed time.
+11. **Delete duplicate implementation code.** Remove the `ociRegistry` struct and its duplicated VersionedRegistry methods. Retain OCI backend/catalog files and deprecated exported wrappers until the compatibility gate is met.
+12. **Verify from unit boundary to lifecycle.** Run focused registry tests, package tests, render/provider/webhook tests, CLI tests, rollback fixtures, and an add-on component smoke against both an HTTP Helm fixture and an OCI fixture.
+
+### File map
+
+<FileTree id="file-map" entries={[
+  { path: "pkg/addon/versioned_registry.go", change: "modified", note: "Become the shared Helm-chart registry façade and backend contract." },
+  { path: "pkg/addon/oci_registry.go", change: "renamed", note: "Rename/split to an OCI Helm backend; delete the standalone VersionedRegistry implementation and duplicated projections." },
+  { path: "pkg/addon/oci_catalog.go", change: "modified", note: "Retain portable catalog logic; consume canonical chart-source credentials." },
+  { path: "pkg/addon/source.go", change: "modified", note: "Canonical Helm source, URL classification, password secret reference, deprecated OCI adapter." },
+  { path: "pkg/addon/registry.go", change: "modified", note: "Normalize legacy records after secret loading; dual-read credential keys; clean obsolete Secrets using the previous record." },
+  { path: "pkg/addon/cache.go", change: "modified", note: "Use one chart-registry capability predicate and one factory." },
+  { path: "pkg/addon/addon.go", change: "modified", note: "Remove direct OCI branch in install loading; carefully retain compatible-version suggestion semantics." },
+  { path: "pkg/addon/helper.go", change: "modified", note: "Collapse detailed/exact package lookup to ToVersionedRegistry." },
+  { path: "pkg/addon/utils.go", change: "modified", note: "Unify legacy definition lookup; deprecate representation-based predicates." },
+  { path: "pkg/addon/push.go", change: "modified", note: "Route configured Helm/OCI sources by URL while preserving distinct push backends." },
+  { path: "references/cli/addon-registry.go", change: "modified", note: "Make OCI a compatibility alias, retain rollback-safe writes, add migration/audit flow, and derive displayed type from URL." },
+  { path: "references/cli/addon.go", change: "modified", note: "Update list/push classification and help text." },
+  { path: "pkg/addon/oci_registry_test.go", change: "renamed", note: "Retarget tests to OCI backend behavior and shared façade contracts." },
+  { path: "pkg/addon/versioned_registry_test.go", change: "modified", note: "Add backend factory and shared method coverage." },
+  { path: "pkg/addon/registry_test.go", change: "modified", note: "Add legacy ConfigMap/Secret migration and canonical write tests." },
+  { path: "pkg/addon/cache_oci_test.go", change: "removed", note: "Fold representation-specific cache tests into unified versioned-registry tests." },
+  { path: "pkg/addon/push_oci_test.go", change: "modified", note: "Test direct and configured canonical OCI routes plus legacy aliases." },
+  { path: "references/cli/addon_test.go", change: "modified", note: "Cover --type oci alias, --type helm with oci://, password stdin, and output compatibility." }
+]} />
+
+## Reuse and deletion
+
+**Reuse unchanged or nearly unchanged:** `VersionedRegistry`; `MemoryReader`; `loadAddonPackage`; `chooseVersion`; Helm's cached index helper; OCI ref/tag/pull helpers; portable catalog encode/decode and safe publication loop; `Cache.cacheVersionedUIData`; installer/rendering logic; add-on component provider and CUE contract.
+
+**Delete in the implementation PR:** the concrete `ociRegistry` type; its duplicated `GetAddonUIData`, `GetAddonInstallPackage`, and `GetDetailedAddon`; direct `BuildOCIRegistry` call sites; `isVersionCapableRegistry`; Helm-vs-OCI switches in helper/cache/CLI listing; tests whose only purpose is proving OCI takes a separate branch.
+
+**Deprecate, then delete only after a migration gate:** exported `OCIAddonSource`, `Registry.OCI`, `IsOCIRegistry`, `BuildOCIRegistry`, and the `--type oci` spelling. Their first-stage implementations are adapters, not independent behavior. Removal requires the supported-version floor to understand canonical records and an audit showing no legacy or ambiguous mixed-block entries.
+
+## Testing and verification
+
+<Checklist id="test-checklist" items={[
+  { id: "test-factory", label: "Factory tests: http(s) selects HTTP backend; oci selects OCI backend; malformed/unsupported schemes fail clearly." },
+  { id: "test-legacy", label: "Compatibility fixtures: old OCI JSON + tokenSecretRef load, list, push, update, delete, rollback, and mixed-block precedence behave as documented." },
+  { id: "test-shared", label: "Shared façade tests: UIData, InstallPackage, detailed package, available versions, registry stamping, and archive errors execute once for both backends." },
+  { id: "test-http", label: "Existing HTTP Helm index/basic-auth/TLS/multiversion suites pass unchanged." },
+  { id: "test-oci", label: "OCI tests retain tag filtering, exact/latest pull, ECR-style absence, foreign pagination refusal, plain HTTP, auth failures, and catalog race handling." },
+  { id: "test-cache", label: "Cache tests verify latest and pinned keys, available-version carry-forward, registry deletion cleanup, and no AsyncReader path for chart registries." },
+  { id: "test-install", label: "Installer/dependency tests cover same-registry lookup, fallback registries, the full error matrix, legacy definition lookup, and no false compatible-version suggestion for OCI." },
+  { id: "test-cli", label: "CLI tests cover canonical and legacy creation, password stdin, direct URL behavior, configured push routing, and type display." },
+  { id: "test-component", label: "Run render service, CueX provider, compatibility webhook, and add-on component lifecycle tests to prove no contract change." },
+  { id: "test-commands", label: "Run go test ./pkg/addon plus focused service, provider, webhook, and CLI packages." },
+  { id: "test-smoke", label: "End-to-end smoke: publish two versions to a disposable OCI registry, add it through both CLI spellings, list versions, render/install a pinned add-on component, then verify the child Application and auxiliaries." }
+]} />
+
+## Risks and edge cases
+
+- **Credential regression:** canonicalizing OCI into Helm must not move a secret-backed password into the ConfigMap. Add a canonical password-secret reference before changing writes.
+- **Version-policy drift:** HTTP and OCI differ today on prereleases, leading `v`, pinned version listings, and SystemRequirements metadata. Preserve behavior first; normalize only in a separately approved change.
+- **Catalog safety:** never treat a generic 404, auth error, timeout, or empty strict-semver result as proof that the portable catalog is absent. Preserve the NAME_UNKNOWN-only overwrite gate and retry loop.
+- **Fresh registry validation:** an OCI registry with no catalog is a valid empty source. CLI add must accept genuine `ErrOCICatalogAbsent` without masking auth/connectivity failures.
+- **Both blocks populated:** keep Helm precedence until malformed records are no longer supported.
+- **Transport options:** `InsecureSkipTLS`, custom CA/cert/key, and plain HTTP do not currently have identical HTTP/OCI meanings. Reject unsupported options rather than silently ignoring them.
+- **Registry ordering:** retain deterministic name sorting because first matching registry wins.
+- **Mutable credentials:** ECR passwords expire. Do not copy credentials into long-lived backend singletons beyond the lifetime already implied by the registry object/cache refresh.
+- **Push semantics:** HTTP “Helm push” is specifically ChartMuseum upload; OCI uses Helm registry push. The façade must not pretend every HTTP Helm repository is writable.
+- **Component lifecycle:** the add-on component returns a child Application and auxiliaries; changing registry internals must not change ownership, state-keep policy, resolved version, or registry labels.
+
+<Callout id="baseline" tone="success">
+
+**Current baseline verified:** focused OCI/Helm/cache/push tests in `pkg/addon` pass, and the render service, CueX add-on provider, and add-on compatibility webhook packages all pass before any changes.
+
+</Callout>
+
+### Open Questions
+
+<QuestionForm id="open-questions" submitLabel="Review architecture" questions={[
+  {
+    id: "compat-window",
+    title: "How aggressively should the public OCI configuration be removed?",
+    subtitle: "This controls whether existing ConfigMaps, scripts, and external Go callers remain valid.",
+    mode: "single",
+    required: true,
+    options: [
+      { id: "compat-adapter", label: "Migration-gated adapter", detail: "Keep legacy OCI JSON/API/CLI spellings until the supported-version floor and registry audit make canonical writes and removal rollback-safe.", recommended: true },
+      { id: "major-removal", label: "Immediate removal", detail: "Require registry recreation or migration and accept a breaking API/config change." }
+    ]
+  },
+  {
+    id: "version-policy",
+    title: "Should this refactor also standardize HTTP and OCI version-selection semantics?",
+    subtitle: "Today prereleases, v-prefixed tags, and metadata overrides differ.",
+    mode: "single",
+    required: true,
+    options: [
+      { id: "preserve-first", label: "Preserve first", detail: "Characterize and keep current transport behavior; make semantic alignment a follow-up.", recommended: true },
+      { id: "standardize-now", label: "Standardize now", detail: "Adopt one latest/pin policy in the same change, increasing behavioral and test scope." }
+    ]
+  },
+  {
+    id: "helm-passwords",
+    title: "How broad should credential-secret migration be?",
+    subtitle: "The canonical Helm source needs secret-backed passwords to avoid regressing OCI security.",
+    mode: "single",
+    required: true,
+    options: [
+      { id: "oci-only-secret", label: "OCI paths only", detail: "Add the shared secret reference but migrate only OCI-shaped sources in this refactor.", recommended: true },
+      { id: "all-helm-secret", label: "All Helm passwords", detail: "Also migrate existing HTTP Helm basic-auth passwords out of the ConfigMap when updated." }
+    ]
+  }
+]} />

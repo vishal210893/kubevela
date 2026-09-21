@@ -1,0 +1,693 @@
+name: standard-concurrent
+version: 1.25.0
+capabilities:
+  - atmos-export
+  - aws
+  - base
+  - claude
+  - gh
+  - git
+  - harness.ci
+  - harness.dev
+  - iterm
+  - kubectl
+  - lang-go
+  - lang-java
+  - lang-python
+  - lang-typescript
+  - maven-cache
+  - mcp-atlassian
+  - mcp-devassist
+  - mcp-figma
+  - mcp-github
+  - mcp-guidewire-docs
+  - mount-bind
+  - plantuml-suite
+  - resolve-ai
+  - review
+  - screenshots
+  - software-catalog
+  - spec
+  - springboot-ha-checker
+  - statusline
+  - teamcity
+devcontainer:
+  remote-environment-variables:
+    - name: ATMOS_GALAXY_NAME
+      summary: Atmos galaxy name for cloud session targeting
+    - name: ATMOS_QUADRANT_ALIAS_NAME
+      summary: Atmos quadrant alias for environment selection
+    - name: ATMOS_QUADRANT_NAME
+      summary: Atmos quadrant name for environment identification
+    - name: ATMOS_SESSION
+      summary: Atmos session identifier for kubeconfig resolution
+    - name: AWS_ACCESS_KEY_ID
+      summary: AWS access key from Atmos session
+    - name: AWS_ACCOUNT_ID
+      summary: AWS account ID for the active session
+    - name: AWS_ACCOUNT_NAME
+      summary: AWS account name for the active session
+    - name: AWS_SECRET_ACCESS_KEY
+      summary: AWS secret access key from Atmos session
+    - name: AWS_SECURITY_TOKEN
+      summary: AWS security token from Atmos session (legacy)
+    - name: AWS_SESSION_TOKEN
+      summary: AWS session token from Atmos session
+    - name: AWS_PROFILE
+      summary: Passes through your active AWS profile from the host
+      description: |
+        Forwards the AWS_PROFILE environment variable from your host into the container,
+        allowing AWS CLI to use the correct profile without additional configuration.
+        Set this on your host before starting the container (e.g., export AWS_PROFILE=my-profile).
+    - name: AWS_DEFAULT_REGION
+      summary: Passes through your default AWS region from the host
+      description: |
+        Forwards the AWS_DEFAULT_REGION environment variable from your host. This sets
+        the default region for AWS CLI commands when not specified explicitly. Common
+        values include us-east-1, us-west-2, etc.
+    - name: CCA_CLIENT_ID
+      summary: CCA authentication client ID (forwarded from host)
+      description: |
+        Forwards the CCA_CLIENT_ID environment variable from your host machine into
+        the container. This enables authentication with CCA services without storing
+        credentials inside the container or in configuration files.
+    - name: CCA_CLIENT_SECRET
+      summary: CCA authentication client secret (forwarded from host)
+      description: |
+        Forwards the CCA_CLIENT_SECRET environment variable from your host machine.
+        Combined with CCA_CLIENT_ID, this enables seamless CCA authentication from
+        within containers.
+    - name: HOST_USER
+      source: USER
+      summary: Unix/macOS username (forwarded from host for telemetry)
+    - name: HOST_USERNAME
+      source: USERNAME
+      summary: Windows username (forwarded from host for telemetry)
+    - name: GH_TOKEN
+      summary: GitHub personal access token passed from host to container
+    - name: TERM_PROGRAM
+      summary: Host terminal emulator identifier (e.g., iTerm.app, Apple_Terminal, vscode)
+    - name: ITERM_SESSION_ID
+      summary: iTerm2 session identifier for alerts and notifications
+    - name: KUBECONFIG
+      summary: Forwards custom kubeconfig path from host for non-standard config locations
+    - name: INSURANCESUITE_CORE_SNAPSHOT_REPOSITORY_URL
+      summary: Repository URL where Maven can download snapshot versions of InsuranceSuite core libraries
+    - name: INSURANCESUITE_CORE_RELEASE_REPOSITORY_URL
+      summary: Repository URL where Maven can download released versions of InsuranceSuite core libraries
+    - name: MAVEN_CENTRAL_MIRROR_REPOSITORY_URL
+      summary: Internal mirror of Maven Central repository for faster and more reliable dependency downloads
+    - name: INSURANCESUITE_CORE_DEPENDENCIES_RELEASE_REPOSITORY_URL
+      summary: Repository URL for stable releases of InsuranceSuite dependency libraries
+    - name: INSURANCESUITE_CORE_OSGI_3RD_PARTY_SNAPSHOT_REPOSITORY_URL
+      summary: Repository URL for snapshot versions of third-party OSGi bundles used by InsuranceSuite
+    - name: INSURANCESUITE_CORE_OSGI_3RD_PARTY_RELEASE_REPOSITORY_URL
+      summary: Repository URL for released versions of third-party OSGi bundles used by InsuranceSuite
+    - name: INSURANCESUITE_CORE_GRADLE_PLUGINS_SNAPSHOT_REPOSITORY_URL
+      summary: Repository URL for snapshot versions of custom Gradle plugins used in InsuranceSuite builds
+    - name: INSURANCESUITE_CORE_GRADLE_PLUGINS_PRODUCTION_REPOSITORY_URL
+      summary: Repository URL for production-ready versions of custom Gradle plugins used in InsuranceSuite builds
+    - name: INSURANCESUITE_CORE_THIRDPARTY_REPOSITORY_URL
+      summary: Repository URL for general third-party dependencies required by InsuranceSuite applications
+    - name: GRADLE_PLUGINS_MIRROR_REPOSITORY_URL
+      summary: Internal mirror of the Gradle plugin repository for faster plugin resolution
+    - name: GRADLE_DISTRIBUTION_REPOSITORY_URL
+      summary: URL where Gradle wrapper can download specific Gradle distribution versions
+    - name: DEPENDENCY_REPOSITORY_USERNAME
+      summary: Username credential for authenticating with protected Maven repositories
+    - name: DEPENDENCY_REPOSITORY_PASSWORD
+      summary: Password credential for authenticating with protected Maven repositories
+    - name: ARTIFACTORY_URL
+      summary: Base URL of the Artifactory server hosting all Guidewire artifact repositories
+    - name: ARTIFACTORY_PASSWORD
+      summary: Your Artifactory API key or password for authenticating repository access
+    - name: ARTIFACTORY_USERNAME
+      summary: Your Artifactory username for authenticating repository access
+    - name: TEAMCITY_URL
+      source: TEAMCITY_URL:-https://gwre-devexp-ci-production-devci.gwre-devops.net/
+      summary: TeamCity server URL (defaults to GW production instance)
+    - name: TEAMCITY_TOKEN
+      summary: TeamCity API access token
+    - name: TEAMCITY_RO
+      source: TEAMCITY_RO:-1
+      summary: Read-only mode for AI safety (defaults to 1)
+  mounts:
+    - source: ${localEnv:HOME}/.atmos2
+      target: /home/node/.atmos2
+      type: bind
+      consistency: cached
+      ensure-exists: directory
+      summary: Atmos configuration and kubeconfig files
+      description: |
+        Mounts your host Atmos2 directory into the container. Contains
+        session-specific kubeconfig files. Created automatically if absent.
+    - source: ${localEnv:HOME}/.aws
+      target: /home/node/.aws
+      type: bind
+      consistency: cached
+      ensure-exists: directory
+      summary: Mounts your host AWS directory so all profiles and credentials are available in the container
+      description: |
+        Mounts your host machine's AWS configuration directory into the container.
+        This preserves all your AWS profiles, credentials, SSO tokens, and configurations
+        across container rebuilds. Without this mount, you'd need to reconfigure AWS CLI
+        inside the container every time you rebuild.
+    - source: ${localEnv:HOME}/.claude
+      target: /home/node/.claude
+      type: bind
+      consistency: cached
+      ensure-exists: directory
+      summary: Claude Code configuration directory
+      description: |
+        Mounts your host machine's Claude Code configuration directory into the container.
+        This preserves all your custom commands, scripts, settings, and preferences across
+        container rebuilds. Without this mount, you'd lose all customizations every time
+        you rebuild the devcontainer.
+    - source: ${localEnv:HOME}/.claude.json
+      target: /home/node/.claude.json
+      type: bind
+      consistency: cached
+      ensure-exists: file
+      summary: Claude Code authentication and global settings
+      description: |
+        Mounts your Claude Code authentication token and global configuration file. This
+        keeps you logged in across container rebuilds so you don't have to authenticate
+        again every time you start or rebuild the container.
+    - source: ${localEnv:HOME}/CLAUDE.md
+      target: /home/node/CLAUDE.md
+      type: bind
+      consistency: cached
+      ensure-exists: file
+      summary: User's global CLAUDE.md instructions
+      description: |
+        Mounts your global CLAUDE.md file from your home directory into the container.
+        This allows Claude to access your personal instructions and preferences across
+        all projects in this devcontainer.
+    - source: ${localEnv:HOME}/.config/gh
+      target: /home/node/.config/gh
+      type: bind
+      consistency: cached
+      ensure-exists: directory
+      summary: GitHub CLI config for persistent authentication across rebuilds
+      description: |
+        Mounts the GitHub CLI configuration directory from your host machine
+        into the container. This preserves your authentication when you run
+        gh auth login with the --insecure-storage flag. Without this mount,
+        you would need to authenticate every time you rebuild the container.
+    - source: ${localEnv:HOME}/.gitconfig
+      target: /home/node/.gitconfig-host
+      type: bind
+      consistency: cached
+      ensure-exists: file
+      summary: Your git identity and preferences (name, email, aliases)
+      description: |
+        Mounts your host's ~/.gitconfig to .gitconfig-host in the container. A wrapper
+        config at ~/.gitconfig includes this file and overrides settings that don't work
+        in the container (like host-specific SSL certificate paths or credential helper
+        paths). This keeps your host config untouched while ensuring git works correctly
+        inside the container.
+    - source: ${localEnv:HOME}/.gitignore_global
+      target: /home/node/.gitignore_global
+      type: bind
+      consistency: cached
+      ensure-exists: file
+      summary: Global ignore patterns that apply to all repositories
+      description: |
+        Mounts your global gitignore file so patterns like .DS_Store, *.swp, or
+        IDE-specific files are ignored across all repositories without having to add
+        them to each project's .gitignore. Created empty if it doesn't exist.
+    - source: ${localEnv:HOME}/.kube
+      target: /home/node/.kube-host
+      type: bind
+      readonly: true
+      consistency: cached
+      ensure-exists: directory
+      summary: Host Kubernetes config (read-only reference at ~/.kube-host)
+    - source: ${localEnv:HOME}/.cache/uv
+      target: /home/node/.cache/uv
+      type: bind
+      consistency: cached
+      ensure-exists: directory
+      summary: UV package cache for persistent Python dependencies
+      description: |
+        Mounts your host's ~/.cache/uv directory into the container for persistent
+        Python package caching. UV is a fast Python package installer and resolver
+        that caches downloaded packages to speed up subsequent installs. This mount
+        ensures the cache persists across container rebuilds, reducing download time
+        and bandwidth usage when reinstalling Python dependencies.
+    - source: ${localEnv:HOME}/.npm-global
+      target: /home/node/.npm-global
+      type: bind
+      consistency: cached
+      ensure-exists: directory
+      summary: Persists globally installed npm packages across container rebuilds
+    - source: ${localEnv:DEVCONTAINER_MAVEN_VOLUME:-devcontainer-m2}
+      target: /home/node/.m2
+      type: volume
+      volume-nocopy: true
+      summary: Persistent Maven local repository shared across container rebuilds
+      description: |
+        Mounts /home/node/.m2 as a Docker volume so the Maven local repository
+        survives container rebuilds. volume-nocopy: true keeps the volume empty
+        on first mount (the image has no /home/node/.m2 to seed from) and opts
+        the volume into mount-bind's ownership-init pass, which chowns the volume
+        root to the container user before the container starts.
+
+        To use your own volume name, set DEVCONTAINER_MAVEN_VOLUME before
+        installing:
+        export DEVCONTAINER_MAVEN_VOLUME=my-m2 && dev profile install
+    - source: ${localEnv:HOME}/.zshrc.local
+      target: /home/node/.zshrc.local
+      type: bind
+      consistency: cached
+      ensure-exists: file
+      summary: Personal shell customization (aliases, functions, environment variables)
+      description: |
+        Mounts your host's ~/.zshrc.local into the container where it's automatically
+        sourced by zsh on startup. This is the recommended place for personal shell
+        customizations that should follow you into containers--things like command aliases,
+        utility functions, or environment variables. The file is created empty if it
+        doesn't exist (via ensure-exists: file), so you don't need to create it manually.
+
+        Note: ~/.zshrc.local is sourced only by interactive shells (via ~/.zshrc). Put
+        SECRETS and tokens that non-interactive tooling needs (gradle launchers, the
+        ccbridge headless launcher, MCP subprocesses) in ~/.zshenv.secrets instead -- it
+        is loaded by ~/.zshenv for ALL shells. See the zshenv.secrets mount below.
+    - source: ${localEnv:HOME}/.zshenv.secrets
+      target: /home/node/.zshenv.secrets
+      type: bind
+      consistency: cached
+      ensure-exists: file
+      ensure-mode: '600'
+      summary: Secrets and tokens for all shells (interactive and non-interactive)
+      description: |
+        Mounts your host's ~/.zshenv.secrets into the container. This is the single place
+        for secret VALUES (API tokens, registry credentials, anything read via
+        System.getenv / os.environ by tooling). The container's ~/.zshenv sources this
+        file, so the exports reach EVERY shell -- interactive ones and, crucially,
+        non-interactive ones (tools, gradle launchers, the ccbridge headless launcher, MCP
+        subprocesses) that source only ~/.zshenv and never ~/.zshrc / ~/.zshrc.local.
+
+        This closes the gap that broke credential delivery before: ~/.zshrc.local reaches
+        only interactive shells, so a launcher reading DEPENDENCY_REPOSITORY_USERNAME /
+        DEPENDENCY_REPOSITORY_PASSWORD from a non-interactive zsh got nothing (or a stale
+        value), causing Artifactory 401s.
+
+        The file is created empty with mode 600 if it doesn't exist (via ensure-exists:
+        file + ensure-mode: "600"), and the mode is re-applied on every container start.
+        It must NEVER be committed -- it lives in $HOME, outside any repo. Contents are plain shell, e.g.:
+
+          export ATLASSIAN_API_TOKEN=...
+          export DEPENDENCY_REPOSITORY_USERNAME=...
+          export DEPENDENCY_REPOSITORY_PASSWORD=...
+
+        Run the base capability's setup-zshenv-secrets.sh helper on your host to create
+        this file correctly and migrate any secrets currently in ~/.zshrc.local.
+    - source: ${localEnv:HOME}/.npmrc
+      target: /home/node/.npmrc
+      type: bind
+      consistency: cached
+      ensure-exists: file
+      summary: NPM registry configuration
+      description: |
+        Mounts your npm configuration file from your host machine into the
+        devcontainer. This file contains your registry URLs, authentication
+        tokens, and any scoped package configurations you've set up. The system
+        creates an empty file on your host if one doesn't exist yet, so the
+        mount never fails.
+    - source: ${localEnv:HOME}/.dev
+      target: /home/node/.dev
+      type: bind
+      consistency: cached
+      ensure-exists: directory
+      summary: Dev CLI configuration directory
+      description: |
+        Mounts your dev CLI configuration from the host into the container.
+        This enables running dev commands inside the container with access to
+        the same configuration used on the host (workspace paths, profile
+        settings, etc.). The directory is created if it doesn't exist.
+    - source: ${localEnv:HOME}/.screenshots
+      target: /workspaces/.screenshots
+      type: bind
+      consistency: cached
+      ensure-exists: directory
+      summary: macOS screenshot directory mounted into container for AI access
+      description: |
+        Creates a live connection between your Mac's screenshot directory and the container,
+        making screenshots visible inside the container environment. The mount uses cached
+        consistency mode to optimize performance while file changes propagate (sync times
+        may vary). If the ~/.screenshots directory doesn't exist on your host, it will be
+        created automatically when the container starts.
+  login-scripts:
+    - name: atmos-export-check.sh
+      priority: 30
+      summary: Set KUBECONFIG and validate Atmos session when active
+      description: |
+        Silent when ATMOS_SESSION is not set. When set, exports KUBECONFIG,
+        clears AWS_PROFILE, and warns if any session variables are missing.
+    - name: login-dispatcher.sh
+      priority: 1
+      summary: Dispatcher for sourcing all shell helper scripts in priority order
+      description: |
+        Orchestrates shell customizations from all capabilities by sourcing numbered shell
+        helper files (NNN-*.sh) in sorted order. This runs on every interactive shell session
+        start, allowing capabilities to contribute shell aliases, functions, and key bindings.
+        Sourced by ~/.zshrc during shell initialization.
+    - name: otel-resource-attributes.sh
+      priority: 5
+      summary: Set OTEL_RESOURCE_ATTRIBUTES for Claude Code telemetry
+      description: |
+        Builds OTEL_RESOURCE_ATTRIBUTES from container version, dev CLI version, profile
+        name/version, and host username. Enables custom resource attributes to be sent with
+        Claude Code telemetry to Datadog.
+    - name: profile-deprecation-warning.sh
+      priority: 6
+      summary: Warn on shell login if the active profile is deprecated
+      description: |
+        Reads the workspace's resolved profile.yaml and, if the active profile name matches
+        a hardcoded list of deprecated profiles, prints a migration notice to stderr with
+        suggested replacement profiles. Silent for non-deprecated profiles.
+
+        Hardcoded list because the dev CLI does not propagate `tags: [deprecated]` from the
+        source profile.yaml to the resolved .devcontainer/profile.yaml.
+    - name: local.sh
+      type: util
+      summary: Backwards compatibility shim for legacy container shell initialization
+      description: |
+        Legacy utility script for containers that source local.sh directly from ~/.zshrc.
+        Modern setups source login-dispatcher.sh instead. This file remains for backwards
+        compatibility and simply forwards to login-dispatcher.sh if it exists.
+    - name: claude-aliases.sh
+      priority: 50
+      summary: Claude Code aliases for workspace-aware sessions
+      description: |
+        Sets up ccl/cccl/ccrl aliases that symlink .claude and launch Claude Code
+        with your workspace's MCP servers configuration. Use these aliases when you
+        enter the container via 'dev sh' and want to start Claude with all
+        profile-specific features enabled (status line, commands, MCP servers).
+    - name: 010-npm-global-path.sh
+      priority: 10
+      summary: Add ~/.npm-global/bin to PATH for globally installed npm packages
+    - name: screenshot-aliases.sh
+      priority: 10
+      summary: Shell aliases for quick screenshot access
+      description: |
+        Adds convenient shell commands to your terminal for working with screenshots. The img
+        command shows you the path to your most recent screenshot, while imgall displays a
+        formatted list of your 20 most recent screenshots with their timestamps, making it
+        easy to find and reference specific captures.
+  image:
+    name: GW CC AI
+    image: artifactory.guidewire.com/ai-coding/claude-code:latest
+  image-run-arguments:
+    - '--init'
+    - '--restart=unless-stopped'
+  initialize-command: uv run --no-sync .devcontainer/initialize-scripts/initialize-dispatcher.py
+  post-create-command: .devcontainer/post-create-scripts/post-create-dispatcher.py
+  post-start-command: .devcontainer/post-start-scripts/post-start-dispatcher.py
+  initialize-scripts:
+    - name: initialize-dispatcher.py
+      type: extension
+      priority: 1
+      summary: Dispatcher for running all host-side initialization scripts in priority order
+      description: |
+        Orchestrates host-side setup before the container starts. Discovers and executes all
+        numbered Python scripts (NN-*.py) in sorted order. Runs on the host machine with
+        access to host resources (SSH agent, credentials, file systems). This is the first
+        lifecycle hook, executing before container creation.
+    - name: gitconfig-includes.py
+      type: extension
+      priority: 15
+      summary: Discovers gitconfig include files and adds dynamic bind mounts
+      description: |
+        Parses the host ~/.gitconfig for [include] and [includeIf] path directives,
+        ensures referenced files exist on the host, and injects bind mounts into
+        devcontainer.json so they are available inside the container.
+    - name: ensure-mounts.py
+      type: extension
+      priority: 10
+      summary: Prepares mount sources and volume ownership before container creation
+      description: |
+        Reads mount configurations from the profile and performs two preparation tasks:
+
+        1. Creates any bind-mount source directory or file marked with the ensure-exists
+           property, preventing "mount source does not exist" errors.
+
+        2. For every mount with type: volume AND volume-nocopy: true, runs a throwaway
+           Alpine container to chown the volume root to the container user (1000:1000).
+           Docker creates a new volume mount point as root:root by default, which
+           prevents the non-root container user from writing. Volumes without
+           volume-nocopy are skipped so Docker's auto-copy-from-image behavior is
+           preserved. The Alpine image is pulled on demand by docker run if
+           not cached locally; idempotent, and any pull or chown failure is
+           fatal so a silently root-owned volume cannot reach the user.
+
+        Supports ${localEnv:VAR} and ${localEnv:VAR:-default} expansion in source paths.
+  post-create-scripts:
+    - name: post-create-dispatcher.py
+      type: extension
+      priority: 1
+      summary: Dispatcher for running all post-create scripts in priority order
+      description: |
+        Orchestrates container setup after initial creation. Discovers and executes all
+        numbered Python scripts (NN-*.py) in sorted order. Runs once when the container
+        is first created, allowing capabilities to install tools, configure settings, and
+        prepare the development environment.
+    - name: create-dot-claude-dirs.py
+      type: extension
+      priority: 10
+      summary: Initialize Claude Code directory structure
+      description: |
+        Creates the ~/.claude directory and required subdirectories (todos, debug) to
+        ensure Claude Code can write its state files. This prevents ENOENT errors when
+        Claude Code first starts up in the container.
+    - name: ensure-zshenv-loader.py
+      type: extension
+      priority: 15
+      summary: Install the zshenv-secrets loader into the container ~/.zshenv
+      description: |
+        Ensures the container ~/.zshenv contains a managed block that sources
+        ~/.zshenv.secrets for ALL shells (interactive and non-interactive), plus a
+        transition shim that still sources legacy ~/.zshrc.local in interactive
+        shells only. The image bakes
+        ~/.zshrc but ships no ~/.zshenv, and non-interactive shells (tools, gradle
+        launchers, the ccbridge headless launcher, MCP subprocesses) source only
+        ~/.zshenv -- never ~/.zshrc / ~/.zshrc.local -- so secrets kept in
+        ~/.zshrc.local never reached them, causing failures such as Artifactory 401s
+        in the ccbridge launcher.
+
+        The managed block is delimited by markers and replaced (never duplicated) on
+        re-run, so the script is idempotent. The block is silent (no stdout) and fast
+        (no network) because ~/.zshenv is sourced by every shell, including the
+        non-interactive shells scp/rsync/ssh spawn, where stray output corrupts the
+        transfer. The host-side ~/.zshenv.secrets file is mounted and created mode 600
+        by mount-bind; run setup-zshenv-secrets.sh on the host to populate it.
+  post-start-scripts:
+    - name: post-start-dispatcher.py
+      type: extension
+      priority: 1
+      summary: Dispatcher for running all post-start scripts in priority order
+      description: |
+        Orchestrates container setup on every start. Discovers and executes all numbered
+        Python scripts (NN-*.py) in sorted order. Runs each time the container starts
+        (including restarts), allowing capabilities to refresh state, reconnect services,
+        and ensure the environment is ready.
+    - name: git-safe-directories.py
+      type: extension
+      priority: 10
+      summary: Scans and configures safe.directory for all git repositories
+      description: |
+        Walks the /workspaces directory tree looking for git repositories, then
+        adds each discovered repository to git's safe.directory configuration.
+        This prevents dubious ownership errors when the container user differs
+        from the host file owner. Runs automatically on every container start
+        to pick up any repositories cloned or added after initial creation.
+
+        Note: Repositories created after the container starts (such as git worktrees)
+        won't be configured until the next container restart. To add them immediately,
+        run: git config --global --add safe.directory /path/to/new/repo
+    - name: kube-config-init.py
+      type: extension
+      priority: 50
+      summary: Copies and rewrites kubeconfig from ~/.kube-host to ~/.kube
+      description: |
+        Copies ~/.kube-host/config into ~/.kube/config, replacing https://127.0.0.1
+        and https://0.0.0.0 server addresses with https://host.docker.internal so
+        local clusters (kind, k3d, minikube) are reachable from inside the
+        devcontainer. For each rewritten cluster entry, removes
+        certificate-authority-data and sets insecure-skip-tls-verify: true because
+        the TLS cert was issued for the local address, not host.docker.internal.
+        Always overwrites the destination since the host
+        config is the source of truth. Re-runs on every container start to pick up
+        new clusters.
+    - name: install-gopls.py
+      type: extension
+      priority: 80
+      background: true
+      summary: Install gopls (Go language server) for code intelligence
+    - name: install-java-versions.py
+      type: extension
+      priority: 50
+      background: true
+      summary: Install Amazon Corretto 11/17/21 via SDKMAN, set Java 21 as default, and create ~/.java symlinks
+    - name: install-jdtls.py
+      type: extension
+      priority: 80
+      background: true
+      summary: Install Eclipse JDT Language Server for Java code intelligence
+    - name: install-python-lsp-server.py
+      type: extension
+      priority: 80
+      background: true
+      summary: Install Python LSP server for code intelligence
+    - name: install-typescript-language-server.py
+      type: extension
+      priority: 80
+      background: true
+      summary: Install TypeScript language server for JavaScript/TypeScript code intelligence
+    - name: git-config-sanitize.py
+      type: extension
+      priority: 5
+      summary: Creates wrapper .gitconfig with container-appropriate overrides
+      description: |
+        When .gitconfig is mounted from the host at .gitconfig-host, it may contain
+        paths that don't exist in the container (SSL certificates, credential helpers
+        with host-specific paths). This script generates a wrapper ~/.gitconfig that
+        includes the host config via [include] and overrides problematic settings with
+        container-appropriate values. The host's .gitconfig-host file is never modified.
+    - name: start-screenshot-daemon.py
+      type: extension
+      priority: 15
+      summary: Initialize screenshot sync system
+      description: |
+        Prepares the screenshot environment when your container starts up. This script ensures
+        the necessary directories exist and performs any initial setup before launching the
+        background sync daemon that monitors for new screenshots.
+    - name: screenshot-sync-daemon.py
+      type: util
+      summary: Background daemon for screenshot monitoring
+      description: |
+        Runs continuously in the background, watching the mounted screenshot directory for new
+        files. When you take a screenshot, this daemon detects it immediately and copies it to
+        ~/img.png in your home directory. It maintains a rolling set of your 5 most recent
+        screenshots as img.png through img5.png, automatically rotating older screenshots as
+        new ones arrive. The daemon also attempts to copy the @~/img.png reference to your
+        clipboard for quick pasting, though this feature may not work reliably in all
+        environments.
+    - name: teamcity-setup.py
+      type: extension
+      priority: 78
+      background: true
+      summary: Install AI skill and authenticate with TeamCity
+  container-environment-variables:
+    - name: WSROOT
+      value: ${containerWorkspaceFolder}
+      summary: Absolute path to the workspace root inside the container
+      description: |
+        Provides a reliable reference to the workspace root directory. Scripts and tools
+        can use this instead of guessing paths or relying on `pwd`. Expands to something
+        like `/workspaces/your-project`.
+    - name: SHELL
+      value: /bin/zsh
+      summary: Sets zsh as the default interactive shell
+      description: |
+        Ensures all interactive sessions use zsh rather than bash. This affects what
+        shell opens when you connect to the container or run interactive commands.
+    - name: DEVASSISTANT_IDE_HOST
+      value: host.docker.internal
+      summary: Hostname for container-to-host communication
+      description: |
+        Sets the hostname that tools inside the container use to reach services
+        running on the host machine. The special DNS name host.docker.internal
+        is resolved by Docker Desktop to the host's IP address.
+    - name: PROPERTYSERVICE_CLIENT_SERVER_URI_OVERRIDE
+      value: https://helios.api.omega2-andromeda.guidewire.net
+      summary: Points the property service client to the Helios API endpoint for configuration retrieval
+    - name: DOCKER_BUILDKIT
+      value: '1'
+      summary: Enables Docker BuildKit for faster parallel builds and improved caching of image layers
+    - name: JAVA11_HOME
+      value: /home/node/.java/11
+      summary: Path to Java 11 installation (symlink managed by install-java-versions.py)
+    - name: JAVA17_HOME
+      value: /home/node/.java/17
+      summary: Path to Java 17 installation (symlink managed by install-java-versions.py)
+    - name: JAVA21_HOME
+      value: /home/node/.java/21
+      summary: Path to Java 21 installation (symlink managed by install-java-versions.py)
+    - name: PYTHONUNBUFFERED
+      value: 'True'
+      summary: Forces Python output to be unbuffered for real-time logging
+    - name: UV_LINK_MODE
+      value: copy
+      summary: Ensures UV copies packages instead of symlinking for better compatibility
+    - name: ENABLE_LSP_TOOL
+      value: '1'
+      summary: Enable LSP tool in Claude Code
+      description: Enables the LSP tool for TypeScript/JavaScript code intelligence
+    - name: NODE_EXTRA_CA_CERTS
+      value: /etc/ssl/certs/ca-certificates.crt
+      summary: System certificate bundle for HTTPS, enables npm behind corporate proxies
+    - name: GW_MCP_DEVKEY_PAGE_URL
+      value: https://cloud.int.ccs.guidewire.net/app/codelift/devkey
+      summary: URL for obtaining a DevAssistant developer key
+  forward-ports:
+    - port: 8081
+      summary: Secondary HTTP port for web applications
+      description: |
+        Forwards port 8081 from the container to the host. Use this for secondary
+        services, admin interfaces, or when port 8080 is already in use. Port 8080
+        is handled separately by the app-ports capability.
+    - port: 8190
+      summary: Standard port for PolicyCenter application server - access at localhost:8190 when running
+    - port: 8280
+      summary: Standard port for BillingCenter application server - access at localhost:8280 when running
+    - port: 8580
+      summary: Standard port for ClaimCenter application server - access at localhost:8580 when running
+    - port: 8000
+      summary: Standard port for Django, FastAPI, and Flask development servers
+  vscode:
+    extensions:
+      - name: ms-vscode-remote.remote-containers
+        summary: Enables VS Code to work with devcontainers
+        description: |
+          The core extension for devcontainer support. Allows VS Code to detect
+          devcontainer configurations, build containers, and attach to running
+          containers with full editor functionality.
+      - name: ms-vscode.vscode-json
+        summary: JSON language support with schema validation
+        description: |
+          Provides JSON language features including syntax highlighting, formatting,
+          and schema-based validation. Essential for editing devcontainer.json,
+          package.json, and other configuration files with real-time error checking.
+      - name: anthropic.claude-code
+        summary: Claude Code integration for Visual Studio Code
+        description: |
+          Installs the official Claude Code extension, giving you access to Claude directly
+          from your VS Code editor. You can chat with Claude, get code suggestions, and run
+          commands without leaving your development environment.
+      - name: golang.go
+        summary: Official Go extension with language intelligence, debugging, and testing
+      - name: vscjava.vscode-java-pack
+        summary: Java language support, debugging, testing, and Maven/Gradle integration
+      - name: ms-python.python
+        summary: Python IntelliSense, debugging, linting, and test integration
+      - name: ms-vscode.vscode-typescript-next
+        summary: Latest TypeScript language features with code completion and type checking
+      - name: dbaeumer.vscode-eslint
+        summary: ESLint integration to catch code quality issues and maintain style
+    settings:
+      terminal.integrated.defaultProfile.linux: zsh
+      terminal.integrated.profiles.linux:
+        zsh:
+          path: /bin/zsh
+  extra-hosts:
+    - host.docker.internal:host-gateway
+  jetbrains:
+    plugins:
+      - name: com.anthropic.code.plugin
+        summary: Claude Code integration for JetBrains IDEs
+        description: |
+          Installs the official Claude Code plugin for JetBrains IDEs (IntelliJ IDEA,
+          PyCharm, WebStorm, etc.). This provides native Claude integration within your
+          JetBrains environment for inline assistance and command execution.

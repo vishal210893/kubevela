@@ -1,0 +1,31 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: wf-step-group
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-step-group-fixed
+spec:
+  components:
+    - name: front
+      type: webservice
+      properties:
+        image: nginx:1.21
+    - name: back
+      type: worker
+      properties:
+        image: busybox
+        cmd: ["sleep", "3600"]
+  workflow:
+    steps:
+      - name: deploy-group
+        type: step-group
+        subSteps:
+          - name: apply-front
+            type: apply-component
+            properties:
+              component: front
+          - name: apply-back
+            type: apply-component
+            properties:
+              component: back

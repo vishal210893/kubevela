@@ -1,0 +1,133 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "List all branches"
+# model = "haiku"
+# context = "fork"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/branch-list)"]
+#
+# [tool.claude.output]
+# prompt = "List all branches clearly. Show current branch, tracking info, and recent commit. Format for easy scanning."
+# examples = [
+#   "* feature-auth    abc1234 [origin/feature-auth] feat: add auth\n  main            def5678 [origin/main] fix: bug"
+# ]
+# ///
+
+import sys
+import os
+
+# Add bin directory to path to import gitlib
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    run_git,
+    output_result,
+    get_template_from_metadata
+)
+
+def get_spec_associations():
+    """Get all spec-branch associations from dev.yaml.
+
+    Returns:
+        dict: Mapping of branch name to spec name
+    """
+    try:
+        _lib = os.path.join(bin_dir, 'lib')
+        if _lib not in sys.path:
+            sys.path.insert(0, _lib)
+        from devyaml import read_config
+        import subprocess
+
+        url_result = subprocess.run(
+            ['git', 'remote', 'get-url', 'origin'],
+            capture_output=True, text=True
+        )
+        if url_result.returncode != 0:
+            return {}
+        u = url_result.stdout.strip()
+        if u.endswith('.git'):
+            u = u[:-4]
+        repo = u.rstrip('/').split('/')[-1].lower() if u else None
+        if not repo:
+            return {}
+
+        config = read_config()
+        branches = (config.get('spec', {})
+                          .get(repo, {})
+                          .get('branches', {}))
+        associations = {}
+        for branch, data in branches.items():
+            if isinstance(data, dict) and data.get('spec'):
+                associations[branch] = data['spec']
+        return associations
+    except Exception:
+        return {}
+
+
+def main():
+    """
+    List all branches with spec associations.
+
+    Idempotent: Yes
+    Worktree Constraints: Works for both WT & Branch flows
+    """
+    # Get branch list with all details
+    result = run_git(
+        ['branch', '-avv'],
+        operation_description="list branches",
+        capture_output=True
+    )
+
+    branches_output = result.stdout.strip()
+
+    # Get spec associations
+    spec_associations = get_spec_associations()
+
+    # If there are spec associations, augment the branch list
+    if spec_associations:
+        # Parse branches and add spec info
+        lines = branches_output.split('\n')
+        augmented_lines = []
+
+        for line in lines:
+            # Extract branch name (skip remote refs)
+            if line.strip().startswith('remotes/'):
+                augmented_lines.append(line)
+                continue
+
+            # Parse branch name from format: "* branch-name ..." or "  branch-name ..."
+            parts = line.strip().split()
+            if not parts:
+                augmented_lines.append(line)
+                continue
+
+            # Branch name is first part (or second if first is *)
+            branch_name = parts[1] if parts[0] == '*' else parts[0]
+
+            # Add spec association if exists
+            if branch_name in spec_associations:
+                spec_name = spec_associations[branch_name]
+                augmented_lines.append(f"{line} -> {spec_name}")
+            else:
+                augmented_lines.append(line)
+
+        branches = '\n'.join(augmented_lines)
+
+        # Add legend
+        branches += "\n\nLegend: * = current branch, -> = spec association"
+    else:
+        branches = branches_output
+
+    # Output result
+    data = {
+        'branches': branches
+    }
+
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+if __name__ == "__main__":
+    main()

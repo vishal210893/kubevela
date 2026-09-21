@@ -1,0 +1,280 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Show or set current spec association"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec *)"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "optional-passthrough"
+# hint = "spec | spec:context | project:spec:context"
+# description = "Qualified spec format. Bare name sets spec. Single colon sets spec+context. Two colons: each position omit=keep, '-'=clear, value=set. Context items can be +prefixed (add) or -prefixed (remove)."
+#
+# [tool.claude.output]
+# prompt = "If showing (get): display project (with resolution source), spec name, path, and contexts for the branch. If setting: confirm each change made (project, spec, contexts). Show branch name in each confirmation."
+# examples = [
+#   "Spec 'auth' on branch 'sclaussen/680/feature/auth'\n  Path: /workspaces/src/specs/dev/specs/auth/\n  Project: dev (repo name)\n  Contexts: steering, auth\n\nFormat: /spec spec | spec:context | project:spec:context (see docs/guides/spec-parameter.md)",
+#   "No spec associated with branch 'main'\n  Project: dev (repo name)\n\nFormat: /spec spec | spec:context | project:spec:context (see docs/guides/spec-parameter.md)",
+#   "[OK] Associated spec 'feature-auth' with branch 'feature-auth'\n[OK] Set 2 context(s): steering, auth",
+#   "[OK] Cleared spec from branch 'feature-auth'",
+#   "[OK] Added context(s): logging",
+#   "[OK] Set project 'alm' on branch 'feature-auth'\n[OK] Associated spec 'billing' with branch 'feature-auth'"
+# ]
+# ///
+
+"""
+Show or set current spec association.
+
+No args: shows the current spec association (get).
+With args: modifies branch spec settings.
+
+Composite format: [project]:[spec]:[ctx1,ctx2]
+Each position is independently: omit=keep, '-'=clear, value=set.
+Context items can be +prefixed (add) or -prefixed (remove).
+Bare arg (no colons) sets spec only.
+
+Examples:
+  /spec cli                   Set spec to 'cli'
+  /spec :cli:arch,sdd         Set spec and contexts
+  /spec ::+logging            Add a context
+  /spec ::-logging            Remove a context
+  /spec proj:cli:             Set project and spec, keep contexts
+  /spec :-:                   Clear spec, keep project and contexts
+  /spec -:-:-                 Clear all three
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_current_branch, get_associated_spec, spec_path, in_git_repo,
+    associate_spec, disassociate_spec, set_branch_project, remove_branch_project,
+    set_contexts, get_contexts, resolve_context_path,
+    parse_spec_and_ctx, get_repo_name, get_project, get_branch_project, apply_spec_state, _yaml_get
+)
+
+
+def read_spec_file(spec_dir: Path, filename: str) -> str | None:
+    """Read a spec file if it exists."""
+    file_path = spec_dir / filename
+    if file_path.exists():
+        return file_path.read_text()
+    return None
+
+
+def output_spec_context(spec_name: str, branch: str, spec_dir: Path):
+    """Output spec context to be injected into session."""
+    output_parts = []
+    output_parts.append(f"# Spec Context: {spec_name}")
+    output_parts.append(f"Branch `{branch}` is associated with spec `{spec_name}`.")
+    output_parts.append("")
+
+    for filename, title in [
+        ('requirements.md', 'Requirements'),
+        ('req.md', 'Requirements'),
+        ('design.md', 'Design'),
+        ('tasks.md', 'Tasks'),
+    ]:
+        content = read_spec_file(spec_dir, filename)
+        if content:
+            output_parts.append(f"## {title}")
+            output_parts.append(f"File: `{spec_dir}/{filename}`")
+            output_parts.append("")
+            output_parts.append(content.strip())
+            output_parts.append("")
+
+    print('\n'.join(output_parts))
+
+
+
+def do_get(branch):
+    """Show current spec association."""
+    spec_name = get_associated_spec(branch)
+
+    # If no association, try using branch name as spec name
+    if not spec_name:
+        candidate = spec_path(branch)
+        if candidate.exists():
+            spec_name = branch
+
+    path = str(spec_path(spec_name)) if spec_name else None
+    exists = Path(path).exists() if path else False
+
+    # Get project with resolution source
+    project_name = get_project(branch)
+    project_source = 'repo name'
+    branch_proj = get_branch_project(branch)
+    repo_proj = _yaml_get(f'spec.{get_repo_name()}.project')
+    if branch_proj:
+        project_source = 'branch override'
+    elif repo_proj:
+        project_source = 'repo default'
+
+    # Get contexts
+    contexts = get_contexts(branch)
+
+    data = {
+        'branch': branch,
+        'project': project_name,
+        'project_source': project_source,
+        'spec': spec_name,
+        'path': path,
+        'exists': exists,
+        'contexts': contexts
+    }
+
+    if os.getenv('CC') == '1':
+        data['format_hint'] = 'spec | spec:context | project:spec:context'
+        print(json.dumps(data))
+    else:
+        if not spec_name:
+            print(f"No spec associated with branch '{branch}'")
+            print("Use /spec <name> to associate a spec, or /spec:create <name> to create one")
+        else:
+            print(f"Spec '{spec_name}' on branch '{branch}'")
+            if exists:
+                print(f"  Path: {path}/")
+            else:
+                print(f"  Path: {path}/ (not found)")
+        print(f"  Project: {project_name} ({project_source})")
+        if contexts:
+            print(f"  Contexts: {', '.join(contexts)}")
+        print(f"\nFormat: /spec spec | spec:context | project:spec:context (see docs/guides/spec-parameter.md)")
+
+
+def _validate_contexts(refs, project_override):
+    """Validate that all context refs exist."""
+    missing = []
+    for ref in refs:
+        path = resolve_context_path(ref, project_override)
+        if not path.exists():
+            missing.append(ref)
+    if missing:
+        print(f"Error: Context(s) not found: {', '.join(missing)}", file=sys.stderr)
+        print(f"Run '/spec:ctx:create <name>' to create them first.", file=sys.stderr)
+        sys.exit(1)
+
+
+def do_modify(project, spec, contexts, ctx_mode, branch):
+    """Apply modifications to branch spec settings.
+
+    Each field is independently: None (keep), '-' (clear), or value (set).
+    ctx_mode: None (keep), 'clear', 'set', 'add', 'remove'.
+    """
+    effective_project = project if (project and project != '-') else None
+
+    # Validate before making any changes
+    if spec and spec != '-':
+        spec_dir = spec_path(spec, effective_project)
+        if not spec_dir.is_dir():
+            print(f"Error: Spec '{spec}' not found at {spec_dir}/", file=sys.stderr)
+            print(f"Run '/spec:create {spec}' to create it first.", file=sys.stderr)
+            sys.exit(1)
+
+    if ctx_mode in ('set', 'add') and contexts:
+        _validate_contexts(contexts, effective_project)
+
+    # Compute new state
+    old_project = get_project(branch)
+    old_spec = get_associated_spec(branch)
+    old_contexts = get_contexts(branch)
+    new_project, new_spec, new_contexts = apply_spec_state(
+        old_project, old_spec, old_contexts,
+        project, spec, contexts, ctx_mode,
+    )
+
+    # Persist project change
+    if project == '-':
+        remove_branch_project(branch)
+    elif project:
+        set_branch_project(branch, project)
+
+    # Persist spec change
+    if spec == '-':
+        disassociate_spec(branch)
+    elif spec:
+        associate_spec(spec, branch)
+
+    # Persist context change
+    if ctx_mode is not None:
+        set_contexts(new_contexts, branch)
+
+    # Build output
+    repo = get_repo_name()
+    messages = []
+    data = {'branch': branch}
+
+    if project == '-':
+        messages.append(f"[OK] Cleared project override from branch '{branch}'")
+        data['project_cleared'] = True
+    elif project:
+        messages.append(f"[OK] Set project '{project}' on branch '{branch}'")
+        data['project'] = project
+
+    if spec == '-':
+        messages.append(f"[OK] Cleared spec from branch '{branch}'")
+        data['spec_cleared'] = True
+    elif spec:
+        sdir = spec_path(spec, effective_project)
+        messages.append(f"[OK] Associated spec '{spec}' with branch '{branch}'")
+        data['spec_name'] = spec
+        data['spec_path'] = str(sdir)
+        data['config_key'] = f'spec.{repo}.branches.{branch}.spec' if repo else f'spec.{branch}.spec'
+
+    if ctx_mode == 'clear':
+        messages.append("[OK] Cleared all contexts")
+        data['contexts_cleared'] = True
+    elif ctx_mode == 'set':
+        messages.append(f"[OK] Set {len(contexts)} context(s): {', '.join(contexts)}")
+        data['context_refs'] = contexts
+    elif ctx_mode == 'add':
+        messages.append(f"[OK] Added context(s): {', '.join(contexts)}")
+        data['context_refs'] = contexts
+    elif ctx_mode == 'remove':
+        messages.append(f"[OK] Removed context(s): {', '.join(contexts)}")
+        data['context_refs'] = contexts
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        for msg in messages:
+            print(msg)
+
+        # Show spec context if a spec is (now) associated
+        current_spec = get_associated_spec(branch)
+        if current_spec:
+            sdir = spec_path(current_spec)
+            if sdir.is_dir():
+                print()
+                output_spec_context(current_spec, branch, sdir)
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    project, spec, contexts, ctx_mode = parse_spec_and_ctx(sys.argv)
+
+    # No args -> show current state
+    if project is None and spec is None and ctx_mode is None:
+        do_get(branch)
+    else:
+        do_modify(project, spec, contexts, ctx_mode, branch)
+
+
+if __name__ == "__main__":
+    main()

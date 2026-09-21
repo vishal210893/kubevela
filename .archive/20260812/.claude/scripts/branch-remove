@@ -1,0 +1,115 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Remove branch locally and remotely (safe delete only)"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/branch-remove *)"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "optional-passthrough"
+# hint = "[name]"
+# description = "Branch name to delete (defaults to current branch)"
+#
+# [tool.claude.output]
+# prompt = "Confirm deletion. Show what was deleted (local, remote). Note if switched branches first."
+# examples = [
+#   "[OK] Deleted branch 'feature-auth'\n[OK] Switched to main\n[OK] Deleted local branch\n[OK] Deleted remote branch"
+# ]
+# ///
+
+import sys
+import os
+import argparse
+
+# Add bin directory to path to import gitlib
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    get_repo_url,
+    get_current_branch,
+    get_default_branch,
+    run_git,
+    output_result,
+    get_template_from_metadata,
+    remote_branch_exists,
+    error,
+    cleanup_branch_associations
+)
+
+def main():
+    """
+    Remove branch locally and remotely (safe delete only).
+
+    Idempotent: No (fails if branch doesn't exist)
+    """
+    # Parse arguments
+    parser = argparse.ArgumentParser(description='Delete branch locally and remotely')
+    parser.add_argument('name', nargs='?',
+                       help='Branch name to delete (defaults to current branch)')
+
+    args = parser.parse_args()
+
+    # Default to current branch if no name specified
+    if args.name:
+        branch = args.name
+    else:
+        branch = get_current_branch()
+
+    # Get default branch (main or master)
+    default_branch = get_default_branch()
+
+    # Can't delete default branch
+    if branch == default_branch:
+        error(f"Cannot delete {default_branch} branch")
+        sys.exit(1)
+
+    repo_url = get_repo_url()
+    deletion_details = []
+
+    # If deleting current branch, switch to default branch first
+    current_branch = get_current_branch()
+    if current_branch == branch:
+        run_git(
+            ['checkout', default_branch],
+            operation_description=f"switch to {default_branch}",
+            context=default_branch
+        )
+        deletion_details.append(f"[OK] Switched to {default_branch}")
+
+    # Safe delete (fails if unmerged)
+    run_git(
+        ['branch', '-d', branch],
+        operation_description="delete local branch",
+        context=branch
+    )
+    deletion_details.append("[OK] Deleted local branch")
+
+    # Clean up dev.yaml branch associations (spec, ctx, project, meeting)
+    if cleanup_branch_associations(branch):
+        deletion_details.append("[OK] Cleaned up dev.yaml branch associations")
+
+    # Delete remote branch if it exists
+    if remote_branch_exists(branch, repo_url):
+        run_git(
+            ['push', repo_url, '--delete', branch],
+            operation_description="delete remote branch",
+            context=branch
+        )
+        deletion_details.append("[OK] Deleted remote branch")
+
+    # Output result
+    data = {
+        'branch': branch,
+        'deletion_details': '\n'.join(deletion_details)
+    }
+
+    template = get_template_from_metadata(script_path=__file__)
+    output_result(data, template)
+
+if __name__ == "__main__":
+    main()

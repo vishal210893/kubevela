@@ -1,0 +1,21 @@
+# SpokeCluster for the local k3d spoke.
+#
+# secretRef carries no namespace: cross-namespace references are rejected by the
+# webhook's default policy, so the Secret must sit in this same namespace.
+# The name must not be "local" - that is reserved for the hub itself.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: spoke
+  namespace: vela-system
+spec:
+  mode: connect
+  credential:
+    type: kubeconfig
+    kubeconfig:
+      secretRef:
+        name: spoke-kubeconfig
+        # key: kubeconfig   # optional, defaults to "kubeconfig"
+  probeIntervalSeconds: 10
+  probeTimeoutSeconds: 10
+  deletionPolicy: detach

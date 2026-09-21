@@ -1,0 +1,17 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: demo
+  namespace: default
+spec:
+  components:
+    - name: hello
+      type: my-server
+      properties:
+        image: nginx:1.25
+        replicas: 1
+      traits:
+        - type: my-label
+          properties:
+            labels:
+              team: platform

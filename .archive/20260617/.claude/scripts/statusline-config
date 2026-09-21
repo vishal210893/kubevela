@@ -1,0 +1,332 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "View or modify statusline configuration"
+# model = "sonnet"
+# context = "fork"
+#
+# [[tool.claude.argument]]
+# name = "set"
+# type = "optional-passthrough"
+# hint = "--set key value"
+# description = "Set a config value (e.g., --set theme dark, --set show-model false)"
+#
+# [[tool.claude.argument]]
+# name = "unset"
+# type = "optional-passthrough"
+# hint = "--unset key"
+# description = "Remove a config value, reverting to default (e.g., --unset show-model)"
+#
+# [tool.claude.output]
+# prompt = "Show current config values or confirm set/unset operation. Display all statusline settings in a clean format."
+# examples = [
+#   "Statusline config:\n  theme: dark\n  show-model: true\n  show-profile: true\n  show-profile-version: true\n  show-container-version: true\n  show-claude-code-version: true\n  show-context-percentage: true\n  show-usage: true\n  show-project: true\n  show-context: true\n  show-git-branch: true\n  show-spec: true\n  show-path: true\n  show-path-wsroot-shorthand: true",
+#   "Set theme = dark",
+#   "Unset show-model (reverts to default: true)",
+#   "No statusline config set. All segments use defaults (enabled)."
+# ]
+# ///
+
+"""View or modify statusline configuration stored in dev.yaml under the statusline namespace."""
+
+import json
+import os
+import sys
+
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+from lib.devyaml import get, set as yaml_set, unset as yaml_unset, register_defaults
+
+
+VALID_KEYS = {
+    'theme': 'Color theme: dark or light (default: dark)',
+    'show-model': 'Show model name, e.g. Opus 4.7 1M XHI (default: true)',
+    'model-format': 'Model segment format: full or compact (default: full)',
+    'show-profile': 'Show profile name, e.g. standard (default: true)',
+    'show-profile-version': 'Show profile version next to the profile name (default: true)',
+    'show-container-version': 'Show container version with update indicator (default: true)',
+    'show-claude-code-version': 'Show Claude Code version (default: true)',
+    'show-context-percentage': 'Show context usage percentage (default: true)',
+    'show-context-bar': 'Show visual context usage bar with block characters (default: true)',
+    'show-usage': 'Show API usage percentage and reset timer (default: true)',
+    'show-git-branch': 'Show git branch and status indicator (default: true)',
+    'show-spec': 'Show spec name and arrow before branch (default: true)',
+    'show-project': 'Show spec project name before spec/branch (default: true)',
+    'show-context': 'Show loaded branch contexts before spec/branch (default: true)',
+    'show-path': 'Show working directory path (default: true)',
+    'show-path-wsroot-shorthand': 'Replace $WSROOT with // prefix in path (default: true)',
+    'context-threshold-warning': 'Context usage % where color changes from grey to yellow (default: 30)',
+    'context-threshold-critical': 'Context usage % where color changes from yellow to red (default: 60)',
+    'context-threshold-warning-1m': 'Context usage % warning threshold when using Opus 1M (default: 15)',
+    'context-threshold-critical-1m': 'Context usage % critical threshold when using Opus 1M (default: 40)',
+    'usage-cache-ttl': 'Seconds to cache API usage data before re-fetching (default: 120)',
+    'usage-projection-display': 'Projected usage % threshold to show projection (default: 50)',
+    'usage-projection-warning': 'Projected usage % where projection turns gold (default: 80)',
+    'usage-projection-critical': 'Projected usage % where projection turns red (default: 100)',
+}
+
+BOOL_KEYS = {
+    'show-model', 'show-profile', 'show-profile-version', 'show-container-version', 'show-claude-code-version',
+    'show-context-percentage', 'show-context-bar', 'show-usage', 'show-project', 'show-context', 'show-git-branch', 'show-spec', 'show-path',
+    'show-path-wsroot-shorthand',
+}
+
+INT_KEYS = {
+    'context-threshold-warning': (1, 99),
+    'context-threshold-critical': (1, 99),
+    'context-threshold-warning-1m': (1, 99),
+    'context-threshold-critical-1m': (1, 99),
+    'usage-cache-ttl': (10, 3600),
+    'usage-projection-display': (1, 99),
+    'usage-projection-warning': (1, 99),
+    'usage-projection-critical': (1, 200),
+}
+
+DEFAULTS = {
+    'theme': 'dark',
+    'model-format': 'full',
+    'show-model': True,
+    'show-profile': True,
+    'show-profile-version': True,
+    'show-container-version': True,
+    'show-claude-code-version': True,
+    'show-context-percentage': True,
+    'show-context-bar': True,
+    'show-usage': True,
+    'show-git-branch': True,
+    'show-spec': True,
+    'show-project': True,
+    'show-context': True,
+    'show-path': True,
+    'show-path-wsroot-shorthand': True,
+    'context-threshold-warning': 30,
+    'context-threshold-critical': 60,
+    'context-threshold-warning-1m': 15,
+    'context-threshold-critical-1m': 40,
+    'usage-cache-ttl': 120,
+    'usage-projection-display': 50,
+    'usage-projection-warning': 80,
+    'usage-projection-critical': 100,
+}
+register_defaults('statusline', DEFAULTS)
+
+
+def _parse_typed_value(key, str_value):
+    """Convert string value to proper Python type for dev.yaml storage."""
+    if key in BOOL_KEYS:
+        return str_value.lower() == 'true'
+    if key in INT_KEYS:
+        return int(str_value)
+    return str_value
+
+
+def get_config_value(key):
+    """Read statusline config from dev.yaml."""
+    value = get(f'statusline.{key}')
+    if value is not None:
+        if isinstance(value, bool):
+            return str(value).lower()
+        return str(value) if not isinstance(value, str) else value
+    return None
+
+
+def set_config_value(key, value):
+    """Write statusline config to dev.yaml."""
+    typed = _parse_typed_value(key, value)
+    yaml_set(f'statusline.{key}', typed)
+    return True
+
+
+def unset_config_value(key):
+    """Remove statusline config from dev.yaml."""
+    return yaml_unset(f'statusline.{key}')
+
+
+def parse_args(argv):
+    """Parse command line arguments.
+
+    Returns:
+        tuple: (action, key, value) where action is 'set', 'unset', or 'show'
+    """
+    args = argv[1:]
+
+    if not args:
+        return ('show', None, None)
+
+    if args[0] == '--set':
+        if len(args) < 3:
+            print("Error: --set requires key and value", file=sys.stderr)
+            print("Usage: statusline-config --set <key> <value>", file=sys.stderr)
+            print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+            sys.exit(1)
+        return ('set', args[1], args[2])
+
+    if args[0] == '--unset':
+        if len(args) < 2:
+            print("Error: --unset requires a key", file=sys.stderr)
+            print("Usage: statusline-config --unset <key>", file=sys.stderr)
+            print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+            sys.exit(1)
+        return ('unset', args[1], None)
+
+    print(f"Error: Unknown argument '{args[0]}'", file=sys.stderr)
+    print("Usage: statusline-config [--set key value] [--unset key]", file=sys.stderr)
+    sys.exit(1)
+
+
+def validate_key(key):
+    """Validate that key is a supported config key."""
+    if key not in VALID_KEYS:
+        print(f"Error: Unknown key '{key}'", file=sys.stderr)
+        print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+        sys.exit(1)
+
+
+def handle_set(key, value):
+    """Handle --set key value."""
+    validate_key(key)
+
+    if key in BOOL_KEYS:
+        if value.lower() not in ('true', 'false'):
+            print(f"Error: {key} must be 'true' or 'false' (got '{value}')", file=sys.stderr)
+            sys.exit(1)
+        value = value.lower()
+    elif key == 'theme':
+        if value.lower() not in ('dark', 'light'):
+            print(f"Error: theme must be 'dark' or 'light' (got '{value}')", file=sys.stderr)
+            sys.exit(1)
+        value = value.lower()
+    elif key == 'model-format':
+        if value.lower() not in ('full', 'compact'):
+            print(f"Error: model-format must be 'full' or 'compact' (got '{value}')", file=sys.stderr)
+            sys.exit(1)
+        value = value.lower()
+    elif key in INT_KEYS:
+        min_val, max_val = INT_KEYS[key]
+        try:
+            int_value = int(value)
+            if not (min_val <= int_value <= max_val):
+                raise ValueError
+        except ValueError:
+            print(f"Error: {key} must be an integer between {min_val} and {max_val} (got '{value}')", file=sys.stderr)
+            sys.exit(1)
+        # Cross-validate warning < critical
+        def _safe_int(raw, default):
+            try:
+                return int(raw) if raw else default
+            except (ValueError, TypeError):
+                return default
+
+        if key == 'context-threshold-warning':
+            critical_val = _safe_int(get_config_value('context-threshold-critical'), 60)
+            if int_value >= critical_val:
+                print(f"Error: Warning threshold ({int_value}) must be less than critical threshold ({critical_val})", file=sys.stderr)
+                sys.exit(1)
+        elif key == 'context-threshold-critical':
+            warning_val = _safe_int(get_config_value('context-threshold-warning'), 30)
+            if int_value <= warning_val:
+                print(f"Error: Critical threshold ({int_value}) must be greater than warning threshold ({warning_val})", file=sys.stderr)
+                sys.exit(1)
+        elif key == 'context-threshold-warning-1m':
+            critical_val = _safe_int(get_config_value('context-threshold-critical-1m'), 40)
+            if int_value >= critical_val:
+                print(f"Error: 1M warning threshold ({int_value}) must be less than 1M critical threshold ({critical_val})", file=sys.stderr)
+                sys.exit(1)
+        elif key == 'context-threshold-critical-1m':
+            warning_val = _safe_int(get_config_value('context-threshold-warning-1m'), 15)
+            if int_value <= warning_val:
+                print(f"Error: 1M critical threshold ({int_value}) must be greater than 1M warning threshold ({warning_val})", file=sys.stderr)
+                sys.exit(1)
+        value = str(int_value)
+
+    success = set_config_value(key, value)
+
+    if not success:
+        print(f"Error: Failed to set statusline.{key}", file=sys.stderr)
+        sys.exit(1)
+
+    data = {
+        'action': 'set',
+        'key': key,
+        'config_key': f'statusline.{key}',
+        'value': value
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Set {key} = {value}")
+
+
+def handle_unset(key):
+    """Handle --unset key."""
+    validate_key(key)
+
+    success = unset_config_value(key)
+
+    if not success:
+        data = {
+            'action': 'unset',
+            'key': key,
+            'config_key': f'statusline.{key}',
+            'was_set': False
+        }
+        if os.getenv('CC') == '1':
+            print(json.dumps(data))
+        else:
+            print(f"Key '{key}' was not set (nothing to remove)")
+        return
+
+    data = {
+        'action': 'unset',
+        'key': key,
+        'config_key': f'statusline.{key}',
+        'was_set': True
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Removed {key} (reverts to default)")
+
+
+def handle_show():
+    """Handle display of current config (no args)."""
+    config = {}
+    for key in VALID_KEYS:
+        value = get_config_value(key)
+        if value is not None:
+            config[key] = value
+
+    defaults = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in DEFAULTS.items()}
+
+    data = {'action': 'show', 'config': config, 'defaults': defaults}
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print("Statusline config:")
+        for key in sorted(VALID_KEYS.keys()):
+            if key in config:
+                print(f"  {key}: {config[key]}")
+            else:
+                print(f"  {key}: {defaults[key]} (default)")
+
+
+def main():
+    """Main entry point."""
+    action, key, value = parse_args(sys.argv)
+
+    if action == 'set':
+        handle_set(key, value)
+    elif action == 'unset':
+        handle_unset(key)
+    else:
+        handle_show()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,9 @@
+# Reproducible fixture for the Vela Config controller audit.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: later-input
+  namespace: cfg-audit-7105
+type: Opaque
+stringData:
+  properties: '{"token":"dependency-recovered"}'

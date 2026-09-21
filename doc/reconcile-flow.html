@@ -1,0 +1,1230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KubeVela · Application Controller Flow</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.3/mermaid.min.js"
+        integrity="sha512-HvxxeyPSnbU7/x0g15v3OMxTFeADyCUnCN3iCam3BDTxgFPKxa+ujRCbFuwjE8PASDwOH5LpzFfGGNWks7tuJQ=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<style>
+  :root {
+    --bg: #0f1117; --bg2: #161b22; --bg3: #1c2330; --bg4: #21262d;
+    --border: #30363d; --text: #e6edf3; --text2: #8b949e; --text3: #6e7681;
+    --accent: #58a6ff; --accent2: #79c0ff;
+    --green: #3fb950; --yellow: #d29922; --red: #f85149; --purple: #bc8cff;
+    --pink: #f78166;
+    --shadow: 0 4px 24px rgba(0,0,0,.6); --radius: 10px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f8fa; --bg2: #ffffff; --bg3: #f0f3f6; --bg4: #e8ecf0;
+      --border: #d0d7de; --text: #1f2328; --text2: #57606a; --text3: #8c959f;
+      --accent: #0969da; --accent2: #0550ae;
+      --green: #1a7f37; --yellow: #9a6700; --red: #d1242f; --purple: #8250df;
+      --shadow: 0 4px 12px rgba(0,0,0,.12);
+    }
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.6; font-size: 15px; }
+
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--bg2); border-bottom: 1px solid var(--border);
+    padding: 0 32px; display: flex; align-items: center; gap: 8px;
+    height: 52px; overflow-x: auto; white-space: nowrap;
+  }
+  nav .brand { font-weight: 700; font-size: 14px; color: var(--accent); margin-right: 16px; flex-shrink: 0; text-decoration: none; }
+  nav a { font-size: 12.5px; color: var(--text2); text-decoration: none; padding: 4px 10px; border-radius: 6px; transition: all .15s; }
+  nav a:hover { color: var(--text); background: var(--bg3); }
+
+  .container { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+
+  .hero { background: linear-gradient(135deg, var(--bg2) 0%, var(--bg3) 100%); border-bottom: 1px solid var(--border); padding: 48px 0 36px; }
+  .hero h1 {
+    font-size: clamp(22px, 4vw, 34px); font-weight: 800; letter-spacing: -0.5px; margin-bottom: 10px;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .hero p { color: var(--text2); font-size: 15px; max-width: 640px; }
+  .hero-meta { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+  .badge { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 20px; background: var(--bg4); border: 1px solid var(--border); color: var(--text2); }
+  .badge.green { color: var(--green); border-color: var(--green); }
+  .badge.blue  { color: var(--accent); border-color: var(--accent); }
+  .badge.purple{ color: var(--purple); border-color: var(--purple); }
+
+  /* quick-stats strip */
+  .stats-row { display: flex; gap: 0; border-top: 1px solid var(--border); margin-top: 24px; padding-top: 0; }
+  .stat { flex: 1; padding: 12px 16px; border-right: 1px solid var(--border); }
+  .stat:last-child { border-right: none; }
+  .stat-n { font-size: 22px; font-weight: 800; color: var(--accent); }
+  .stat-l { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .06em; margin-top: 1px; }
+
+  section { padding: 44px 0 28px; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: none; }
+  h2 { font-size: 20px; font-weight: 700; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  h2 .num { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; background: var(--accent); color: #fff; border-radius: 50%; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+  h3 { font-size: 14px; font-weight: 700; margin: 22px 0 10px; color: var(--accent2); text-transform: uppercase; letter-spacing: .06em; }
+  p { margin-bottom: 10px; }
+  ul, ol { padding-left: 20px; margin-bottom: 10px; }
+  li { margin-bottom: 4px; }
+
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin: 16px 0; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; transition: border-color .15s, box-shadow .15s; }
+  .card:hover { border-color: var(--accent); box-shadow: var(--shadow); }
+  .card-title { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+  .card p { font-size: 13px; color: var(--text2); margin: 0; }
+
+  .ref { font-family: var(--mono); font-size: 11px; background: var(--bg3); border: 1px solid var(--border); color: var(--accent2); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+  code { font-family: var(--mono); font-size: 12px; background: var(--bg3); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; color: var(--pink); }
+
+  /* Pipeline */
+  .pipeline { display: flex; flex-direction: column; gap: 0; margin: 14px 0 20px; }
+  .step { display: flex; align-items: stretch; gap: 0; }
+  .step-left { display: flex; flex-direction: column; align-items: center; width: 42px; flex-shrink: 0; }
+  .step-num { width: 30px; height: 30px; background: var(--bg4); border: 2px solid var(--border); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--accent); flex-shrink: 0; z-index: 1; }
+  .step-line { width: 2px; flex: 1; min-height: 16px; background: var(--border); }
+  .step:last-child .step-line { display: none; }
+  .step-body { flex: 1; padding: 0 0 18px 14px; }
+  .step-title { font-weight: 700; font-size: 13.5px; margin-bottom: 3px; color: var(--text); display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+  .step-desc { font-size: 13px; color: var(--text2); line-height: 1.55; }
+
+  /* Diagram */
+  .diagram-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin: 16px 0; overflow-x: auto; }
+  .diagram-label { font-size: 11px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 10px; }
+  .mermaid { min-width: 600px; }
+
+  /* Table */
+  .table-wrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--border); border-radius: var(--radius); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: var(--bg3); color: var(--text2); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg3); }
+  .fn-name { font-family: var(--mono); font-size: 12px; color: var(--accent2); font-weight: 600; }
+  .file-col { font-family: var(--mono); font-size: 11.5px; color: var(--text3); }
+
+  /* Tags */
+  .tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; display: inline-block; }
+  .tag-blue   { background: rgba(88,166,255,.12); color: var(--accent); }
+  .tag-green  { background: rgba(63,185,80,.12); color: var(--green); }
+  .tag-red    { background: rgba(248,81,73,.12); color: var(--red); }
+  .tag-yellow { background: rgba(210,153,34,.12); color: var(--yellow); }
+  .tag-purple { background: rgba(188,140,255,.12); color: var(--purple); }
+
+  /* Alerts */
+  .alert { border-radius: var(--radius); padding: 14px 18px; margin: 14px 0; font-size: 13px; line-height: 1.55; }
+  .alert-info { background: rgba(88,166,255,.08); border: 1px solid rgba(88,166,255,.3); }
+  .alert-warn { background: rgba(210,153,34,.08); border: 1px solid rgba(210,153,34,.3); }
+
+  /* Digest */
+  .digest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; margin: 14px 0; }
+  .digest-item { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; display: flex; gap: 14px; align-items: flex-start; }
+  .digest-num { width: 24px; height: 24px; background: var(--bg3); border: 1px solid var(--border); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--accent); flex-shrink: 0; margin-top: 1px; }
+  .digest-text { font-size: 13px; color: var(--text2); line-height: 1.55; }
+  .digest-text code { font-size: 11.5px; }
+
+  /* Pitfalls */
+  .pitfalls { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; margin: 14px 0; }
+  .pitfall { background: rgba(248,81,73,.05); border: 1px solid rgba(248,81,73,.2); border-radius: var(--radius); padding: 14px 16px; font-size: 13px; color: var(--text2); line-height: 1.55; }
+  .pitfall strong { color: var(--red); display: block; margin-bottom: 4px; font-size: 12.5px; }
+
+  /* Breakpoints */
+  .bp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; margin: 14px 0; }
+  .bp { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 5px; }
+  .bp-desc { font-size: 12px; color: var(--text2); line-height: 1.5; }
+
+  footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 20px 0; }
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">KubeVela</span>
+  <a href="#big-picture">Overview</a>
+  <a href="#entry-point">Entry point</a>
+  <a href="#pipeline">Pipeline</a>
+  <a href="#files">Files</a>
+  <a href="#functions">Functions</a>
+  <a href="#state">State</a>
+  <a href="#errors">Errors</a>
+  <a href="#extensibility">Extension</a>
+  <a href="#trace">Trace</a>
+  <a href="#digest">Digest</a>
+</nav>
+
+<div class="hero">
+<div class="container">
+  <h1>Application Controller — Reconciliation Flow</h1>
+  <p>How a KubeVela <code>Application</code> CR moves from watch event to running workload.
+     Covers the full path: parsing, revision, workflow execution, dispatch, health, and GC.</p>
+  <div class="hero-meta">
+    <span class="badge blue">pkg/controller/core.oam.dev/v1beta1/application</span>
+    <span class="badge purple">pkg/appfile</span>
+    <span class="badge green">Go 1.23 · controller-runtime</span>
+  </div>
+  <div class="stats-row">
+    <div class="stat"><div class="stat-n">14</div><div class="stat-l">pipeline steps</div></div>
+    <div class="stat"><div class="stat-n">7</div><div class="stat-l">key files</div></div>
+    <div class="stat"><div class="stat-n">3</div><div class="stat-l">dispatch stages</div></div>
+    <div class="stat"><div class="stat-n">944</div><div class="stat-l">lines, controller</div></div>
+  </div>
+</div>
+</div>
+
+<!-- §1 BIG PICTURE -->
+<section id="big-picture">
+<div class="container">
+<h2><span class="num">1</span> Big picture</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="card-title">Reconciler</div>
+    <p>Singleton controller. Wires the full pipeline inside one <code>Reconcile()</code> function. <span class="ref">application_controller.go:109</span></p>
+  </div>
+  <div class="card">
+    <div class="card-title">AppHandler</div>
+    <p>Created fresh each reconcile. Tracks applied resources, service health, and holds the <code>ResourceKeeper</code> handle.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">appfile.Parser</div>
+    <p>Converts the <code>Application</code> CR to an in-memory <code>Appfile</code> by loading all referenced definitions from the cluster or a pinned revision.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Appfile</div>
+    <p>Central data bag for one reconcile. Holds parsed components, traits, workflow steps, policies, and the CUE templates for each.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">WorkflowExecutor</div>
+    <p>Runs compiled <code>TaskRunner</code>s in DAG order, calling back into <code>applyComponentFunc</code> / <code>checkComponentHealth</code> closures for each component.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">ResourceKeeper</div>
+    <p>Owns resource dispatch (server-side apply), drift prevention (<code>StateKeep</code>), and garbage collection. Backed by <code>ResourceTracker</code> CRs.</p>
+  </div>
+</div>
+
+<div class="diagram-wrap">
+  <div class="diagram-label">Request to reconcile — high level</div>
+  <div class="mermaid">
+flowchart TD
+    K8s["Kubernetes API Server\n(watch event / resync)"]:::ext
+    Q["Work Queue\ncontroller-runtime"]:::queue
+    R["Reconciler.Reconcile()\napplication_controller.go:109"]:::entry
+    F["handleFinalizers\nResourceTracker GC on delete"]:::prep
+    T["ApplyApplicationScopeTransforms\npolicy transforms on spec"]:::prep
+    P["appParser.GenerateAppFile\nAppfile — templates loaded"]:::parse
+    REV["PrepareCurrentAppRevision\nFinalizeAndApplyAppRevision"]:::rev
+    POL["ApplyPolicies\ndispatch policy manifests"]:::pol
+    WFG["GenerateApplicationSteps\nWorkflowInstance + TaskRunners"]:::wf
+    WFE["workflowExecutor.ExecuteRunners\nrun each step"]:::wf
+    COMP["applyComponentFunc (per component)\nparse → render → dispatch"]:::comp
+    DISP["Dispatcher stages\nPre → Default → Post"]:::disp
+    HEALTH["evalStatus / collectHealthStatus\nupdate app.Status.Services"]:::health
+    PDT["applyPostDispatchTraits\nPostDispatch-stage traits"]:::post
+    SK["stateKeep\nprevent config drift"]:::gc
+    GC["GarbageCollect\nprune old revisions & orphans"]:::gc
+    STATUS["patchStatus / updateStatus\nwrite app.Status back"]:::status
+
+    K8s -->|"Add/Update/Delete\nor RT delete event"| Q
+    Q --> R
+    R --> F
+    F -->|"not deleting"| T
+    T --> P
+    P --> REV
+    REV --> POL
+    POL --> WFG
+    WFG --> WFE
+    WFE -->|"apply-component step"| COMP
+    COMP --> DISP
+    DISP -->|"all stages healthy"| HEALTH
+    WFE -->|"workflow succeeded"| PDT
+    PDT --> HEALTH
+    HEALTH --> SK
+    SK --> GC
+    GC --> STATUS
+
+    classDef ext    fill:#1c3454,stroke:#58a6ff,color:#58a6ff
+    classDef queue  fill:#1c2e1c,stroke:#3fb950,color:#3fb950
+    classDef entry  fill:#2d1f3d,stroke:#bc8cff,color:#bc8cff
+    classDef prep   fill:#1c2e1c,stroke:#3fb950,color:#e6edf3
+    classDef parse  fill:#1c2438,stroke:#79c0ff,color:#e6edf3
+    classDef rev    fill:#1c2438,stroke:#79c0ff,color:#e6edf3
+    classDef pol    fill:#1f1f2e,stroke:#bc8cff,color:#e6edf3
+    classDef wf     fill:#2d2414,stroke:#d29922,color:#e6edf3
+    classDef comp   fill:#1c2438,stroke:#58a6ff,color:#e6edf3
+    classDef disp   fill:#1c2438,stroke:#58a6ff,color:#e6edf3
+    classDef health fill:#1a2d1a,stroke:#3fb950,color:#e6edf3
+    classDef post   fill:#1f1f2e,stroke:#bc8cff,color:#e6edf3
+    classDef gc     fill:#2d1f1f,stroke:#f85149,color:#e6edf3
+    classDef status fill:#1c2438,stroke:#79c0ff,color:#e6edf3
+  </div>
+</div>
+
+<div class="alert alert-info">
+  The controller does not diff spec vs cluster before acting. Every reconcile re-parses, re-renders, and re-dispatches. The dispatcher skips the API call only if the component is already healthy and properties are unchanged (<span class="ref">dispatcher.go:167</span>).
+</div>
+
+</div>
+</section>
+
+<!-- §2 ENTRY POINT -->
+<section id="entry-point">
+<div class="container">
+<h2><span class="num">2</span> Entry point</h2>
+
+<p>Everything starts at <code>func (r *Reconciler) Reconcile(ctx, req)</code> in
+<span class="ref">application_controller.go:109</span>.
+The function is annotated <code>// nolint:gocyclo</code> by design — the entire pipeline runs
+top-to-bottom in one place so the control flow is easy to follow.</p>
+
+<h3>Watch sources <span class="ref">application_controller.go:662</span></h3>
+<p><code>SetupWithManager</code> registers three sources:</p>
+<ul>
+  <li><code>For(&amp;Application{})</code> — every Application create/update/delete</li>
+  <li><code>Watches(ResourceTracker)</code> — delete events only; re-queues the app when a tracker is GC'd externally</li>
+  <li><code>Watches(PolicyDefinition)</code> — invalidates the policy cache when a definition changes</li>
+</ul>
+
+<h3>Update filter <span class="ref">application_controller.go:673</span></h3>
+<p>The <code>UpdateFunc</code> predicate strips workflow status fields, <code>AppliedResources</code>,
+<code>Services</code>, and <code>ResourceVersion</code> before <code>DeepEqual</code>.
+Without this, every status write by the workflow executor would trigger a new reconcile.</p>
+
+<h3>Per-reconcile objects</h3>
+<div class="card-grid">
+  <div class="card">
+    <div class="card-title">Reconciler (singleton)</div>
+    <p><code>client.Client</code>, <code>Scheme</code>, <code>Recorder</code>, revision limit, concurrency. Created once at startup.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">AppHandler (per reconcile)</div>
+    <p>Created by <code>NewAppHandler</code> <span class="ref">apply.go:78</span>. Holds the ResourceKeeper, service list, resource tracking. Discarded at end of reconcile.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">appfile.Parser (per reconcile)</div>
+    <p>Created by <code>NewApplicationParser(r.Client)</code> <span class="ref">application_controller.go:144</span>. Stateless except for the client reference.</p>
+  </div>
+</div>
+
+</div>
+</section>
+
+<!-- §3 PIPELINE -->
+<section id="pipeline">
+<div class="container">
+<h2><span class="num">3</span> Pipeline — step by step</h2>
+
+<div class="pipeline">
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">1</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Fetch and pre-check <span class="ref">application_controller.go:116</span></div>
+      <div class="step-desc">
+        The controller needs to know two things before doing anything: does this app still exist, and is it allowed to act on it? If the app was deleted between the watch event and now, bail out silently. If it was paused, or is owned by a different controller version, stop here. A copy of the current status is saved at this point so the final status write can diff against it and skip the API call if nothing actually changed.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">2</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Create AppHandler + handle finalizers
+        <span class="ref">apply.go:78</span> · <span class="ref">application_controller.go:153</span>
+      </div>
+      <div class="step-desc">
+        The AppHandler is the controller's working memory for this reconcile — it knows what the app currently owns and where. It reconstructs this picture by loading all ResourceTracker CRs from the cluster on every run. The finalizer is what makes safe deletion possible: when someone deletes an Application, the controller intercepts it, garbage-collects all owned resources and revisions, and only then removes the finalizer so the object can disappear.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">3</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Apply Application-scoped policy transforms <span class="ref">application_controller.go:165</span></div>
+      <div class="step-desc">
+        Some policies don't deploy resources — they modify the application spec itself. An override policy might replace component parameters across environments; an application-scope policy might inject annotations or swap component types. These run before parsing so everything downstream sees the transformed spec as if that's what the user originally wrote.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">4</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Generate Appfile
+        <span class="ref">application_controller.go:180</span> → <span class="ref">parser.go:87</span>
+      </div>
+      <div class="step-desc">
+        The application spec is just names and parameters. To actually deploy anything, the controller needs the full CUE templates behind those names — what schema a component accepts, what a trait renders, what a health check evaluates. This step resolves all of that into one in-memory struct. If a <code>publish-version</code> annotation is set, it reads from a frozen revision instead of the live cluster, which is how pinned deployments and rollbacks work.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">5</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Prepare ApplicationRevision <span class="ref">application_controller.go:188</span></div>
+      <div class="step-desc">
+        Before deploying anything, the controller captures a snapshot of the entire spec plus all referenced definitions in an ApplicationRevision. This is the rollback artifact. If someone later patches a TraitDefinition in the cluster, existing apps keep running against their frozen version. Rollback means pointing the app at an older revision, not hoping the cluster's current definitions match what was running before.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">6</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Apply policies
+        <span class="ref">application_controller.go:211</span> → <span class="ref">apply.go:469</span>
+      </div>
+      <div class="step-desc">
+        Non-application-scope policies (replication, isolation, topology) generate actual Kubernetes resources. This step renders those resources through their CUE templates and applies them to the cluster before workflow execution starts, so the infrastructure policies depend on — namespaces, placement, network rules — is already in place when components begin deploying.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">7</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Generate workflow steps
+        <span class="ref">application_controller.go:222</span> → <span class="ref">generator.go:70</span>
+      </div>
+      <div class="step-desc">
+        The workflow is compiled into a program here, not interpreted at runtime. Each step's CUE gets compiled into a TaskRunner. The controller also decides whether to restart the workflow from scratch (new revision, restart annotation, changed helm values fingerprint) or resume from where it left off. Without resumption, a long-running workflow with a deploy step that takes minutes would restart from step one on every reconcile.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">8</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Execute workflow <span class="ref">application_controller.go:236</span></div>
+      <div class="step-desc">
+        The executor runs each TaskRunner in DAG order and returns a single state that determines everything the controller does next.
+        <span class="tag tag-yellow">Executing</span>
+        <span class="tag tag-blue">Suspending</span>
+        <span class="tag tag-red">Terminated</span>
+        <span class="tag tag-red">Failed</span>
+        <span class="tag tag-green">Succeeded</span>
+        <span class="tag tag-purple">Skipped</span>
+        Only Succeeded reaches health evaluation and full GC. Every other state takes a different exit path. If your app seems stuck, this state is the first thing to check.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">9</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Per-component apply
+        <span class="ref">generator.go:306</span> → <span class="ref">generator.go:378</span>
+      </div>
+      <div class="step-desc">
+        Each component goes through its own mini-pipeline: load its definition, run the CUE template to produce Kubernetes objects, stamp ownership labels, then apply. When <code>MultiStageComponentApply</code> is on, traits are dispatched in waves — PreDispatch traits run before the workload exists, DefaultDispatch traits run with it, and PostDispatch traits run only after the workload is confirmed healthy. This ordering is what allows a sidecar injector trait to run before the workload, or an external-dns trait to wait until an IP is assigned.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">10</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Workflow state routing <span class="ref">application_controller.go:280</span></div>
+      <div class="step-desc">
+        The workflow state is the most important branch in the reconcile. Succeeded is the only path to full health evaluation, PostDispatch traits, and complete GC. Terminal states (Terminated, Failed) record end-time and metrics then requeue at the default resync period. Suspending holds without re-running completed steps. If an app's PostDispatch traits are never applying, or GC seems partial, start here — the workflow state explains why.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">11</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Health evaluation
+        <span class="ref">application_controller.go:326</span> → <span class="ref">apply.go:325</span>
+      </div>
+      <div class="step-desc">
+        Applying a resource doesn't mean it's healthy. This step evaluates each component's health expression — defined in CUE inside the ComponentDefinition — against the live cluster object. It's not polling Pod ready conditions; it's running a programmable check that each definition author writes. A Deployment might be considered healthy only when all replicas are ready and a specific annotation is present. The result here sets the app phase to Running or Unhealthy.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">12</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">PostDispatch traits <span class="ref">apply.go:524</span></div>
+      <div class="step-desc">
+        PostDispatch traits exist for one reason: they need runtime information the workload didn't have when it was first applied. A load balancer IP isn't known until the Service exists. An external-dns trait that registers a DNS record can't run until that IP is assigned. For each healthy component, the live workload is fetched and injected into the trait's CUE context as <code>context.output</code>, giving the trait access to anything the workload wrote to its status.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">13</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">StateKeep and GarbageCollect <span class="ref">application_controller.go:336</span></div>
+      <div class="step-desc">
+        KubeVela doesn't trust that the cluster matches desired state between reconciles. StateKeep re-applies every owned resource on each successful reconcile — that's what "self-healing" actually means in practice. Someone manually edits a Deployment's replica count, and the next periodic reconcile corrects it. GarbageCollect is the inverse: resources that used to belong to this app (a removed component, a deleted trait) are cleaned up here, as are old ApplicationRevisions past the retention limit.
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-left"><div class="step-num">14</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-title">Write status <span class="ref">application_controller.go:362</span></div>
+      <div class="step-desc">
+        The final status write persists everything collected during the reconcile: which services are healthy, which resources are owned, what the workflow state is. The diff against the snapshot from step 1 is what prevents this from triggering another reconcile — the update predicate in <code>SetupWithManager</code> strips status fields, but a no-op write is still wasted API traffic. If the status hasn't changed, the call is skipped entirely.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="diagram-wrap">
+  <div class="diagram-label">Detailed function-call flow</div>
+  <div class="mermaid">
+sequenceDiagram
+    participant RC as Reconciler<br/>application_controller.go
+    participant AH as AppHandler<br/>apply.go
+    participant P  as appfile.Parser<br/>parser.go
+    participant AF as appfile.Appfile<br/>appfile.go
+    participant G  as generator.go
+    participant D  as dispatcher.go
+    participant RK as ResourceKeeper<br/>resourcekeeper/
+
+    RC->>RC: r.Get(app)
+    RC->>AH: NewAppHandler(r, app)
+    AH->>RK: NewResourceKeeper(app)
+    RC->>AH: handleFinalizers()
+    RC->>P: appParser.GenerateAppFile(app)
+    P->>P: parseComponents → LoadTemplate (per ComponentDef/TraitDef)
+    P->>P: parseWorkflowSteps → loadWorkflowToAppfile
+    P->>P: parsePolicies
+    P-->>RC: *Appfile
+
+    RC->>AH: PrepareCurrentAppRevision(appFile)
+    RC->>AH: FinalizeAndApplyAppRevision()
+    AH->>RK: (write ApplicationRevision CR)
+
+    RC->>AH: ApplyPolicies(af)
+    AH->>AF: af.GeneratePolicyManifests()
+    AH->>RK: Dispatch(policyManifests)
+
+    RC->>AH: GenerateApplicationSteps(app, appParser, af)
+    AH->>G: (builds RuntimeParams: ComponentApply/Render/HealthCheck closures)
+    G-->>RC: WorkflowInstance + []TaskRunner
+
+    RC->>RC: workflowExecutor.ExecuteRunners(runners)
+    Note over RC: For each apply-component step:
+    RC->>G: applyComponentFunc(comp)
+    G->>G: prepareWorkloadAndManifests()
+    G->>P: ParseComponentFromRevisionAndClient()
+    G->>AF: af.GenerateComponentManifest(wl, mutate)
+    AF->>AF: baseGenerateComponent → EvalContext (CUE)
+    AF-->>G: *ComponentManifest
+    G->>AF: af.SetOAMContract(manifest)
+    G->>G: renderComponentsAndTraits → assemble.PrepareBeforeApply
+    G->>D: generateDispatcher(appRev, readyWorkload, readyTraits)
+    D->>D: group traits by stage (Pre/Default/Post)
+    G->>D: dispatcher.run(comp, appRev, cluster)
+    D->>AH: h.Dispatch(manifests)
+    AH->>RK: resourceKeeper.Dispatch(manifests)
+    D->>AH: collectHealthStatus(comp)
+    AH-->>D: isHealth
+
+    RC->>AH: applyPostDispatchTraits(appParser, af)
+    AH->>AF: af.GenerateComponentManifest(wl, mutate w/ live output)
+    AH->>RK: Dispatch(postDispatchTraits)
+
+    RC->>RC: evalStatus(handler, appFile, appParser)
+    RC->>AH: handler.checkComponentHealth(appParser, af)
+    AH->>AH: collectHealthStatus() per component
+
+    RC->>RK: handler.resourceKeeper.StateKeep()
+    RC->>RK: handler.resourceKeeper.GarbageCollect()
+    RC->>RC: patchStatus / updateStatus
+  </div>
+</div>
+
+</div>
+</section>
+
+<!-- §4 FILES -->
+<section id="files">
+<div class="container">
+<h2><span class="num">4</span> File responsibilities</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>File</th><th>What it owns</th><th>Key exports</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="ref">application_controller.go</span></td>
+      <td>Reconcile entry point, workflow-state switch, GC orchestration, status write, SetupWithManager</td>
+      <td class="file-col">Reconciler, Reconcile(), handleFinalizers(), stateKeep(), gcResourceTrackers(), SetupWithManager()</td>
+    </tr>
+    <tr>
+      <td><span class="ref">apply.go</span></td>
+      <td>AppHandler and its methods: Dispatch/Delete forwarding to ResourceKeeper, health collection, PostDispatch trait application, policy dispatch</td>
+      <td class="file-col">AppHandler, NewAppHandler(), Dispatch(), ApplyPolicies(), collectHealthStatus(), applyPostDispatchTraits()</td>
+    </tr>
+    <tr>
+      <td><span class="ref">generator.go</span></td>
+      <td>WorkflowInstance construction, TaskRunner compilation, the three RuntimeParams closures (apply/render/health), per-component apply hot path</td>
+      <td class="file-col">GenerateApplicationSteps(), applyComponentFunc(), renderComponentFunc(), checkComponentHealth(), prepareWorkloadAndManifests()</td>
+    </tr>
+    <tr>
+      <td><span class="ref">dispatcher.go</span></td>
+      <td>StageType enum (Pre/Default/Post), trait grouping by stage, manifestDispatcher with conditional dispatch logic, propertiesChanged check</td>
+      <td class="file-col">StageType, manifestDispatcher, generateDispatcher(), componentPropertiesChanged()</td>
+    </tr>
+    <tr>
+      <td><span class="ref">appfile/appfile.go</span></td>
+      <td>Appfile and Component types, CUE template evaluation, OAM label/namespace stamping, policy manifest generation</td>
+      <td class="file-col">Appfile, Component, Trait, GenerateComponentManifest(), SetOAMContract(), GeneratePolicyManifests()</td>
+    </tr>
+    <tr>
+      <td><span class="ref">appfile/parser.go</span></td>
+      <td>Application CR to Appfile conversion; definition loading; revision vs live cluster branching; ref-object fetching</td>
+      <td class="file-col">Parser, GenerateAppFile(), GenerateAppFileFromApp(), ParseComponentFromRevisionAndClient(), parseComponents()</td>
+    </tr>
+    <tr>
+      <td><span class="ref">appfile/template.go</span></td>
+      <td>Loads a ComponentDefinition/TraitDefinition/PolicyDefinition/WorkflowStepDefinition from the cluster or a frozen ApplicationRevision</td>
+      <td class="file-col">Template, LoadTemplate(), LoadTemplateFromRevision()</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="diagram-wrap">
+  <div class="diagram-label">File dependency map</div>
+  <div class="mermaid">
+graph LR
+    AC["application_controller.go"]:::ctrl
+    AH["apply.go\n(AppHandler)"]:::ctrl
+    GEN["generator.go"]:::ctrl
+    DIS["dispatcher.go"]:::ctrl
+    PAR["appfile/parser.go"]:::appfile
+    AFI["appfile/appfile.go"]:::appfile
+    TPL["appfile/template.go"]:::appfile
+    RK["resourcekeeper/"]:::rk
+    WF["kubevela/workflow SDK"]:::ext
+    DEF["ComponentDefinition\nTraitDefinition\nPolicyDefinition"]:::crd
+
+    AC -->|"NewAppHandler"| AH
+    AC -->|"GenerateAppFile"| PAR
+    AC -->|"GenerateApplicationSteps"| GEN
+    AC -->|"ApplyPolicies\napplyPostDispatchTraits"| AH
+    AH -->|"Dispatch/Delete"| RK
+    AH -->|"GenerateComponentManifest"| AFI
+    GEN -->|"prepareWorkloadAndManifests"| PAR
+    GEN -->|"GenerateComponentManifest\nSetOAMContract"| AFI
+    GEN -->|"generateDispatcher"| DIS
+    DIS -->|"Dispatch"| AH
+    DIS -->|"collectHealthStatus"| AH
+    PAR -->|"LoadTemplate"| TPL
+    TPL -->|"GetCapabilityDefinition"| DEF
+    GEN -->|"GenerateRunners"| WF
+    WF -->|"applyComponentFunc callbacks"| GEN
+
+    classDef ctrl   fill:#1c2438,stroke:#58a6ff,color:#e6edf3
+    classDef appfile fill:#1f1f2e,stroke:#bc8cff,color:#e6edf3
+    classDef rk     fill:#1a2d1a,stroke:#3fb950,color:#e6edf3
+    classDef ext    fill:#1c2e1c,stroke:#3fb950,color:#e6edf3
+    classDef crd    fill:#2d1f1f,stroke:#f85149,color:#e6edf3
+  </div>
+</div>
+
+</div>
+</section>
+
+<!-- §5 FUNCTIONS -->
+<section id="functions">
+<div class="container">
+<h2><span class="num">5</span> Function reference</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Function</th><th>File : Line</th><th>Returns</th><th>Side effects</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fn-name">Reconcile</td>
+      <td><span class="ref">application_controller.go:109</span></td>
+      <td><code>ctrl.Result, error</code></td>
+      <td>Writes <code>app.Status</code> via patch/update</td>
+    </tr>
+    <tr>
+      <td class="fn-name">NewAppHandler</td>
+      <td><span class="ref">apply.go:78</span></td>
+      <td><code>*AppHandler, error</code></td>
+      <td><em>API Read</em> — loads all ResourceTracker CRs</td>
+    </tr>
+    <tr>
+      <td class="fn-name">GenerateAppFile</td>
+      <td><span class="ref">parser.go:87</span></td>
+      <td><code>*Appfile, error</code></td>
+      <td><em>API Read</em> — all referenced definitions, ref-objects</td>
+    </tr>
+    <tr>
+      <td class="fn-name">GenerateApplicationSteps</td>
+      <td><span class="ref">generator.go:70</span></td>
+      <td><code>WorkflowInstance, []TaskRunner, error</code></td>
+      <td>None — pure in-memory</td>
+    </tr>
+    <tr>
+      <td class="fn-name">applyComponentFunc</td>
+      <td><span class="ref">generator.go:306</span></td>
+      <td><code>(workload, traits, isHealth, err)</code></td>
+      <td><em>API Read+Write</em> — server-side applies workload + traits; updates <code>appliedResources</code> and <code>services</code></td>
+    </tr>
+    <tr>
+      <td class="fn-name">prepareWorkloadAndManifests</td>
+      <td><span class="ref">generator.go:378</span></td>
+      <td><code>(*Component, *ComponentManifest, error)</code></td>
+      <td><em>API Read</em> — live workload fetch when MultiStageComponentApply is active</td>
+    </tr>
+    <tr>
+      <td class="fn-name">GenerateComponentManifest</td>
+      <td><span class="ref">appfile.go:332</span></td>
+      <td><code>*types.ComponentManifest, error</code></td>
+      <td>None — pure CUE evaluation</td>
+    </tr>
+    <tr>
+      <td class="fn-name">SetOAMContract</td>
+      <td><span class="ref">appfile.go:351</span></td>
+      <td>error</td>
+      <td>Mutates manifest in-place: <code>app.oam.dev/*</code> labels, namespace, workload-ref in traits</td>
+    </tr>
+    <tr>
+      <td class="fn-name">generateDispatcher</td>
+      <td><span class="ref">dispatcher.go:117</span></td>
+      <td><code>[]*manifestDispatcher</code> (sorted by stage)</td>
+      <td><em>API Read</em> — TraitDef stage lookup if not in revision</td>
+    </tr>
+    <tr>
+      <td class="fn-name">manifestDispatcher.run</td>
+      <td><span class="ref">dispatcher.go:141</span></td>
+      <td><code>(isHealth bool, err)</code></td>
+      <td>Conditionally: <em>API Write</em> via <code>h.Dispatch</code>, then <em>API Read</em> via <code>collectHealthStatus</code></td>
+    </tr>
+    <tr>
+      <td class="fn-name">Dispatch</td>
+      <td><span class="ref">apply.go:98</span></td>
+      <td>error</td>
+      <td><em>API Write</em> — server-side apply via ResourceKeeper; updates <code>appliedResources</code></td>
+    </tr>
+    <tr>
+      <td class="fn-name">collectHealthStatus</td>
+      <td><span class="ref">apply.go:325</span></td>
+      <td><code>(status, output, outputs, isHealth, err)</code></td>
+      <td><em>API Read</em> — fetches live objects; evaluates CUE health/status; updates <code>handler.services</code></td>
+    </tr>
+    <tr>
+      <td class="fn-name">applyPostDispatchTraits</td>
+      <td><span class="ref">apply.go:524</span></td>
+      <td>error</td>
+      <td><em>API Read+Write</em> — reads live workload; dispatches PostDispatch traits; refreshes status</td>
+    </tr>
+    <tr>
+      <td class="fn-name">LoadTemplate</td>
+      <td><span class="ref">template.go:74</span></td>
+      <td><code>*Template, error</code></td>
+      <td><em>API Read</em> — fetches definition CRD; falls back to WorkloadDefinition if ComponentDefinition not found</td>
+    </tr>
+    <tr>
+      <td class="fn-name">evalStatus</td>
+      <td><span class="ref">application_controller.go:910</span></td>
+      <td><code>bool</code> (overall health)</td>
+      <td>Calls <code>healthCheck</code> closure per component; updates <code>handler.services[i].{Healthy,Message,Traits}</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+</div>
+</section>
+
+<!-- §6 STATE -->
+<section id="state">
+<div class="container">
+<h2><span class="num">6</span> State transitions</h2>
+
+<h3>Application.Status.Phase</h3>
+<div class="diagram-wrap">
+  <div class="diagram-label">Application phase state machine</div>
+  <div class="mermaid">
+stateDiagram-v2
+    [*]         --> ApplicationStarting : new Application
+    ApplicationStarting --> ApplicationRendering : appFile parsed
+    ApplicationRendering --> ApplicationPolicyGenerating : revision written
+    ApplicationPolicyGenerating --> ApplicationRunningWorkflow : policies dispatched
+    ApplicationRunningWorkflow --> ApplicationWorkflowSuspending : workflow suspended
+    ApplicationRunningWorkflow --> ApplicationWorkflowTerminated : workflow terminated
+    ApplicationRunningWorkflow --> ApplicationWorkflowFailed : workflow failed
+    ApplicationRunningWorkflow --> ApplicationRunning : succeeded + all healthy
+    ApplicationRunningWorkflow --> ApplicationUnhealthy : succeeded + unhealthy
+    ApplicationRunning --> ApplicationRunning : periodic resync (stateKeep)
+    ApplicationUnhealthy --> ApplicationRunning : re-reconcile + health ok
+    ApplicationRunning --> ApplicationDeleting : deletionTimestamp set
+    ApplicationDeleting --> [*] : all ResourceTrackers GC'd
+  </div>
+</div>
+
+<h3>Workflow state routing</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>State</th><th>PostDispatch traits</th><th>GC scope</th><th>Requeue</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="tag tag-blue">Executing</span></td>
+      <td>applied</td><td>partial</td>
+      <td><code>GetBackoffWaitTime()</code></td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-yellow">Suspending</span></td>
+      <td>applied</td><td>partial</td>
+      <td><code>GetSuspendBackoffWaitTime()</code> if &gt;0, else default resync</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-red">Terminated</span></td>
+      <td>skipped</td><td>partial</td>
+      <td>Default resync (<code>ApplicationReSyncPeriod</code>, or per-app annotation)</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-red">Failed</span></td>
+      <td>skipped</td><td>partial</td>
+      <td>Default resync (<code>ApplicationReSyncPeriod</code>, or per-app annotation)</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-green">Succeeded</span></td>
+      <td>applied</td><td>full</td>
+      <td><code>ApplicationReSyncPeriod</code> (or per-app annotation)</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-purple">Skipped</span></td>
+      <td>applied</td><td>none</td>
+      <td><code>GetBackoffWaitTime()</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Key in-flight structs</h3>
+<div class="card-grid">
+  <div class="card">
+    <div class="card-title">appfile.Appfile</div>
+    <p>Lives for one reconcile. Holds parsed components, CUE templates, workflow steps, and policy list. <code>Artifacts</code> accumulates ComponentManifests as components are rendered.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">types.ComponentManifest</div>
+    <p><code>ComponentOutput</code> (workload unstructured) plus <code>ComponentOutputsAndTraits</code> (trait list). Produced by <code>GenerateComponentManifest</code>, consumed by <code>SetOAMContract</code> and <code>assemble.PrepareBeforeApply</code>.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">appfile.Template</div>
+    <p>Snapshot of a definition's CUE template string, health expression, custom status format, and the full definition CR. Loaded from cluster or a frozen ApplicationRevision.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">manifestDispatcher</div>
+    <p>Ephemeral grouping of manifests by stage. Created by <code>generateDispatcher</code>, run once per component, then discarded. The <code>run</code> closure captures <code>AppHandler</code> and <code>appRev</code> by reference.</p>
+  </div>
+</div>
+
+</div>
+</section>
+
+<!-- §7 ERRORS -->
+<section id="errors">
+<div class="container">
+<h2><span class="num">7</span> Error handling and requeue</h2>
+
+<h3>Central error path</h3>
+<p>All non-fatal reconcile errors go through
+<code>r.endWithNegativeCondition(ctx, app, condition, phase)</code>
+<span class="ref">application_controller.go:530</span>.
+It sets the condition on <code>app.Status</code>, patches to the API server, then returns the error.
+controller-runtime requeues immediately with exponential backoff.
+The condition shows up in <code>kubectl describe application</code>.</p>
+
+<h3>Requeue builder <span class="ref">application_controller.go:430</span></h3>
+<p>Every return path uses the <code>*reconcileResult</code> fluent builder:</p>
+<ul>
+  <li><code>r.result(err).ret()</code> — immediate requeue on error, otherwise <code>ApplicationReSyncPeriod</code></li>
+  <li><code>r.result(err).requeue(d).ret()</code> — explicit requeue after duration (workflow backoff)</li>
+  <li><code>r.result(err).forApp(app).ret()</code> — honours <code>app.oam.dev/reconcile-interval</code> annotation (minimum 10s)</li>
+</ul>
+
+<h3>Condition types by phase</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Phase</th><th>Condition type</th><th>Trigger</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>ApplicationStarting</td><td>ReconcileError</td>
+        <td>NewAppHandler failure; finalizer update failure; ApplyApplicationScopeTransforms failure</td></tr>
+    <tr><td>ApplicationRendering</td><td>Parsed / Revision</td>
+        <td>GenerateAppFile failure; PrepareCurrentAppRevision failure</td></tr>
+    <tr><td>ApplicationPolicyGenerating</td><td>Policy</td>
+        <td>ApplyPolicies failure</td></tr>
+    <tr><td>ApplicationWorkflowFailed</td><td>Workflow</td>
+        <td>GenerateApplicationSteps failure; ExecuteRunners failure</td></tr>
+    <tr><td>ApplicationRunning / Unhealthy</td><td>ReconcileError</td>
+        <td>applyPostDispatchTraits failure; GarbageCollect failure</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="alert alert-info">
+  <strong>Unhealthy is not an error.</strong>
+  If a component dispatches successfully but the health check returns <code>isHealth=false</code>,
+  <code>manifestDispatcher.run</code> returns <code>(false, nil)</code>.
+  The workflow step retries on its own backoff schedule.
+  Only a Kubernetes API error or CUE evaluation failure propagates as a non-nil error.
+  <span class="ref">dispatcher.go:167</span>
+</div>
+
+<div class="alert alert-warn">
+  <strong>Status write deduplication <span class="ref">application_controller.go:556</span></strong>
+  <code>writeStatusByMethod</code> deep-equals <code>app.Status</code> against the original
+  stored in context at step 1. If nothing changed, the API call is skipped.
+</div>
+
+</div>
+</section>
+
+<!-- §8 EXTENSIBILITY -->
+<section id="extensibility">
+<div class="container">
+<h2><span class="num">8</span> Extension points</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="card-title">TraitDefinition.Spec.Stage <span class="ref">dispatcher.go:67</span></div>
+    <p>Set to <code>PreDispatch</code>, <code>DefaultDispatch</code> (default), or <code>PostDispatch</code>. PostDispatch traits get the live workload injected as <code>context.output</code> during rendering.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">TraitDefinition.Spec.ManageWorkload <span class="ref">generator.go:511</span></div>
+    <p>When <code>true</code>, sets <code>comp.SkipApplyWorkload=true</code>. The trait is responsible for managing the workload lifecycle; KubeVela will not apply the workload CR.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">TraitDefinition.Spec.ControlPlaneOnly <span class="ref">generator.go:364</span></div>
+    <p>Forces the trait's resources to apply to the local (control-plane) cluster regardless of where the component's workload is dispatched.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">PolicyDefinition.Spec.Scope <span class="ref">appfile.go:261</span></div>
+    <p>Non-default scopes (e.g., <code>ApplicationScope</code>) are intercepted in <code>ApplyApplicationScopeTransforms</code> before Appfile parsing, allowing policies to modify the Application spec itself.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">WorkflowStepDefinition CUE templates <span class="ref">generator.go:86</span></div>
+    <p>Any CUE step can use the injected <code>ComponentApply</code>, <code>ComponentRender</code>, and <code>ComponentHealthCheck</code> providers to apply or inspect components from within a step.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">TemplateLoaderFn <span class="ref">parser.go:64</span></div>
+    <p>The <code>Parser</code> accepts a <code>TemplateLoaderFn</code> argument, making template loading replaceable for dry-run (<code>NewDryRunApplicationParser</code>) or test contexts.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Feature gates <span class="ref">features/</span></div>
+    <p><code>MultiStageComponentApply</code> enables Pre/Default/Post dispatch routing.
+       <code>ApplyOnce</code> disables stateKeep.
+       <code>EnableApplicationStatusMetrics</code> adds Prometheus metrics on status writes.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">AnnotationReconcileInterval <span class="ref">application_controller.go:443</span></div>
+    <p>Per-app annotation <code>app.oam.dev/reconcile-interval</code> overrides the global resync period. Minimum is 10s; values below that are ignored with a warning log.</p>
+  </div>
+</div>
+
+</div>
+</section>
+
+<!-- §9 TRACE TABLE -->
+<section id="trace">
+<div class="container">
+<h2><span class="num">9</span> Critical path trace</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>#</th><th>Caller</th><th>Callee</th><th>File : Line</th><th>Purpose</th><th>Side effects</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td class="fn-name">Reconcile</td><td class="fn-name">r.Get</td>
+        <td><span class="ref">controller:116</span></td>
+        <td>Fetch Application CR</td><td><em>API Read</em></td></tr>
+    <tr><td>2</td><td class="fn-name">Reconcile</td><td class="fn-name">NewAppHandler</td>
+        <td><span class="ref">apply.go:78</span></td>
+        <td>Create handler with ResourceKeeper</td><td><em>API Read</em> (ResourceTrackers)</td></tr>
+    <tr><td>3</td><td class="fn-name">Reconcile</td><td class="fn-name">handleFinalizers</td>
+        <td><span class="ref">controller:486</span></td>
+        <td>Add/remove finalizer; drive deletion GC</td><td><em>API Read+Write</em></td></tr>
+    <tr><td>4</td><td class="fn-name">Reconcile</td><td class="fn-name">GenerateAppFile</td>
+        <td><span class="ref">parser.go:87</span></td>
+        <td>Parse app spec into Appfile with all definitions loaded</td><td><em>API Read</em> (all Defs, ref-objects)</td></tr>
+    <tr><td>5</td><td class="fn-name">GenerateAppFile</td><td class="fn-name">parseComponents</td>
+        <td><span class="ref">parser.go:555</span></td>
+        <td>Per-component: load template and traits</td><td><em>API Read</em> (ComponentDef + TraitDefs)</td></tr>
+    <tr><td>6</td><td class="fn-name">parseComponents</td><td class="fn-name">LoadTemplate</td>
+        <td><span class="ref">template.go:74</span></td>
+        <td>Fetch definition; extract CUE template string</td><td><em>API Read</em></td></tr>
+    <tr><td>7</td><td class="fn-name">Reconcile</td><td class="fn-name">GenerateApplicationSteps</td>
+        <td><span class="ref">generator.go:70</span></td>
+        <td>Build WorkflowInstance + compile TaskRunners</td><td>None (in-memory)</td></tr>
+    <tr><td>8</td><td class="fn-name">GenerateApplicationSteps</td><td class="fn-name">generator.GenerateRunners</td>
+        <td><span class="ref">generator.go:111</span></td>
+        <td>Compile each workflow step's CUE into a TaskRunner</td><td>None (in-memory CUE)</td></tr>
+    <tr><td>9</td><td class="fn-name">ExecuteRunners</td><td class="fn-name">applyComponentFunc</td>
+        <td><span class="ref">generator.go:306</span></td>
+        <td>Apply one component: parse, render, dispatch, health check</td><td><em>API Read+Write</em></td></tr>
+    <tr><td>10</td><td class="fn-name">applyComponentFunc</td><td class="fn-name">prepareWorkloadAndManifests</td>
+        <td><span class="ref">generator.go:378</span></td>
+        <td>Parse component, evaluate CUE, stamp OAM labels</td><td><em>API Read</em> (live workload for MultiStage)</td></tr>
+    <tr><td>11</td><td class="fn-name">prepareWorkloadAndManifests</td><td class="fn-name">GenerateComponentManifest</td>
+        <td><span class="ref">appfile.go:332</span></td>
+        <td>Run CUE template to produce workload + trait unstructureds</td><td>None (pure CUE eval)</td></tr>
+    <tr><td>12</td><td class="fn-name">applyComponentFunc</td><td class="fn-name">generateDispatcher</td>
+        <td><span class="ref">dispatcher.go:117</span></td>
+        <td>Group traits by stage; build per-stage dispatchers</td><td><em>API Read</em> (TraitDef stage if not in revision)</td></tr>
+    <tr><td>13</td><td class="fn-name">manifestDispatcher.run</td><td class="fn-name">h.Dispatch</td>
+        <td><span class="ref">apply.go:98</span></td>
+        <td>Server-side apply manifests via ResourceKeeper</td><td><em>API Write</em>; updates appliedResources</td></tr>
+    <tr><td>14</td><td class="fn-name">manifestDispatcher.run</td><td class="fn-name">collectHealthStatus</td>
+        <td><span class="ref">apply.go:325</span></td>
+        <td>Evaluate CUE health + status expressions against live cluster</td><td><em>API Read</em>; updates handler.services</td></tr>
+    <tr><td>15</td><td class="fn-name">Reconcile</td><td class="fn-name">applyPostDispatchTraits</td>
+        <td><span class="ref">apply.go:524</span></td>
+        <td>Dispatch PostDispatch traits with live workload in context</td><td><em>API Read+Write</em>; updates services</td></tr>
+    <tr><td>16</td><td class="fn-name">Reconcile</td><td class="fn-name">evalStatus</td>
+        <td><span class="ref">controller:910</span></td>
+        <td>Collect health for all components; set phase Running/Unhealthy</td><td><em>API Read</em>; updates handler.services</td></tr>
+    <tr><td>17</td><td class="fn-name">Reconcile</td><td class="fn-name">resourceKeeper.GarbageCollect</td>
+        <td><span class="ref">controller:348</span></td>
+        <td>Prune AppRevisions, ComponentRevisions, orphaned resources</td><td><em>API Delete</em></td></tr>
+    <tr><td>18</td><td class="fn-name">gcResourceTrackers</td><td class="fn-name">patchStatus / updateStatus</td>
+        <td><span class="ref">controller:548</span></td>
+        <td>Write final app.Status to API server</td><td><em>API Write</em> (Status subresource)</td></tr>
+  </tbody>
+</table>
+</div>
+
+</div>
+</section>
+
+<!-- §10 DIGEST -->
+<section id="digest">
+<div class="container">
+<h2><span class="num">10</span> Senior engineer digest</h2>
+
+<h3>Key facts</h3>
+<div class="digest-grid">
+
+  <div class="digest-item">
+    <div class="digest-num">1</div>
+    <div class="digest-text">
+      Everything — CUE templates, definitions, workflow steps, policies — resolves into the in-memory <code>Appfile</code> before any dispatch happens. Start at <span class="ref">parser.go:87 GenerateAppFile</span> to understand what gets applied.
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">2</div>
+    <div class="digest-text">
+      The <code>ApplicationRevision</code> CR is a frozen snapshot of all definition CUE at revision-creation time. Rollback works by reading from the revision, not live cluster definitions.
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">3</div>
+    <div class="digest-text">
+      The workflow executor never calls apply/render directly. It receives them as <code>RuntimeParams.ComponentApply</code> etc. — closures created in <code>GenerateApplicationSteps</code> that capture <code>AppHandler</code>, <code>appParser</code>, and <code>af</code>.
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">4</div>
+    <div class="digest-text">
+      ResourceKeeper uses server-side apply, so every dispatch is idempotent at the API level. The dispatcher adds an optimization layer that skips the call entirely when the component is healthy and properties are unchanged. <span class="ref">dispatcher.go:167</span>
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">5</div>
+    <div class="digest-text">
+      PostDispatch traits are a deliberate second pass. They are filtered out during the initial apply while the component is unhealthy. When they eventually run, the live workload object is fetched and injected as <code>context.output</code> so traits can read runtime-populated fields.
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">6</div>
+    <div class="digest-text">
+      Health is CUE evaluation, not Kubernetes condition polling. The health expression in the definition's template is run against the live cluster object. If it returns <code>isHealth: false</code>, the component is unhealthy regardless of Pod ready conditions.
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">7</div>
+    <div class="digest-text">
+      KubeVela does not use <code>.Owns()</code>. <code>ResourceTracker</code> CRs record every resource the app owns. ResourceTracker delete events re-queue the application. <span class="ref">controller:816</span>
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">8</div>
+    <div class="digest-text">
+      The <code>UpdateFunc</code> predicate strips workflow status, services, and applied resources before <code>DeepEqual</code>. This is why frequent workflow executor status writes don't trigger new reconciles.
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">9</div>
+    <div class="digest-text">
+      <code>writeStatusByMethod</code> compares <code>app.Status</code> against the copy stored at reconcile start. If nothing changed, the status patch is skipped.
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">10</div>
+    <div class="digest-text">
+      <code>isHealth=false</code> is not an error. A component that dispatched successfully but isn't healthy yet returns <code>(false, nil)</code>. The workflow step retries on its own schedule. Only an API error or CUE failure causes an error requeue.
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">11</div>
+    <div class="digest-text">
+      <code>ParseComponentFromRevisionAndClient</code> tries the frozen revision first; falls back to the live cluster if a definition is absent from the revision. The fallback only triggers when absent, not when different — hot-patching a definition without bumping <code>publish-version</code> won't take effect.
+    </div>
+  </div>
+
+  <div class="digest-item">
+    <div class="digest-num">12</div>
+    <div class="digest-text">
+      <code>componentPropertiesChanged</code> compares against the current revision by default. When <code>autoRevision=true</code> it compares against the previous revision, which detects policy-driven mutations.
+    </div>
+  </div>
+
+</div>
+
+<h3>Common pitfalls</h3>
+<div class="pitfalls">
+
+  <div class="pitfall">
+    <strong>Infinite reconcile from status fields</strong>
+    If you add fields to <code>app.Status</code> that are updated during workflow execution, add them to the <code>UpdateFunc</code> predicate in <code>SetupWithManager</code>. Missing this causes a reconcile storm: the status write triggers a new reconcile which writes status again.
+  </div>
+
+  <div class="pitfall">
+    <strong>PostDispatch context.output is nil until component is healthy</strong>
+    If your PostDispatch trait CUE references <code>context.output.status.loadBalancer</code>, it will get a zero value on the first reconcile while the component is still being created. Always guard with <code>if context.output != _|_ &amp;&amp; ...</code>.
+  </div>
+
+  <div class="pitfall">
+    <strong>Hot-patched TraitDefinition not picked up</strong>
+    The fallback in <code>ParseComponentFromRevisionAndClient</code> only kicks in when a definition is <em>absent</em> from the revision, not when it has changed. Updating a TraitDefinition without bumping <code>publish-version</code> leaves existing apps on the frozen version.
+  </div>
+
+  <div class="pitfall">
+    <strong>GarbageCollect finished=false is not an error</strong>
+    When a resource has a finalizer and is waiting to be deleted, GC returns <code>finished=false, waiting=[...]</code>. The reconciler requeues with <code>baseGCBackoffWaitTime=3s</code>. Logging this as an error causes alert fatigue.
+  </div>
+
+  <div class="pitfall">
+    <strong>componentPropertiesChanged JSON comparison is byte-level</strong>
+    Properties are compared as raw JSON bytes. Key ordering differences between a fresh <code>json.Marshal</code> and bytes stored in the revision can produce false-positive re-dispatches if external tools update the Application spec in a different field order.
+  </div>
+
+</div>
+
+<h3>Where to add logs / breakpoints</h3>
+<div class="bp-grid">
+
+  <div class="bp">
+    <span class="ref">parser.go:87 GenerateAppFile</span>
+    <span class="bp-desc">Log component count, policy count, workflow step count. Catches definition-loading failures early.</span>
+  </div>
+
+  <div class="bp">
+    <span class="ref">generator.go:378 prepareWorkloadAndManifests</span>
+    <span class="bp-desc">Log the generated ComponentManifest's workload GVK and name. Last point CUE output is visible before dispatch.</span>
+  </div>
+
+  <div class="bp">
+    <span class="ref">dispatcher.go:141 manifestDispatcher.run</span>
+    <span class="bp-desc">Log <code>requiresDispatch</code> and each stage. Explains why a healthy component is or isn't being re-dispatched.</span>
+  </div>
+
+  <div class="bp">
+    <span class="ref">apply.go:325 collectHealthStatus</span>
+    <span class="bp-desc">Log <code>isHealth</code> and <code>status.Message</code> per component. Where CUE health expressions resolve to true/false.</span>
+  </div>
+
+  <div class="bp">
+    <span class="ref">apply.go:524 applyPostDispatchTraits</span>
+    <span class="bp-desc">Log which components have PostDispatch traits and whether <code>workloadHealthy</code> is true. Most PostDispatch debugging starts here.</span>
+  </div>
+
+  <div class="bp">
+    <span class="ref">application_controller.go:280 switch workflowState</span>
+    <span class="bp-desc">Log the workflow state every reconcile. Tells you exactly where in the lifecycle the app is stuck.</span>
+  </div>
+
+  <div class="bp">
+    <span class="ref">application_controller.go:556 writeStatusByMethod</span>
+    <span class="bp-desc">Log whether the status write was skipped. Distinguishes "reconcile ran" from "reconcile changed anything".</span>
+  </div>
+
+  <div class="bp">
+    <span class="ref">template.go:74 LoadTemplate</span>
+    <span class="bp-desc">Log which definition was loaded and from which source (cluster vs revision). Catches stale or missing definition issues.</span>
+  </div>
+
+</div>
+
+</div>
+</section>
+
+<footer>
+  <div class="container" style="font-size:12px;color:var(--text3);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+    <span>KubeVela Application Controller — reconciliation flow reference</span>
+    <span>pkg/controller/core.oam.dev/v1beta1/application · pkg/appfile</span>
+  </div>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#1c2438', primaryTextColor: '#e6edf3', primaryBorderColor: '#58a6ff',
+      lineColor: '#8b949e', secondaryColor: '#1f1f2e', tertiaryColor: '#1a2d1a',
+      background: '#0f1117', mainBkg: '#1c2438', nodeBorder: '#30363d',
+      clusterBkg: '#161b22', titleColor: '#e6edf3', edgeLabelBackground: '#161b22',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif'
+    },
+    flowchart: { useMaxWidth: true, htmlLabels: true },
+    sequence: { useMaxWidth: true, mirrorActors: false }
+  });
+
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('nav a[href^="#"]');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        navLinks.forEach(l => {
+          const active = l.getAttribute('href') === '#' + e.target.id;
+          l.style.color = active ? 'var(--accent)' : '';
+          l.style.background = active ? 'var(--bg4)' : '';
+        });
+      }
+    });
+  }, { threshold: 0.3 });
+  sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

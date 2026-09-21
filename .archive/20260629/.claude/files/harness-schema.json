@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gwre-pdo/ai-dev/main/ns/harness/capabilities/ci/src/claude/files/harness-schema.json",
+  "title": ".harness.yaml",
+  "description": "Configuration file for the AI-assisted PR pipeline driven by ai-harness: assess-risk, code-review, and reviewer-brief.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
+      "description": "Schema version in semver format (e.g. 1.0.0)."
+    },
+    "assess-risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Risk-classification stage. The four tier blocks live under 'categories'; ai-harness reads them and walks critical->high->medium->low to assign exactly one tier to each PR.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When false, classification still runs (review/brief need a tier) but no risk label or triage comment is applied."
+        },
+        "categories": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-tier configuration. Each tier requires 'patterns' and optionally accepts 'max-lines' / 'max-files'.",
+          "properties": {
+            "low": { "$ref": "#/$defs/tier" },
+            "medium": { "$ref": "#/$defs/tier" },
+            "high": { "$ref": "#/$defs/tier" },
+            "critical": { "$ref": "#/$defs/tier" }
+          }
+        }
+      }
+    },
+    "low": {
+      "$ref": "#/$defs/tier",
+      "deprecated": true,
+      "description": "DEPRECATED: moved under assess-risk.categories.<tier>; top-level kept for backwards-compat during migration."
+    },
+    "medium": {
+      "$ref": "#/$defs/tier",
+      "deprecated": true,
+      "description": "DEPRECATED: moved under assess-risk.categories.<tier>; top-level kept for backwards-compat during migration."
+    },
+    "high": {
+      "$ref": "#/$defs/tier",
+      "deprecated": true,
+      "description": "DEPRECATED: moved under assess-risk.categories.<tier>; top-level kept for backwards-compat during migration."
+    },
+    "critical": {
+      "$ref": "#/$defs/tier",
+      "deprecated": true,
+      "description": "DEPRECATED: moved under assess-risk.categories.<tier>; top-level kept for backwards-compat during migration."
+    },
+    "code-review": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Code review stage configuration: per-tier model selection and the system prompt sent to the reviewer.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When false, no Claude code review runs on PR pushes."
+        },
+        "models": { "$ref": "#/$defs/tier-models" },
+        "prompt": {
+          "type": "string",
+          "description": "System prompt for the code review action."
+        }
+      }
+    },
+    "reviewer-brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Reviewer-brief stage configuration: per-tier model selection and the prompt for the pr-pre-reviewer agent.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When false, no reviewer brief is posted on PR pushes."
+        },
+        "models": { "$ref": "#/$defs/tier-models" },
+        "prompt": {
+          "type": "string",
+          "description": "Prompt for the pr-pre-reviewer agent."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "threshold-value": {
+      "description": "Non-negative integer threshold or the literal '*' meaning unlimited.",
+      "oneOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "string", "const": "*" }
+      ]
+    },
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Risk tier configuration. 'patterns' lists gitignore-style globs matched against changed file paths; optional 'max-lines'/'max-files' escalate to this tier when exceeded.",
+      "required": ["patterns"],
+      "properties": {
+        "patterns": {
+          "type": "array",
+          "description": "Gitignore-style glob patterns for this tier.",
+          "items": { "type": "string" }
+        },
+        "max-lines": { "$ref": "#/$defs/threshold-value" },
+        "max-files": { "$ref": "#/$defs/threshold-value" }
+      }
+    },
+    "model-string": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Claude model identifier (e.g. 'claude-opus-4-8') or the literal 'skip' to disable this stage for the given tier."
+    },
+    "tier-models": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-tier model selection. 'default' is the fallback used by any tier that does not set its own model; individual tier keys override the default.",
+      "properties": {
+        "default":  { "$ref": "#/$defs/model-string" },
+        "critical": { "$ref": "#/$defs/model-string" },
+        "high":     { "$ref": "#/$defs/model-string" },
+        "medium":   { "$ref": "#/$defs/model-string" },
+        "low":      { "$ref": "#/$defs/model-string" }
+      }
+    }
+  }
+}

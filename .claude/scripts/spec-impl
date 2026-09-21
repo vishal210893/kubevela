@@ -1,0 +1,219 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Execute tasks from the spec's tasks.md"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-impl)", "Read", "Write", "Edit", "Glob", "Grep", "Bash"]
+#
+# [[tool.claude.argument]]
+# name = "task-ids"
+# type = "optional-passthrough"
+# hint = "[task-ids]"
+# description = "Task IDs to implement: single (1.1), comma-separated (1.1,1.2), range (1.1-1.5), or empty for next unchecked task"
+#
+# [tool.claude.output]
+# prompt = """Based on the script output, implement the specified task(s) from the spec's tasks.md.
+#
+# For each task in the "tasks" array:
+# 1. Use "title", "metadata.File", "metadata.Change", "metadata.Outcome", and "metadata.Context"
+#    to understand exactly what to build.
+# 2. Read the file(s) referenced in "metadata.File" before making changes.
+# 3. Implement the change described in "metadata.Change", guided by "metadata.Outcome" and
+#    "metadata.Context". Follow TDD: write or update tests first when the change involves
+#    testable code.
+# 4. After completing the implementation, update the task checkbox in "tasks_file":
+#    Change `- [ ] **<id>**` to `- [x] **<id>**` using the Edit tool.
+#    If the task line uses a "Task" prefix like `- [ ] **Task 1.1**:`, update that form too.
+#
+# If "all_complete" is true: report that all tasks in the spec are complete.
+#
+# If "blocked_tasks" is non-empty: explain that those tasks cannot run because their
+# dependencies must be completed first. List the unmet dependency IDs and what they require.
+#
+# If "not_found" is non-empty: report those task IDs were not found in tasks.md.
+#
+# Use "reqs_content" and "design_content" for additional context on requirements and design
+# intent when needed.
+#
+# After completing all tasks in the current batch:
+# - If mode is "next": run `CC=1 $WSROOT/.claude/scripts/spec-impl` (no args) to get the
+#   next task and continue implementing until all_complete is true. Do NOT stop between tasks —
+#   keep looping until the entire spec is complete, then summarize all changes made.
+# - If mode is "specific": briefly summarize what was changed (files modified)."""
+# examples = [
+#   "[OK] Implemented task 1.1: Add parse_tasks() to speclib.py\n\nChanges:\n  capabilities/spec/src/claude/scripts/lib/speclib.py\n\nCheckbox updated: 1.1 marked [x]\n\nNext: 1.2 - Add check_dependencies() to speclib.py\n  Run: /spec:impl 1.2"
+# ]
+# ///
+
+"""
+Load task context from the associated spec and prepare for implementation.
+
+Uses the spec associated with the current branch.
+"""
+
+import sys
+import os
+import re
+import json
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import require_associated_spec, spec_path, parse_tasks, check_dependencies
+
+
+def expand_task_ids(id_spec):
+    """Expand task ID specification to a list of IDs.
+
+    - "1.1"         -> ["1.1"]
+    - "1.1,1.2"     -> ["1.1", "1.2"]
+    - "1.1-1.5"     -> ["1.1", "1.2", "1.3", "1.4", "1.5"]
+    - "1.1,2.1-2.3" -> ["1.1", "2.1", "2.2", "2.3"]
+    """
+    result = []
+    for part in id_spec.split(','):
+        part = part.strip()
+        if not part:
+            continue
+
+        # Range: A.B-A.C (same phase)
+        range_match = re.match(r'^(\d+)\.(\d+)-(\d+)\.(\d+)$', part)
+        # Shorthand: A.B-C (same phase A)
+        shorthand_match = re.match(r'^(\d+)\.(\d+)-(\d+)$', part)
+
+        if range_match:
+            phase_a, start, phase_b, end = range_match.groups()
+            if phase_a == phase_b:
+                for i in range(int(start), int(end) + 1):
+                    result.append(f"{phase_a}.{i}")
+            else:
+                # Cross-phase: include both endpoints only
+                result.append(f"{phase_a}.{start}")
+                result.append(f"{phase_b}.{end}")
+        elif shorthand_match:
+            phase, start, end = shorthand_match.groups()
+            for i in range(int(start), int(end) + 1):
+                result.append(f"{phase}.{i}")
+        else:
+            result.append(part)
+
+    return result
+
+
+def task_to_dict(task):
+    """Convert task to JSON-serializable dict."""
+    return {
+        'id': task['id'],
+        'title': task['title'],
+        'completed': task['completed'],
+        'metadata': task['metadata'],
+        'raw_lines': task['raw_lines'],
+        'line_num': task['line_num'],
+    }
+
+
+def main():
+    spec_name, _branch = require_associated_spec()
+    path = spec_path(spec_name)
+
+    # Determine mode and requested IDs
+    mode = 'next'
+    requested_ids = []
+    if len(sys.argv) > 1:
+        mode = 'specific'
+        requested_ids = expand_task_ids(sys.argv[1])
+
+    # Read tasks.md
+    tasks_file = path / 'tasks.md'
+    if not tasks_file.exists():
+        if os.getenv('CC') == '1':
+            print(json.dumps({
+                'error': 'tasks.md not found',
+                'spec_name': spec_name,
+                'spec_path': str(path),
+            }))
+        else:
+            print(f"Error: tasks.md not found for spec '{spec_name}'", file=sys.stderr)
+            print("Run /spec:tasks to generate it first", file=sys.stderr)
+        sys.exit(1)
+
+    content = tasks_file.read_text()
+    tasks = parse_tasks(content)
+    task_lookup = {t['id']: t for t in tasks}
+
+    # Load supporting docs
+    reqs_file = path / 'requirements.md'
+    design_file = path / 'design.md'
+
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(path),
+        'tasks_file': str(tasks_file),
+        'mode': mode,
+        'requested_ids': requested_ids,
+        'tasks': [],
+        'blocked_tasks': [],
+        'not_found': [],
+        'all_complete': False,
+        'reqs_exists': reqs_file.exists(),
+        'reqs_content': reqs_file.read_text() if reqs_file.exists() else None,
+        'design_exists': design_file.exists(),
+        'design_content': design_file.read_text() if design_file.exists() else None,
+    }
+
+    if mode == 'next':
+        # Find first unchecked task with all dependencies satisfied
+        found = None
+        for task in tasks:
+            if not task['completed']:
+                satisfied, _unmet = check_dependencies(task['id'], tasks)
+                if satisfied:
+                    found = task
+                    break
+
+        if found:
+            data['tasks'] = [task_to_dict(found)]
+            data['requested_ids'] = [found['id']]
+        else:
+            unchecked = [t for t in tasks if not t['completed']]
+            if not unchecked:
+                data['all_complete'] = True
+            else:
+                # All remaining tasks are blocked
+                for task in unchecked:
+                    _, unmet = check_dependencies(task['id'], tasks)
+                    if unmet:
+                        data['blocked_tasks'].append({'id': task['id'], 'unmet_deps': unmet})
+    else:
+        # Specific IDs requested
+        for tid in requested_ids:
+            if tid not in task_lookup:
+                data['not_found'].append(tid)
+                continue
+            task = task_lookup[tid]
+            satisfied, unmet = check_dependencies(tid, tasks)
+            if not satisfied:
+                data['blocked_tasks'].append({'id': tid, 'unmet_deps': unmet})
+            else:
+                data['tasks'].append(task_to_dict(task))
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if data['all_complete']:
+            print(f"All tasks in spec '{spec_name}' are complete.")
+        elif data['tasks']:
+            ids = ', '.join(t['id'] for t in data['tasks'])
+            print(f"Spec '{spec_name}': implementing task(s): {ids}")
+        if data['blocked_tasks']:
+            for bt in data['blocked_tasks']:
+                print(f"  Task {bt['id']} blocked by: {', '.join(bt['unmet_deps'])}")
+        if data['not_found']:
+            print(f"  Task IDs not found: {', '.join(data['not_found'])}")
+
+
+if __name__ == "__main__":
+    main()

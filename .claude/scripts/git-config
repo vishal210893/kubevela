@@ -1,0 +1,169 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "View or modify git workflow configuration"
+# model = "sonnet"
+# context = "fork"
+#
+# [[tool.claude.argument]]
+# name = "set"
+# type = "optional-passthrough"
+# hint = "--set key value"
+# description = "Set a config value (e.g., --set branch-prefix 'sclaussen')"
+#
+# [[tool.claude.argument]]
+# name = "unset"
+# type = "optional-passthrough"
+# hint = "--unset key"
+# description = "Remove a config value (e.g., --unset branch-prefix)"
+#
+# [tool.claude.output]
+# prompt = "Show current config values or confirm set/unset operation. Display all git workflow settings in a clean format."
+# examples = [
+#   "Git workflow config:\n  branch-prefix: sclaussen\n  issue-in-branch: false\n  spec-in-branch: false",
+#   "[OK] Set branch-prefix = sclaussen",
+#   "[OK] Unset branch-prefix",
+#   "No git workflow config set. Use --set to configure."
+# ]
+# ///
+
+"""View or modify git workflow configuration stored in dev.yaml."""
+
+import sys
+import os
+import argparse
+
+# Add bin directory to path to import gitlib
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import output_result, get_template_from_metadata, error, get_repo_name
+from lib.devyaml import get as yaml_get, set as yaml_set, unset as yaml_unset
+
+
+# Valid config keys with descriptions
+VALID_KEYS = {
+    'branch-prefix': 'Lower-dash-case string prepended to branch names (e.g., sclaussen). A / separator is added automatically.',
+    'issue-in-branch': 'Include issue number in branch name (default: false)',
+    'spec-in-branch': 'Include spec name in branch name (default: false)',
+    'pipeline-default': 'Default pipeline level when no flag is given. Values: none, pr, poll, fix, merge (default: none)',
+}
+
+
+def _to_typed(key, str_value):
+    """Convert string to proper Python type for dev.yaml storage."""
+    bool_keys = {'issue-in-branch', 'spec-in-branch'}
+    if key in bool_keys:
+        return str_value.lower() == 'true'
+    return str_value
+
+
+def get_all_config():
+    """Read all git workflow config values from dev.yaml."""
+    config = {}
+    repo = get_repo_name()
+    if not repo:
+        return config
+
+    for key in VALID_KEYS:
+        value = yaml_get(f'git.{repo}.{key}')
+        if value is not None:
+            config[key] = str(value) if not isinstance(value, (str,)) else value
+
+    return config
+
+
+def set_config(key, value):
+    """Set a config value in dev.yaml."""
+    repo = get_repo_name()
+    if not repo:
+        return False
+    typed = _to_typed(key, str(value))
+    yaml_set(f'git.{repo}.{key}', typed)
+    return True
+
+
+def unset_config(key):
+    """Remove config value from dev.yaml."""
+    repo = get_repo_name()
+    if not repo:
+        return False
+    return yaml_unset(f'git.{repo}.{key}')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--set', nargs=2, metavar=('KEY', 'VALUE'),
+                       help='Set a config value')
+    parser.add_argument('--unset', metavar='KEY',
+                       help='Remove a config value')
+    args = parser.parse_args()
+
+    if args.set:
+        key, value = args.set
+        if key not in VALID_KEYS:
+            error(f"Unknown config key: {key}")
+            print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+            sys.exit(1)
+
+        if key == 'branch-prefix':
+            import re
+            if not re.match(r'^[a-z0-9]+(-[a-z0-9]+)*$', value):
+                error(f"Invalid branch-prefix '{value}': must be lower-dash-case (e.g., 'sclaussen', 'my-prefix')")
+                print("No colons, slashes, spaces, or uppercase. A / separator is added automatically.", file=sys.stderr)
+                sys.exit(1)
+
+        if key == 'pipeline-default':
+            valid_values = ('none', 'pr', 'poll', 'fix', 'merge',
+                           'pr-poll', 'pr-fix', 'pr-merge')  # accept old names for compat
+            if value not in valid_values:
+                error(f"Invalid pipeline-default '{value}': must be one of {', '.join(valid_values)}")
+                sys.exit(1)
+
+        if set_config(key, value):
+            data = {'action': 'set', 'key': key, 'value': value,
+                    'message': f'[OK] Set {key} = {value}'}
+        else:
+            error(f"Failed to set {key}")
+            sys.exit(1)
+
+    elif args.unset:
+        key = args.unset
+        if key not in VALID_KEYS:
+            error(f"Unknown config key: {key}")
+            print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+            sys.exit(1)
+
+        if unset_config(key):
+            data = {'action': 'unset', 'key': key,
+                    'message': f'[OK] Unset {key}'}
+        else:
+            error(f"Failed to unset {key} (may not be set)")
+            sys.exit(1)
+
+    else:
+        config = get_all_config()
+        defaults = {
+            'issue-in-branch': 'false',
+            'spec-in-branch': 'false',
+            'pipeline-default': 'none',
+        }
+        lines = ['Git workflow config:']
+        for key in sorted(VALID_KEYS.keys()):
+            if key in config:
+                lines.append(f'  {key}: {config[key]}')
+            elif key in defaults:
+                lines.append(f'  {key}: {defaults[key]} (default)')
+            else:
+                lines.append(f'  {key}: (not set)')
+        data = {'action': 'show', 'config': config, 'defaults': defaults,
+                'message': '\n'.join(lines)}
+
+    template = get_template_from_metadata(script_path=__file__)
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,157 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""
+code-risk-extract-analysis - Extract Claude's risk analysis from PR comments.
+
+Finds the most recent bot comment containing risk analysis markers
+(Key Changes, Critical-Risk Changes, High-Risk Changes), extracts
+the clean markdown content, writes it to GITHUB_OUTPUT, and deletes
+the intermediate comment to avoid duplication.
+
+Environment variables:
+    PR_NUMBER      - Pull request number (required)
+    REPO           - Repository in owner/name format (required)
+    GH_TOKEN       - GitHub token for API access (required by gh CLI)
+    GITHUB_OUTPUT  - Path to output file (optional, for CI)
+
+Usage:
+    PR_NUMBER=42 REPO=org/repo uv run --quiet --script code-risk-extract-analysis
+"""
+
+import json
+import os
+import sys
+import subprocess
+
+
+ANALYSIS_MARKERS = ("Key Changes", "Critical-Risk Changes", "High-Risk Changes")
+
+
+def run_gh(args, check=True):
+    """Run a gh CLI command and return stdout."""
+    result = subprocess.run(
+        ["gh"] + args,
+        capture_output=True,
+        text=True,
+    )
+    if check and result.returncode != 0:
+        print(f"[WARN] gh {' '.join(args)}: {result.stderr.strip()}", file=sys.stderr)
+    return result.stdout.strip()
+
+
+def find_analysis_comment(repo, pr_number):
+    """Find the latest bot comment containing risk analysis markers.
+
+    Returns (comment_id, body) or (None, None) if not found.
+    """
+    raw = run_gh([
+        "api", f"repos/{repo}/issues/{pr_number}/comments",
+        "--paginate",
+    ], check=False)
+
+    if not raw:
+        return None, None
+
+    try:
+        comments = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, None
+
+    # Filter for bot comments containing analysis markers
+    candidates = []
+    for comment in comments:
+        if comment.get("user", {}).get("type") != "Bot":
+            continue
+        body = comment.get("body", "")
+        if any(marker in body for marker in ANALYSIS_MARKERS):
+            candidates.append(comment)
+
+    if not candidates:
+        return None, None
+
+    # Return the last (most recent) matching comment
+    last = candidates[-1]
+    return last.get("id"), last.get("body", "")
+
+
+def extract_clean_markdown(body):
+    """Extract clean markdown from the analysis comment body.
+
+    Strips code fences and extracts from the first ### heading onward.
+    """
+    lines = body.splitlines()
+    clean_lines = []
+    in_content = False
+
+    for line in lines:
+        # Start capturing from the first relevant heading
+        if not in_content and line.startswith("### ") and any(
+            marker in line for marker in ("Key", "Critical", "High")
+        ):
+            in_content = True
+
+        if in_content:
+            # Skip code fence delimiters
+            stripped = line.strip()
+            if stripped in ("```markdown", "```"):
+                continue
+            clean_lines.append(line)
+
+    result = "\n".join(clean_lines).strip()
+    return result if result else body.strip()
+
+
+def delete_comment(repo, comment_id):
+    """Delete a comment by ID."""
+    run_gh([
+        "api", "--method", "DELETE",
+        f"repos/{repo}/issues/comments/{comment_id}",
+    ], check=False)
+    print(f"[OK] Cleaned up intermediate Claude comment (id: {comment_id})", file=sys.stderr)
+
+
+def write_output(key, value):
+    """Write a value to GITHUB_OUTPUT if available."""
+    gh_output = os.environ.get("GITHUB_OUTPUT", "")
+    if gh_output:
+        with open(gh_output, "a") as f:
+            if "\n" in value:
+                f.write(f"{key}<<ANALYSIS_EOF\n{value}\nANALYSIS_EOF\n")
+            else:
+                f.write(f"{key}={value}\n")
+
+
+def main():
+    pr_number = os.environ.get("PR_NUMBER", "")
+    repo = os.environ.get("REPO", "")
+
+    if not pr_number:
+        print("Error: PR_NUMBER environment variable is required", file=sys.stderr)
+        sys.exit(1)
+    if not repo:
+        print("Error: REPO environment variable is required", file=sys.stderr)
+        sys.exit(1)
+
+    comment_id, body = find_analysis_comment(repo, pr_number)
+
+    if comment_id and body:
+        clean = extract_clean_markdown(body)
+        write_output("summary", clean)
+        print("[OK] Extracted Claude analysis", file=sys.stderr)
+
+        # Print to stdout for non-CI usage
+        if not os.environ.get("GITHUB_OUTPUT"):
+            print(clean)
+
+        # Delete the intermediate comment
+        delete_comment(repo, comment_id)
+    else:
+        write_output("summary", "")
+        print("[WARN] No Claude analysis found", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

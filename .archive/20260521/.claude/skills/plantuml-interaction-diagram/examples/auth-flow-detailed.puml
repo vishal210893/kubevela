@@ -1,0 +1,145 @@
+@startuml auth-flow-detailed
+!theme plain
+title Detailed Authentication Flow with MFA
+
+skinparam sequence {
+  ArrowColor #333333
+  LifeLineBorderColor #333333
+  ParticipantBorderColor #333333
+  ParticipantBackgroundColor #FEFECE
+  ActorBorderColor #333333
+  DatabaseBackgroundColor #E8F5E9
+  QueueBackgroundColor #E3F2FD
+}
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFCC
+
+box "Client" #E3F2FD
+  actor User
+  participant "Web App" as App
+end box
+
+box "API Layer" #F5F5F5
+  boundary "API Gateway" as GW
+  control "Rate Limiter" as RL
+end box
+
+box "Auth Services" #E8F5E9
+  participant "Auth Service" as Auth
+  participant "MFA Service" as MFA
+  entity "Token Manager" as Token
+end box
+
+database "User DB" as DB
+
+autonumber
+
+== Authentication ==
+
+User -> App: enter email + password
+App -> GW: POST /auth/login {email, password}
+GW -> RL ++: checkRateLimit(clientIP)
+
+break rate limit exceeded
+  RL --> GW: 429 Too Many Requests
+  GW --> App: 429 Too Many Requests
+  App --> User: "Please wait before retrying"
+end
+
+RL --> GW --: allowed
+GW -> Auth ++: authenticate(email, password)
+Auth -> DB: findByEmail(email)
+DB --> Auth: userRecord
+
+alt valid credentials
+  Auth -> Auth: verifyPasswordHash()
+
+  opt MFA enabled for user
+    Auth -> MFA ++: initiateMFA(userId, method)
+    MFA --> Auth: challengeId
+    Auth --> GW: 200 {requiresMFA: true, challengeId}
+    GW --> App: MFA challenge
+    App --> User: show MFA input
+
+    User -> App: enter MFA code
+    App -> GW: POST /auth/mfa {challengeId, code}
+    GW -> Auth: verifyMFA(challengeId, code)
+    Auth -> MFA: validate(challengeId, code)
+
+    alt MFA valid
+      MFA --> Auth --: valid
+    else MFA invalid
+      MFA --> Auth --: invalid
+      Auth --> GW --: 401 Invalid MFA Code
+      GW --> App: 401 Invalid MFA Code
+      App --> User: show error, retry
+    end
+  end
+
+  Auth -> Token: generateTokenPair(userId, scopes)
+  Token --> Auth: {accessToken, refreshToken}
+
+  note right of Token
+    Access token: 15 min TTL
+    Refresh token: 7 day TTL
+    Signed with RS256
+  end note
+
+  Auth --> GW --: 200 {accessToken, refreshToken}
+  GW --> App: 200 + Set-Cookie
+  App --> User: redirect to dashboard
+
+else invalid credentials
+  Auth -> Auth: incrementFailedAttempts()
+
+  note right of Auth #FFAAAA
+    After 5 failed attempts,
+    lock account for 30 minutes
+  end note
+
+  Auth --> GW --: 401 Unauthorized
+  GW --> App: 401 Unauthorized
+  App --> User: "Invalid email or password"
+end
+
+== Token Refresh ==
+
+App -> GW: POST /auth/refresh {refreshToken}
+GW -> Auth ++: refreshToken(token)
+Auth -> Token: validate(refreshToken)
+
+alt token valid and not revoked
+  Token --> Auth: claims
+  Auth -> Token: generateTokenPair(userId, scopes)
+  Token --> Auth: {newAccessToken, newRefreshToken}
+  Auth --> GW --: 200 {tokens}
+  GW --> App: 200 + Set-Cookie
+else token expired or revoked
+  Token --> Auth: invalid
+  Auth --> GW --: 401 Token Expired
+  GW --> App: 401 Token Expired
+  App --> User: redirect to login
+end
+
+== Logout ==
+
+User -> App: click logout
+App -> GW: POST /auth/logout
+GW -> Auth ++: logout(refreshToken)
+Auth -> Token: revoke(refreshToken)
+Token --> Auth: revoked
+Auth --> GW --: 204 No Content
+GW --> App: 204
+App --> User: redirect to login page
+
+legend right
+  | Symbol | Meaning |
+  | -> | Synchronous call |
+  | --> | Return / response |
+  | ->> | Async message |
+  | #FFAAAA | Warning / error |
+  | #E8F5E9 | Auth services |
+  | #E3F2FD | Client layer |
+end legend
+
+@enduml

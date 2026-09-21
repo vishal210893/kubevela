@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__notion__notion-search",
+      "Bash(go tool *)",
+      "Bash(export KUBECONFIG=/tmp/k3d-fresh.yaml)",
+      "mcp__jira__getAccessibleAtlassianResources",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api *)",
+      "Bash(gh issue *)",
+      "mcp__jira__atlassianUserInfo"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "confluence",
+    "jira",
+    "devassistant",
+    "figma",
+    "github",
+    "guidewire-docs",
+    "guidewire-docs-staging",
+    "jutro-developer-assistant"
+  ]
+}

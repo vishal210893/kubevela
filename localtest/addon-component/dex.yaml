@@ -1,0 +1,14 @@
+# Install the "dex" addon declaratively as a component (no Addon CR).
+# skipVersionValidation: true is needed when vela-core runs out-of-cluster
+# (the SystemRequirements check can't read the vela-core Deployment version).
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-dex
+  namespace: vela-system
+spec:
+  components:
+    - name: dex
+      type: addon
+      properties:
+        skipVersionValidation: true

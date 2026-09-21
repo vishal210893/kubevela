@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: trace-pre-stamped
+  namespace: trace-test
+  annotations:
+    app.oam.dev/traceID: my-known-trace-id-for-replay-12345
+spec:
+  components:
+    - name: pre-trace
+      type: webservice
+      properties:
+        image: nginx:1.21

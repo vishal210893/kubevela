@@ -1,0 +1,360 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Swarm review of current spec with persona-driven agents"
+# model = "opus"
+# allowed-tools = ["Task", "Read", "Write", "Bash(script:spec-swarm)"]
+#
+# [[tool.claude.argument]]
+# name = "focus"
+# type = "optional-passthrough"
+# hint = "[focus]"
+# description = "Optional focus area for the review (free-form text, e.g. 'design', 'security', 'error handling')"
+#
+# [[tool.claude.argument]]
+# name = "sessions"
+# type = "optional-passthrough"
+# hint = "--sessions N"
+# description = "Number of parallel review sessions (default: 3)"
+#
+# [[tool.claude.argument]]
+# name = "personas"
+# type = "optional-passthrough"
+# hint = "--personas N"
+# description = "Number of personas per session (default: 5)"
+#
+# [[tool.claude.argument]]
+# name = "keep"
+# type = "optional-passthrough"
+# hint = "--keep"
+# description = "Save each session's raw output to swarm-{persona}.md alongside the merged output"
+# flag = true
+#
+# [tool.claude.output]
+# prompt = """The script returned a JSON configuration for a spec swarm review. Follow these steps:
+#
+# ## Step 1: Parse Configuration
+#
+# Extract the fields from the JSON:
+# - `session_count`: Number of parallel agents to spawn
+# - `personas_per_session`: Number of personas each agent should embody
+# - `focus`: Optional focus area for the review (may be null)
+# - `spec_path`: Path to the spec directory
+# - `spec_documents`: Map of document type -> path (only includes files that exist)
+# - `available_agents`: List of agent names the LLM can choose from
+# - `keep`: If true, save each session's raw output to individual files
+#
+# ## Step 2: Read Spec Documents
+#
+# Read ALL spec documents listed in `spec_documents` using the Read tool. These will be included
+# in each agent's prompt so they can review the full spec.
+#
+# ## Step 3: Select Personas
+#
+# From `available_agents`, select personas for the review sessions:
+#
+# - Read each persona file at `$WSROOT/.claude/skills/spec-driven-development/references/personas/{name}.md` to understand what they do
+# - For spec review, prefer analytical/review personas (chief-architect, security-reviewer, devils-advocate,
+#   testability-reviewer, delivery-manager, chief-programmer, ops-reviewer, requirements-analyst, simplifier,
+#   api-designer) but choose based on the spec content and focus area
+# - If `focus` is set, weight persona selection toward that area (e.g., "security" -> security-reviewer,
+#   "design" -> chief-architect, architect)
+# - Select `personas_per_session` personas for each session
+# - When `personas_per_session` = 1: select a DIFFERENT single persona per session to maximize diversity
+# - When `personas_per_session` > 1: each session gets the same set of personas for internal debate
+#
+# ## Step 4: Spawn Parallel Review Agents
+#
+# For EACH session, spawn a Task agent. Send ALL Task calls in a SINGLE message for maximum parallelism.
+#
+# For each Task agent:
+# - `subagent_type`: "general-purpose"
+# - `model`: "opus"
+# - Do NOT use `isolation: "worktree"` -- agents return their content as text, no file writes needed
+#
+# ### Single Persona (personas_per_session = 1):
+#
+# ```
+# {full content from the persona's .md file}
+#
+# ## Your Task
+#
+# Review the following specification from your persona's perspective. Evaluate
+# completeness, identify gaps, find risks, and suggest improvements. Be specific --
+# reference exact sections and propose concrete fixes.
+#
+# {if focus: "**Review Focus:** " + focus + "\n\nConcentrate your review on this area while still noting critical issues elsewhere.\n"}
+#
+# {for each spec document: "### " + document_name + "\n\n" + document_contents}
+#
+# Produce a review document with:
+# 1. **Critical Issues** - Problems that must be fixed
+# 2. **Warnings** - Potential concerns worth investigating
+# 3. **Suggestions** - Improvements that would strengthen the spec
+# 4. **Overall Assessment** - Your persona's verdict
+#
+# Return the full markdown content as your response. Do NOT write any files.
+# ```
+#
+# ### Multi-Persona Debate (personas_per_session > 1):
+#
+# ```
+# You are facilitating an internal spec review debate. Channel EACH of the
+# following personas in sequence, letting each respond to and build on the others.
+#
+# {for each selected persona: full content from persona .md file}
+#
+# ## Your Task
+#
+# Review the following specification by cycling through each persona:
+#
+# {if focus: "**Review Focus:** " + focus + "\n\nConcentrate the review on this area while still noting critical issues elsewhere.\n"}
+#
+# {for each spec document: "### " + document_name + "\n\n" + document_contents}
+#
+# For EACH persona in order:
+# 1. Adopt that persona's review lens fully
+# 2. Identify issues, risks, and gaps from their perspective
+# 3. Respond to findings raised by previous personas
+#
+# Produce a synthesized review (2000-4000 words) with:
+# 1. **Critical Issues** - Problems multiple personas flagged
+# 2. **Warnings** - Concerns from at least one persona
+# 3. **Points of Agreement** - Where reviewers converged
+# 4. **Points of Tension** - Where reviewers disagreed
+# 5. **Ranked Recommendations** - For improving the spec
+#
+# Return the full markdown content as your response. Do NOT write any files.
+# ```
+#
+# ## Step 5: Collect Outputs
+#
+# After ALL agents complete, collect the returned text from each agent.
+#
+# ## Step 6: Synthesize Merged Review
+#
+# Write the final merged review document:
+#
+# ```markdown
+# # Spec Review: {spec name}
+#
+# > Reviewed by {N} parallel sessions, {M} personas per session.
+# {if focus: "> Focus: " + focus}
+#
+# ## Critical Issues
+# {Issues found across multiple sessions, deduplicated and ranked by severity}
+#
+# ## Warnings
+# {Concerns worth investigating, with session references}
+#
+# ## Suggestions
+# {Improvements to strengthen the spec}
+#
+# ---
+#
+# ## Session 1 Review
+# {full session output}
+#
+# ---
+#
+# ## Session 2 Review
+# {full session output}
+#
+# (repeat for all sessions)
+# ```
+#
+# ## Step 7: Write Output
+#
+# Write the merged review to the `output_path` from the JSON config.
+# If `keep` is true: ALSO write each session's raw output to a separate file alongside the merged
+# output. Name each file `swarm-{persona}.md` where `{persona}` is the primary persona name
+# for that session (e.g., `swarm-chief-architect.md`, `swarm-security-reviewer.md`). For
+# multi-persona sessions, use the first persona name in the set.
+#
+# ## Step 8: Report
+#
+# Tell the user: session count, personas used, output path, and 2-3 sentence summary of critical findings.
+# If `keep` is true, also list the per-session files written.
+# """
+# examples = [
+#   "Spawning 3 review agents (3x5 grid)...\n\n[Spawns 3 parallel Task agents]\n\nAll sessions complete. Writing merged review to swarm.md\n\n3 sessions x 5 personas | Critical: 2 issues found across sessions | 5 warnings | 8 suggestions"
+# ]
+# ///
+
+"""
+spec-swarm - Swarm review of current spec with persona-driven agents
+
+Spawns N parallel agents, each embodying one or more review personas, to
+independently evaluate the current spec. The orchestrating LLM selects
+personas from the available agent pool. Merges all outputs into a synthesized
+review document with issues, warnings, and suggestions.
+
+Usage:
+    spec-swarm [focus] [--sessions N] [--personas N] [--keep]
+
+Arguments:
+    focus               Optional focus area for the review (free-form text)
+    --sessions N        Number of parallel sessions (default: 3)
+    --personas N        Number of personas per session (default: 5)
+    --keep              Save each session's raw output to swarm-{persona}.md
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+# Add script directory to path for speclib imports
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+def get_current_spec():
+    """Get the spec associated with the current branch."""
+    try:
+        from lib.speclib import get_associated_spec, get_current_branch
+        branch = get_current_branch()
+        if branch:
+            return get_associated_spec(branch), branch
+    except ImportError:
+        pass
+    return None, None
+
+
+def get_spec_path(spec_name):
+    """Resolve the path to a spec directory."""
+    try:
+        from lib.speclib import doc_root
+        root = doc_root()
+        if root:
+            return str(root / 'specs' / spec_name)
+    except ImportError:
+        pass
+    return None
+
+
+def get_available_agents():
+    """List available persona names from skill references."""
+    wsroot = os.environ.get('WSROOT', '')
+    if not wsroot:
+        try:
+            result = subprocess.run(
+                ['git', 'rev-parse', '--show-toplevel'],
+                capture_output=True, text=True, check=True
+            )
+            wsroot = result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return []
+
+    personas_dir = os.path.join(
+        wsroot, '.claude', 'skills', 'spec-driven-development',
+        'references', 'personas'
+    )
+    if not os.path.isdir(personas_dir):
+        return []
+
+    agents = []
+    for entry in sorted(os.listdir(personas_dir)):
+        if entry.endswith('.md'):
+            agents.append(entry[:-3])
+    return agents
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('focus', nargs='*', help='Optional focus area for the review')
+    parser.add_argument('--sessions', type=int, default=3,
+                       help='Number of parallel sessions (default: 3)')
+    parser.add_argument('--personas', type=int, default=5,
+                       help='Number of personas per session (default: 5)')
+    parser.add_argument('--keep', action='store_true',
+                       help='Save each session output to swarm-{persona}.md')
+    args = parser.parse_args()
+
+    cc_mode = os.getenv('CC') == '1'
+
+    # Join multi-word focus
+    focus = ' '.join(args.focus) if args.focus else None
+
+    # Get current spec
+    spec_name, branch = get_current_spec()
+    if not spec_name:
+        msg = "Error: No spec associated with the current branch. Use /spec <name> to associate a spec first."
+        if cc_mode:
+            print(json.dumps({'status': 'error', 'error': msg}))
+        else:
+            print(msg, file=sys.stderr)
+        sys.exit(1)
+
+    # Resolve spec path
+    spec_path = get_spec_path(spec_name)
+    if not spec_path or not os.path.isdir(spec_path):
+        msg = f"Error: Spec directory not found: {spec_path or spec_name}"
+        if cc_mode:
+            print(json.dumps({'status': 'error', 'error': msg}))
+        else:
+            print(msg, file=sys.stderr)
+        sys.exit(1)
+
+    # List available spec documents
+    doc_names = ['requirements.md', 'design.md', 'tasks.md', 'brainstorm.md']
+    spec_documents = {}
+    for doc in doc_names:
+        doc_path = os.path.join(spec_path, doc)
+        if os.path.isfile(doc_path):
+            key = doc.replace('.md', '')
+            spec_documents[key] = doc_path
+
+    if not spec_documents:
+        msg = f"Error: No spec documents found in {spec_path}"
+        if cc_mode:
+            print(json.dumps({'status': 'error', 'error': msg}))
+        else:
+            print(msg, file=sys.stderr)
+        sys.exit(1)
+
+    # Get available agents
+    available_agents = get_available_agents()
+
+    # Output path
+    output_path = os.path.join(spec_path, 'swarm.md')
+
+    # Build result
+    result = {
+        'status': 'ready',
+        'command': 'swarm',
+        'spec': spec_name,
+        'session_count': args.sessions,
+        'personas_per_session': args.personas,
+        'focus': focus,
+        'spec_path': spec_path,
+        'spec_documents': spec_documents,
+        'output_path': output_path,
+        'available_agents': available_agents,
+        'keep': args.keep,
+    }
+
+    if cc_mode:
+        print(json.dumps(result))
+    else:
+        print("Swarm Review Configuration")
+        print("=" * 60)
+        print(f"Spec: {spec_name}")
+        print(f"Sessions: {args.sessions}")
+        print(f"Personas per session: {args.personas}")
+        print(f"Grid: {args.sessions}x{args.personas}")
+        if focus:
+            print(f"Focus: {focus}")
+        print(f"Documents: {', '.join(spec_documents.keys())}")
+        print(f"Output: {output_path}")
+        if available_agents:
+            print(f"Available agents: {', '.join(available_agents)}")
+
+
+if __name__ == '__main__':
+    main()

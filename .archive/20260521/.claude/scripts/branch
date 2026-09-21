@@ -1,0 +1,149 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Show current branch or switch to existing branch"
+# model = "haiku"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/branch:*)"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "optional-passthrough"
+# hint = "[name]"
+# description = "Branch name to switch to. If omitted, shows current branch. Errors if branch doesn't exist."
+#
+# [tool.claude.output]
+# prompt = "If showing (get): display the current branch name. If switching: confirm branch switch. Then remind them to rename the session."
+# examples = [
+#   "Current branch: main",
+#   "[OK] Switched to branch 'feature-auth'\n\nTip: Rename this session to match: /rename feature-auth"
+# ]
+# ///
+
+"""
+Show current branch or switch to existing branch.
+
+No args: shows the current branch (get).
+With args: switches to the named branch (set).
+Errors if the branch doesn't exist — use /branch:create to create one first.
+"""
+
+import sys
+import os
+import subprocess
+import argparse
+
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import (
+    run_git,
+    output_result,
+    get_template_from_metadata,
+    branch_exists,
+    remote_branch_exists,
+    get_repo_url,
+    get_default_branch,
+    get_current_branch
+)
+
+
+def do_get():
+    """Show current branch."""
+    import json
+    branch = get_current_branch()
+
+    data = {
+        'branch': branch,
+        'mode': 'get'
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Current branch: {branch}")
+
+
+def do_switch(branch):
+    """Switch to existing branch."""
+
+    if branch_exists(branch):
+        run_git(
+            ['checkout', branch],
+            operation_description="switch to branch",
+            context=branch
+        )
+    else:
+        repo_url = get_repo_url()
+        if remote_branch_exists(branch, repo_url):
+            run_git(
+                ['checkout', '-t', f'origin/{branch}'],
+                operation_description="checkout remote branch",
+                context=branch
+            )
+        else:
+            from lib.gitlib import error
+            error(f"Branch '{branch}' does not exist locally or on remote")
+            print("Use /branch:create to create a new branch.", file=sys.stderr)
+            sys.exit(1)
+
+    data = {
+        'branch': branch,
+        'mode': 'switch'
+    }
+
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+    # Load associated spec if one exists
+    load_spec_context(branch)
+
+
+def load_spec_context(branch):
+    """Load spec context for the branch if one is associated."""
+    try:
+        from lib.speclib import get_associated_spec, doc_root
+        spec_name = get_associated_spec(branch)
+        if not spec_name:
+            return
+
+        from pathlib import Path
+        spec_dir = doc_root() / 'specs' / spec_name
+        if not spec_dir.is_dir():
+            return
+
+        print(f"\n# Spec Context: {spec_name}", file=sys.stderr)
+        print(f"Branch `{branch}` is associated with spec `{spec_name}`.\n", file=sys.stderr)
+
+        for filename, title in [
+            ('requirements.md', 'Requirements'),
+            ('design.md', 'Design'),
+            ('tasks.md', 'Tasks'),
+        ]:
+            spec_file = spec_dir / filename
+            if spec_file.exists():
+                print(f"## {title}", file=sys.stderr)
+                print(f"File: `{spec_file}`\n", file=sys.stderr)
+                print(spec_file.read_text().strip(), file=sys.stderr)
+                print("", file=sys.stderr)
+
+    except Exception:
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Show current branch or switch to existing branch')
+    parser.add_argument('name', nargs='?', default=None,
+                       help='Branch name to switch to (omit to show current branch)')
+    args = parser.parse_args()
+
+    if args.name:
+        do_switch(args.name)
+    else:
+        do_get()
+
+
+if __name__ == "__main__":
+    main()

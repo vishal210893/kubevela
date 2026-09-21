@@ -1,0 +1,129 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Show status of current spec"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-status)"]
+#
+# [tool.claude.output]
+# prompt = "Display spec status with file existence, task completion progress, and branch associations. Use checkmarks and progress indicators."
+# examples = [
+#   "Spec: feature-auth\n═══════════════════\n\nFiles:\n[OK] requirements.md\n[OK] design.md\n[ ] tasks.md\n\nTasks: 3/5 complete (60%)\n\nBranch: feature-auth (associated)"
+# ]
+# ///
+
+"""
+Show status of current spec.
+
+Displays completion status including files, tasks, and branch associations.
+"""
+
+import sys
+import os
+import json
+import re
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import get_current_branch, get_associated_spec, get_all_associations, spec_path
+
+
+def parse_tasks(content):
+    """Parse task checkboxes from content."""
+    completed = len(re.findall(r'- \[x\]', content, re.IGNORECASE))
+    incomplete = len(re.findall(r'- \[ \]', content))
+    total = completed + incomplete
+    return completed, total
+
+
+def main():
+    """Main entry point."""
+    branch = get_current_branch()
+    spec_name = get_associated_spec(branch)
+
+    # If no association, try using branch name as spec name
+    if not spec_name and branch:
+        path = spec_path(branch)
+        if path.exists():
+            spec_name = branch
+
+    if not spec_name:
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': 'No spec associated with current branch', 'branch': branch}))
+        else:
+            print(f"No spec associated with branch '{branch}'")
+            print("Use /spec <name> to associate a spec")
+        sys.exit(1)
+
+    path = spec_path(spec_name)
+
+    if not path.exists():
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': f"Spec '{spec_name}' not found", 'spec_name': spec_name}))
+        else:
+            print(f"Error: Spec '{spec_name}' not found at {path}/")
+        sys.exit(1)
+
+    # Check which files exist
+    files = {
+        'requirements.md': (path / 'requirements.md').exists(),
+        'design.md': (path / 'design.md').exists(),
+        'tasks.md': (path / 'tasks.md').exists()
+    }
+
+    # Parse tasks if tasks.md exists
+    tasks_completed = 0
+    tasks_total = 0
+    if files['tasks.md']:
+        content = (path / 'tasks.md').read_text()
+        tasks_completed, tasks_total = parse_tasks(content)
+
+    # Get all associations
+    associations = get_all_associations()
+
+    data = {
+        'spec_name': spec_name,
+        'branch': branch,
+        'files': files,
+        'tasks_completed': tasks_completed,
+        'tasks_total': tasks_total,
+        'associations': associations
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Spec: {spec_name}")
+        print("═" * (len(spec_name) + 6))
+        print()
+
+        print("Files:")
+        for fname, exists in files.items():
+            icon = "[OK]" if exists else "[ ]"
+            print(f"  {icon} {fname}")
+
+        print()
+        if tasks_total > 0:
+            pct = int(tasks_completed / tasks_total * 100)
+            print(f"Tasks: {tasks_completed}/{tasks_total} complete ({pct}%)")
+        else:
+            print("Tasks: No tasks defined")
+
+        print()
+        print(f"Branch: {branch}")
+        print(f"Association: {spec_name} (via dev.yaml)")
+
+        if len(associations) > 1:
+            print()
+            print("Other associations:")
+            for b, s in associations.items():
+                if b != branch:
+                    print(f"  {b} -> {s}")
+
+
+if __name__ == "__main__":
+    main()

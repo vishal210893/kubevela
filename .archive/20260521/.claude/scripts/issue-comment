@@ -1,0 +1,51 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+#
+# [tool.claude]
+# description = "Comment on GitHub issue"
+# model = "haiku"
+#
+# [[tool.claude.argument]]
+# name = "args"
+# type = "required-passthrough"
+# hint = "<issue-number> <message>"
+# description = "Issue number and comment message"
+#
+# [tool.claude.output]
+# prompt = """Parse the arguments: first token is the issue number, everything after is the message.
+#
+# Use the message EXACTLY as provided - do not modify, expand, or rewrite it.
+#
+# Run: gh issue comment <number> --body "<message>"
+#
+# Only use the Bash tool. Do not output any text before or after the tool call."""
+# ///
+
+"""Post a comment on a GitHub issue."""
+
+import subprocess
+import sys
+
+
+def main():
+    if len(sys.argv) < 3:
+        print('Usage: issue-comment <issue-number> <message>', file=sys.stderr)
+        sys.exit(1)
+
+    issue_number = sys.argv[1]
+    message = ' '.join(sys.argv[2:])
+
+    result = subprocess.run(
+        ['gh', 'issue', 'comment', issue_number, '--body', message],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f'Error commenting on issue: {result.stderr}', file=sys.stderr)
+        sys.exit(1)
+    print(f'Commented on #{issue_number}')
+
+
+if __name__ == '__main__':
+    main()

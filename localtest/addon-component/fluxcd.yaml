@@ -1,0 +1,15 @@
+# Install the "fluxcd" addon declaratively as a component (no Addon CR).
+# skipVersionValidation: true is needed when vela-core runs out-of-cluster
+# (the SystemRequirements check can't read the vela-core Deployment version).
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-fluxcd
+  namespace: vela-system
+spec:
+  components:
+    - name: fluxcd
+      type: addon
+      properties:
+        version: "3.0.2"
+        skipVersionValidation: true

@@ -1,0 +1,119 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""
+code-review-labels - Manage PR review labels (ensure, remove stale, apply).
+
+Mirrors code-risk-labels for the code-review workflow:
+  1. Ensure review:approve and review:request-changes labels exist on the repo
+  2. Remove stale review labels from the PR that don't match the verdict
+  3. Apply the correct review label for the current verdict
+
+Environment variables:
+    PR_NUMBER  - Pull request number (required)
+    VERDICT    - Review verdict: APPROVE or REQUEST_CHANGES (required)
+    REPO       - Repository in owner/name format (optional, uses gh default)
+    GH_TOKEN   - GitHub token for API access (required by gh CLI)
+
+Usage:
+    PR_NUMBER=42 VERDICT=APPROVE uv run --quiet --script code-review-labels
+"""
+
+import os
+import subprocess
+import sys
+
+
+LABEL_COLORS = {
+    "review:approve": "2ea44f",
+    "review:request-changes": "b60205",
+}
+
+VERDICT_TO_LABEL = {
+    "APPROVE": "review:approve",
+    "REQUEST_CHANGES": "review:request-changes",
+}
+
+VALID_VERDICTS = frozenset(VERDICT_TO_LABEL.keys())
+
+
+def run_gh(args, check=True):
+    """Run a gh CLI command and return stdout."""
+    result = subprocess.run(
+        ["gh"] + args,
+        capture_output=True,
+        text=True,
+    )
+    if check and result.returncode != 0:
+        print(f"[WARN] gh {' '.join(args)}: {result.stderr.strip()}", file=sys.stderr)
+    return result.stdout.strip()
+
+
+def ensure_labels_exist():
+    """Create review labels if they don't exist (idempotent via --force)."""
+    for label, color in LABEL_COLORS.items():
+        run_gh(["label", "create", label, "--color", color, "--force"], check=False)
+    print("[OK] Labels verified", file=sys.stderr)
+
+
+def resolve_repo(repo=None):
+    """Resolve repository path, falling back to gh default."""
+    if repo:
+        return repo
+    repo_path = run_gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], check=False)
+    if not repo_path:
+        print("[ERROR] Could not determine repository", file=sys.stderr)
+        sys.exit(1)
+    return repo_path
+
+
+def remove_stale_labels(pr_number, verdict, repo):
+    """Remove review labels from the PR that don't match the current verdict."""
+    raw = run_gh([
+        "api", f"repos/{repo}/issues/{pr_number}/labels",
+        "--jq", ".[].name",
+    ], check=False)
+
+    target_label = VERDICT_TO_LABEL[verdict]
+    for label in (raw.splitlines() if raw else []):
+        if label.startswith("review:") and label != target_label:
+            run_gh([
+                "api", "--method", "DELETE",
+                f"repos/{repo}/issues/{pr_number}/labels/{label}",
+            ], check=False)
+            print(f"Removed stale label: {label}", file=sys.stderr)
+
+
+def apply_label(pr_number, verdict, repo):
+    """Apply the correct review label to the PR."""
+    label = VERDICT_TO_LABEL[verdict]
+    run_gh([
+        "api", f"repos/{repo}/issues/{pr_number}/labels",
+        "--method", "POST",
+        "-f", f"labels[]={label}",
+    ])
+    print(f"[OK] Applied label: {label}", file=sys.stderr)
+
+
+def main():
+    pr_number = os.environ.get("PR_NUMBER", "")
+    verdict = os.environ.get("VERDICT", "")
+    repo = os.environ.get("REPO", "")
+
+    if not pr_number:
+        print("Error: PR_NUMBER environment variable is required", file=sys.stderr)
+        sys.exit(1)
+    if verdict not in VALID_VERDICTS:
+        print(f"Error: VERDICT must be one of {sorted(VALID_VERDICTS)}, got: {verdict!r}", file=sys.stderr)
+        sys.exit(1)
+
+    repo_path = resolve_repo(repo or None)
+    ensure_labels_exist()
+    remove_stale_labels(pr_number, verdict, repo_path)
+    apply_label(pr_number, verdict, repo_path)
+
+
+if __name__ == "__main__":
+    main()

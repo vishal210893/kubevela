@@ -1,0 +1,50 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: my-server
+  namespace: vela-system
+spec:
+  workload:
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+  schematic:
+    cue:
+      template: |
+        output: {
+        	apiVersion: "apps/v1"
+        	kind:       "Deployment"
+        	spec: {
+        		replicas: parameter.replicas
+        		selector: matchLabels: app: context.name
+        		template: {
+        			metadata: labels: app: context.name
+        			spec: containers: [{
+        				name:  context.name
+        				image: parameter.image
+        			}]
+        		}
+        	}
+        }
+        parameter: {
+        	image:    string
+        	replicas: *1 | int
+        }
+---
+apiVersion: core.oam.dev/v1beta1
+kind: TraitDefinition
+metadata:
+  name: my-label
+  namespace: vela-system
+spec:
+  appliesToWorkloads:
+    - deployments.apps
+  schematic:
+    cue:
+      template: |
+        patch: spec: template: metadata: labels: {
+        	for k, v in parameter.labels {
+        		(k): v
+        	}
+        }
+        parameter: labels: [string]: string

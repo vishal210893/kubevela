@@ -1,0 +1,59 @@
+# =============================================================================
+# Auth matrix #4 — ConfigMap (NEGATIVE / unsupported)
+#
+# Demonstrates that ConfigMaps are NOT a valid credential source. The auth
+# dispatcher in pkg/cue/cuex/providers/helm/auth.go calls
+#   k8s.Get(ctx, ns/name, &corev1.Secret{})
+# so even when the ConfigMap exists, the controller sees a NotFound for the
+# Secret type and reports:
+#
+#   auth secret "arc-system/dockerhub-creds-cm" not found:
+#     it MUST exist in the release namespace "arc-system" or
+#     the Application namespace "arc-system"
+#
+# This is intentional. Secrets are the typed credential primitive in
+# Kubernetes; ConfigMaps store plaintext config without the same RBAC and
+# encryption-at-rest treatment.
+# =============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: arc-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dockerhub-creds-cm
+  namespace: arc-system
+data:
+  # Even though these are real, valid values, the controller never reads
+  # them. It only looks at Secrets with this name.
+  username: vishal210893
+  password: dckr_pat_REPLACE_OR_LEAVE_AS_IS
+---
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: oci-auth-configmap-fail
+  namespace: arc-system
+spec:
+  components:
+    - name: arc-crds
+      type: helmchart
+      properties:
+        chart:
+          source: oci://registry-1.docker.io/vishal210893/arc-crds
+          version: "0.1.0"
+          auth:
+            secretRef:
+              # secretRef takes a Secret NAME. Even if a ConfigMap exists
+              # under the same name, the resolver only Gets() a Secret.
+              name: dockerhub-creds-cm
+        release:
+          name: arc-crds-cm-fail
+          namespace: arc-system
+        options:
+          createNamespace: true
+          includeCRDs: true
+          skipTests: true

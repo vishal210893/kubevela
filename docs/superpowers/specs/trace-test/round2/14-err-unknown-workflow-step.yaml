@@ -1,0 +1,23 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: err-unknown-step
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-err-unknown-step-fixed
+spec:
+  components:
+    - name: web
+      type: webservice
+      properties:
+        image: nginx:1.21
+  workflow:
+    steps:
+      - name: ghost-step
+        type: this-step-type-does-not-exist
+        properties:
+          something: nothing
+      - name: apply-web
+        type: apply-component
+        properties:
+          component: web

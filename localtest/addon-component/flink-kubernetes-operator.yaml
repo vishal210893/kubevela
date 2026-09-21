@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-flink-kubernetes-operator
+  namespace: vela-system
+spec:
+  components:
+    - name: flink-kubernetes-operator
+      type: addon
+      properties:
+        skipVersionValidation: true

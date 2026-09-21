@@ -1,0 +1,24 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: audit-eval-error
+  namespace: vela-system
+spec:
+  workload:
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+  schematic:
+    cue:
+      template: |
+        output: {
+          apiVersion: "v1"
+          kind:       "ConfigMap"
+          metadata: name: parameter.name
+          data: joined: parameter.a + parameter.b
+        }
+        parameter: {
+          name: string
+          a:    _
+          b:    _
+        }

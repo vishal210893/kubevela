@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-ocm-gateway-manager-addon
+  namespace: vela-system
+spec:
+  components:
+    - name: ocm-gateway-manager-addon
+      type: addon
+      properties:
+        skipVersionValidation: true

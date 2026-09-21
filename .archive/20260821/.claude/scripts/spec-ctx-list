@@ -1,0 +1,138 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "List all available contexts"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-ctx-list)"]
+#
+# [tool.claude.output]
+# prompt = "Display available contexts in a formatted list showing type, name, file count, and whether active on current branch."
+# examples = [
+#   "Available Contexts\n==================\n\n  steering    (3 files) [active]\n  auth        (2 files)\n  payments    (1 file)\n\n3 available | 1 active on branch 'feature-auth'"
+# ]
+# ///
+
+"""List all available contexts (context + steering) in the doc root."""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    doc_root, get_current_branch, in_git_repo, get_contexts
+)
+
+
+def count_md_files(path):
+    """Count .md files in a path."""
+    if path.is_file():
+        return 1
+    if path.is_dir():
+        return len(list(path.glob('*.md')))
+    return 0
+
+
+def scan_contexts(root):
+    """Scan doc root for available context and steering contexts."""
+    items = []
+    seen_names = set()
+
+    # Scan steering context
+    steering_dir = root / 'steering'
+    if steering_dir.is_dir():
+        items.append({
+            'type': 'steering',
+            'name': 'steering',
+            'path': str(steering_dir),
+            'file_count': count_md_files(steering_dir)
+        })
+    elif (root / 'steering.md').is_file():
+        items.append({
+            'type': 'steering',
+            'name': 'steering',
+            'path': str(root / 'steering.md'),
+            'file_count': 1
+        })
+
+    # Scan ctx/ directory (canonical, used by spec-ctx-create)
+    ctx_dir = root / 'ctx'
+    if ctx_dir.is_dir():
+        for entry in sorted(ctx_dir.iterdir()):
+            if entry.is_dir():
+                items.append({
+                    'type': 'context',
+                    'name': entry.name,
+                    'path': str(entry),
+                    'file_count': count_md_files(entry)
+                })
+                seen_names.add(entry.name)
+            elif entry.suffix == '.md':
+                items.append({
+                    'type': 'context',
+                    'name': entry.stem,
+                    'path': str(entry),
+                    'file_count': 1
+                })
+                seen_names.add(entry.stem)
+
+    return items
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    root = doc_root()
+    available = scan_contexts(root)
+    active_contexts = get_contexts(branch)
+
+    for item in available:
+        item['active'] = item['name'] in active_contexts
+
+    active_count = sum(1 for i in available if i['active'])
+
+    data = {
+        'branch': branch,
+        'doc_root': str(root),
+        'available': available,
+        'total': len(available),
+        'active_count': active_count,
+        'active_contexts': active_contexts
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if not available:
+            print(f"No contexts found in doc root: {root}")
+            print(f"Expected: {root}/steering/ or {root}/ctx/<name>/")
+            return
+
+        print(f"Available Contexts (doc root: {root}/)")
+        print("=" * (32 + len(str(root))))
+        print()
+        print(f"  {'Type':<12} {'Name':<20} {'Files':<7} {'Active'}")
+        print(f"  {'-'*11}  {'-'*19}  {'-'*5}  {'-'*6}")
+        for item in available:
+            active = "[*]" if item['active'] else ""
+            print(f"  {item['type']:<12} {item['name']:<20} {item['file_count']:<7} {active}")
+        print()
+        print(f"{len(available)} available | {active_count} active on branch '{branch}'")
+        if active_count < len(available):
+            print("Use /spec ::+<name> to add context to current branch")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,53 @@
+# Negative test for the "deploy-components" workflow step's component-name
+# validation (vela-templates/definitions/internal/workflowstep/deploy-components.cue).
+#
+# The workflow step below deliberately references "web-on-lcal" (typo) instead of
+# the real component "web-on-local", to confirm the step fails fast with a clear
+# message instead of a raw/opaque CUE field-lookup error.
+#
+# Prerequisites:
+#   1. bash localtest/multicluster/setup-k3d-multicluster.sh
+#   2. export KUBECONFIG=~/.kube/master.yaml
+#   3. make def-install
+#
+# Apply:
+#   kubectl apply -f localtest/multicluster/deploy-components-missing-app.yaml
+#
+# Expected result:
+#   vela status deploy-components-missing-test
+#   -> workflow step "deploy-components" fails with a message like:
+#      "component(s) not found in application: web-on-lcal"
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: deploy-components-missing-test
+  namespace: default
+spec:
+  components:
+    - name: web-on-local
+      type: webservice
+      properties:
+        image: nginx:stable
+    - name: web-on-slave
+      type: webservice
+      properties:
+        image: nginx:stable
+  policies:
+    - name: topology-local
+      type: topology
+      properties:
+        clusters: ["local"]
+    - name: topology-slave
+      type: topology
+      properties:
+        clusters: ["k3d-slave"]
+  workflow:
+    steps:
+      - name: deploy-components
+        type: deploy-components
+        properties:
+          components:
+            - name: wrong-comp-name # intentional typo, should trigger validation failure
+              policies: ["topology-local"]
+            - name: web-on-slave
+              policies: ["topology-slave"]

@@ -1,0 +1,14 @@
+# Install the "kruise-rollout" addon declaratively as a component (no Addon CR).
+# skipVersionValidation: true is needed when vela-core runs out-of-cluster
+# (the SystemRequirements check can't read the vela-core Deployment version).
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-kruise-rollout
+  namespace: vela-system
+spec:
+  components:
+    - name: kruise-rollout
+      type: addon
+      properties:
+        skipVersionValidation: true

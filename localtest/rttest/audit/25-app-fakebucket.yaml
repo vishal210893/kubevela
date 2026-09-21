@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: audit-app-fakebucket
+  namespace: default
+spec:
+  components:
+    - name: bucket
+      type: audit-fakebucket
+      properties:
+        name:       audit-bucket-1
+        bucketName: my-prod-data
+        region:     us-east-1

@@ -1,0 +1,27 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: audit-fakebucket
+  namespace: vela-system
+spec:
+  workload:
+    definition:
+      apiVersion: audit.example.com/v1
+      kind: FakeBucket
+  schematic:
+    cue:
+      template: |
+        output: {
+          apiVersion: "audit.example.com/v1"
+          kind:       "FakeBucket"
+          metadata: name: parameter.name
+          spec: {
+            bucketName: parameter.bucketName
+            region:     parameter.region
+          }
+        }
+        parameter: {
+          name:       string
+          bucketName: string
+          region:     string
+        }

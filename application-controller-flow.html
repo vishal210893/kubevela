@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KubeVela Application Controller, explained</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
+        integrity="sha384-WmdflGW9aGfoBdHc4rRyWzYuAjEmDwMdGdiPNacbwfGKxBW/SO6guzuQ76qjnSlr"
+        crossorigin="anonymous"></script>
+<style>
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --surface-2: #f1f3f7;
+    --border: #e3e7ee; --text: #1c2230; --text-soft: #5f6982;
+    --accent: #3b5bfd; --accent-soft: #e8edff;
+    --green: #0f9d58; --green-soft: #e6f6ee;
+    --amber: #b7791f; --amber-soft: #fdf3e0;
+    --red: #d7263d; --red-soft: #fdeaed;
+    --code-bg: #eef1f7;
+    --shadow: 0 1px 3px rgba(20,30,60,.06), 0 8px 24px rgba(20,30,60,.05);
+    --radius: 14px;
+    --mono: "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  html[data-theme="dark"] {
+    --bg: #0e1117; --surface: #161b24; --surface-2: #1d2430;
+    --border: #2a3344; --text: #e6e9f0; --text-soft: #97a2b8;
+    --accent: #7a94ff; --accent-soft: #1d2748;
+    --green: #4ade80; --green-soft: #11301f;
+    --amber: #fbbf24; --amber-soft: #33270e;
+    --red: #f87171; --red-soft: #391418;
+    --code-bg: #1d2430;
+    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    font-size: 16px; line-height: 1.65;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono); font-size: .84em;
+    background: var(--code-bg); border-radius: 5px; padding: 1px 5px;
+  }
+  .ref {
+    font-family: var(--mono); font-size: 11.5px; color: var(--text-soft);
+    background: var(--code-bg); border-radius: 5px; padding: 1px 7px;
+    white-space: nowrap;
+  }
+  .refs { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .layout { display: flex; max-width: 1460px; margin: 0 auto; }
+  nav.toc {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 256px; flex-shrink: 0; height: 100vh; overflow-y: auto;
+    padding: 28px 14px 60px 22px; border-right: 1px solid var(--border);
+  }
+  nav.toc .brand { font-weight: 800; font-size: 15px; }
+  nav.toc .brand span { color: var(--accent); }
+  nav.toc .sub { font-size: 12px; color: var(--text-soft); margin-bottom: 16px; }
+  nav.toc a {
+    display: block; padding: 5px 10px; margin: 1px 0; border-radius: 8px;
+    color: var(--text-soft); font-size: 13.5px;
+  }
+  nav.toc a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
+  main { flex: 1; min-width: 0; padding: 30px 46px 120px; }
+  @media (max-width: 1100px) { nav.toc { display: none; } main { padding: 18px; } }
+
+  header.hero {
+    background: linear-gradient(135deg, var(--accent-soft), transparent 60%);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 32px 36px; margin-bottom: 22px; box-shadow: var(--shadow); position: relative;
+  }
+  header.hero h1 { margin: 0 0 10px; font-size: 30px; letter-spacing: -.6px; }
+  header.hero p { margin: 0; color: var(--text-soft); max-width: 760px; font-size: 16.5px; }
+  #themeToggle {
+    position: absolute; top: 18px; right: 18px; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 99px; padding: 6px 14px; color: var(--text); font-size: 13px;
+  }
+
+  .glance { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 0 0 40px; }
+  @media (max-width: 1100px) { .glance { grid-template-columns: 1fr; } }
+  .glance .g {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .glance .g b { display: block; font-size: 14.5px; margin-bottom: 3px; }
+  .glance .g b i { font-style: normal; color: var(--accent); font-family: var(--mono); margin-right: 8px; }
+  .glance .g span { font-size: 13px; color: var(--text-soft); }
+
+  section { margin-bottom: 56px; scroll-margin-top: 20px; }
+  h2 {
+    font-size: 23px; letter-spacing: -.4px; margin: 0 0 4px;
+    padding-bottom: 10px; border-bottom: 2px solid var(--border);
+  }
+  h2 .num { color: var(--accent); font-family: var(--mono); font-size: 16px; margin-right: 8px; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  .lede { color: var(--text-soft); margin: 10px 0 18px; max-width: 800px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px 24px; box-shadow: var(--shadow); margin: 14px 0;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 1100px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  .file-card h4 { margin: 0 0 6px; font-family: var(--mono); font-size: 13px; color: var(--accent); word-break: break-all; }
+  .file-card p { margin: 0; font-size: 13.5px; color: var(--text-soft); }
+
+  .step { display: flex; gap: 16px; padding: 16px 0; border-bottom: 1px dashed var(--border); }
+  .step:last-child { border-bottom: none; }
+  .step .n {
+    flex-shrink: 0; width: 32px; height: 32px; border-radius: 10px;
+    background: var(--accent-soft); color: var(--accent);
+    font-weight: 800; font-family: var(--mono); font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step h4 { margin: 3px 0 4px; font-size: 15.5px; }
+  .step p { margin: 0; font-size: 14px; color: var(--text-soft); max-width: 860px; }
+
+  table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+    background: var(--surface); border-radius: var(--radius); overflow: hidden;
+  }
+  th {
+    text-align: left; background: var(--surface-2); padding: 9px 12px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--text-soft); border-bottom: 1px solid var(--border);
+  }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tbl-wrap { overflow-x: auto; border-radius: var(--radius); margin: 10px 0; border: 1px solid var(--border); }
+
+  details.fold {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin: 14px 0; box-shadow: var(--shadow);
+  }
+  details.fold > summary {
+    cursor: pointer; padding: 14px 20px; font-weight: 600; font-size: 14.5px;
+    list-style: none; display: flex; align-items: center; gap: 10px;
+  }
+  details.fold > summary::before { content: "▸"; color: var(--accent); transition: transform .15s; }
+  details.fold[open] > summary::before { transform: rotate(90deg); }
+  details.fold > summary span { color: var(--text-soft); font-weight: 400; font-size: 12.5px; }
+  details.fold > .inner { padding: 0 20px 18px; }
+
+  .mermaid-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+    margin: 16px 0; overflow-x: auto;
+  }
+  .mermaid-card .cap { font-size: 12.5px; color: var(--text-soft); margin-top: 8px; text-align: center; }
+  .mermaid { text-align: center; }
+  .mermaid svg { max-width: 100%; height: auto; }
+
+  .callout {
+    border-left: 4px solid var(--accent); background: var(--accent-soft);
+    border-radius: 0 10px 10px 0; padding: 12px 18px; margin: 14px 0; font-size: 14px; max-width: 860px;
+  }
+  .callout.warn { border-color: var(--amber); background: var(--amber-soft); }
+
+  ul.tight, ol.tight { margin: 8px 0; padding-left: 22px; max-width: 860px; }
+  ul.tight li, ol.tight li { margin: 7px 0; font-size: 14px; }
+
+  footer { color: var(--text-soft); font-size: 12.5px; border-top: 1px solid var(--border); padding-top: 18px; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <div class="brand">KubeVela <span>//</span> App Controller</div>
+  <div class="sub">Reconcile flow, end to end</div>
+  <a href="#glance">The flow in 60 seconds</a>
+  <a href="#big-picture">1. Big picture</a>
+  <a href="#entry">2. How a reconcile starts</a>
+  <a href="#pipeline">3. The pipeline</a>
+  <a href="#component">4. Applying one component</a>
+  <a href="#files">5. Code flow across files</a>
+  <a href="#state">6. State and phases</a>
+  <a href="#trackers">7. Trackers and cleanup</a>
+  <a href="#multicluster">8. Clusters and identity</a>
+  <a href="#errors">9. Errors and requeues</a>
+  <a href="#extend">10. Where to extend</a>
+  <a href="#tables">11. Reference tables</a>
+  <a href="#debug">12. Debugging guide</a>
+</nav>
+
+<main>
+
+<header class="hero">
+  <button id="themeToggle">◐ theme</button>
+  <h1>The Application controller, explained</h1>
+  <p>What happens between <code>kubectl apply -f app.yaml</code> and a running, self-healing deployment.
+     Each claim links to a <span class="ref">file:line</span> in this repo. Skim the diagrams first,
+     open the folded tables when you need detail.</p>
+</header>
+
+<!-- ================= 60 SECONDS ================= -->
+<div class="glance" id="glance">
+  <div class="g"><b><i>1</i>Parse</b><span>The spec and its X-Definitions become an in-memory <code>Appfile</code>.</span></div>
+  <div class="g"><b><i>2</i>Snapshot</b><span>The Appfile is hashed and stored as an immutable <code>ApplicationRevision</code>.</span></div>
+  <div class="g"><b><i>3</i>Plan</b><span>Workflow steps become runners. The controller hands the engine a set of callbacks.</span></div>
+  <div class="g"><b><i>4</i>Execute</b><span>The engine runs the steps. Each apply-component step calls back in, renders CUE, and applies the result.</span></div>
+  <div class="g"><b><i>5</i>Track</b><span>Every object is recorded in a <code>ResourceTracker</code> before it is applied. The tracker is the inventory.</span></div>
+  <div class="g"><b><i>6</i>Settle</b><span>Health checks, drift correction, garbage collection, status write. Repeat every 5 minutes.</span></div>
+</div>
+
+<!-- ================= 1 BIG PICTURE ================= -->
+<section id="big-picture">
+<h2><span class="num">01</span>Big picture</h2>
+<p class="lede">The controller is a render-and-apply pipeline wrapped in a workflow engine. One detail makes
+it unusual: it does not own child resources through <code>ownerReferences</code>. It records them in
+cluster-scoped <code>ResourceTracker</code> objects instead, and everything (deletion, drift repair, GC)
+works off that record.</p>
+
+<div class="mermaid-card">
+<pre class="mermaid">
+flowchart LR
+  REQ(["reconcile request"]) --> R["Reconcile"]
+  R --> P["parse to Appfile"]
+  R --> REV["snapshot revision"]
+  R --> G["build workflow runners"]
+  G --> WF["workflow engine"]
+  WF -- "callback per component" --> AC["render CUE and apply"]
+  AC --> RK["ResourceKeeper"]
+  RK --> RT[("ResourceTrackers")]
+  RK --> K8S[("target clusters")]
+  R --> S["health, drift fix, GC, status"]
+</pre>
+<div class="cap">One pass: parse, snapshot, plan, then the engine drives rendering and applying through the keeper.</div>
+</div>
+
+<div class="grid3">
+  <div class="card file-card"><h4>Reconciler</h4><p>Runs the pass, decides the phase, writes status. <span class="ref">application_controller.go</span></p></div>
+  <div class="card file-card"><h4>Appfile + Parser</h4><p>Turns spec and definitions into manifests via CUE. <span class="ref">pkg/appfile</span></p></div>
+  <div class="card file-card"><h4>ResourceKeeper</h4><p>The only write path: record, apply, keep state, collect garbage. <span class="ref">pkg/resourcekeeper</span></p></div>
+</div>
+</section>
+
+<!-- ================= 2 ENTRY ================= -->
+<section id="entry">
+<h2><span class="num">02</span>How a reconcile starts</h2>
+
+<h3>Before the controller: two webhooks</h3>
+<p class="lede" style="margin-bottom:6px">Every create or update passes admission first. The mutating webhook stamps the
+requesting user into annotations, generates workflow step names, and assigns a shard. The validating webhook
+rejects bad components, bad workflows, and definition access the user lacks. The reconciler can assume a
+defaulted, valid object.</p>
+<div class="refs"><span class="ref">webhook/.../mutating_handler.go:102</span><span class="ref">validating_handler.go:66</span><span class="ref">validation.go:92</span></div>
+
+<h3>Three things wake the controller</h3>
+<ul class="tight">
+  <li><b>Application events.</b> A predicate drops updates that only touched workflow status, so the engine's own writes don't cause storms. Generation changes always pass. So do pure resyncs, and that resync is what drives self-healing. <span class="ref">application_controller.go:673</span></li>
+  <li><b>ResourceTracker deletions.</b> Deleting a tracker re-enqueues its app (found by labels). Other tracker changes are ignored by default. <span class="ref">application_controller.go:816</span></li>
+  <li><b>PolicyDefinition changes.</b> These only refresh the in-memory policy index and cache. No reconcile is queued. <span class="ref">application_controller.go:792</span></li>
+</ul>
+
+<h3>Entry guards, in order</h3>
+<ul class="tight">
+  <li>Fetch the app. If it's gone, there is nothing to do. <span class="ref">controller:116</span></li>
+  <li>Skip apps that are paused, or addressed to a different controller version. <span class="ref">controller:126, :130</span></li>
+  <li>Load the app's resource trackers and resource policies up front, so every later decision works from one consistent view. <span class="ref">apply.go:78</span> <span class="ref">resourcekeeper.go:147</span></li>
+  <li>Sort out the finalizer. A brand-new app just gets one and the pass ends. A deleting app runs garbage collection until every tracker and revision is gone, checking back every 3 seconds while resources drain. <span class="ref">controller:486</span></li>
+</ul>
+
+<div class="callout">Trackers are cluster-scoped, so a namespaced app cannot own them. That is the whole reason
+the finalizer exists, and why a stuck child resource blocks app deletion.</div>
+</section>
+
+<!-- ================= 3 PIPELINE ================= -->
+<section id="pipeline">
+<h2><span class="num">03</span>The pipeline</h2>
+<p class="lede">The happy path of one pass, in the order things actually happen. As each stage completes,
+a status condition lands on the app: Parsed → Revision → Policy → Render → Workflow → Ready. That ladder is
+how you tell, from the outside, how far a deployment got. <span class="ref">application_controller.go:109</span></p>
+
+<div class="mermaid-card">
+<pre class="mermaid">
+flowchart TD
+  A(["event"]) --> B{"guards and finalizer"}
+  B --> C["policy transforms"]
+  C --> D["parse the spec"]
+  D --> E["snapshot revision"]
+  E --> F["apply policy resources"]
+  F --> G["restart check, build runners"]
+  G --> H["run workflow"]
+  H --> I{"workflow state"}
+  I -- "executing or suspended" --> J["partial GC, requeue at backoff"]
+  I -- "failed or terminated" --> K["finish workflow, GC, status"]
+  I -- "succeeded" --> L["health check"]
+  L --> M["post-dispatch traits"]
+  M --> N["drift fix"]
+  N --> O["garbage collect"]
+  O --> P["status write, resync in 5 min"]
+</pre>
+</div>
+
+<div class="card">
+  <div class="step"><div class="n">1</div><div>
+    <h4>Policy transforms</h4>
+    <p>Platform teams can install policies that rewrite every application before it deploys: inject labels,
+       force settings, adjust the spec. Those rewrites happen first, in memory, so the rest of the pass only
+       ever sees the transformed app. Rendering policies is expensive, so results are cached for a minute and
+       reused while nothing has changed.</p>
+    <div class="refs"><span class="ref">application_policies.go:67</span><span class="ref">application_policy_cache.go:90</span><span class="ref">policy_scope_index.go:61</span></div>
+  </div></div>
+
+  <div class="step"><div class="n">2</div><div>
+    <h4>Parse the spec</h4>
+    <p>An Application spec is mostly names and properties. The actual logic lives in definitions: reusable
+       templates that say how a "webservice" or a "gateway" becomes real Kubernetes objects. This step looks
+       up every definition the app uses and bundles everything into one in-memory structure the rest of the
+       pass works from. Apps pinned with a <code>publishVersion</code> annotation skip the live spec and use
+       their stored snapshot instead, so nothing moves until the pin does.</p>
+    <div class="refs"><span class="ref">parser.go:87</span><span class="ref">template.go:74</span><span class="ref">parser.go:96 (publishVersion)</span></div>
+  </div></div>
+
+  <div class="step"><div class="n">3</div><div>
+    <h4>Snapshot a revision</h4>
+    <p>The spec, together with every definition it uses, is frozen into a numbered snapshot. That snapshot is
+       what makes rollback, replay, and pinning possible: even if someone edits a definition tomorrow, this
+       deployment keeps rendering from the copy it shipped with. Snapshots are compared by hash, so applying
+       the same spec twice does not create a new version.</p>
+    <div class="refs"><span class="ref">revision.go:86</span><span class="ref">revision.go:497</span><span class="ref">revision.go:556</span></div>
+  </div></div>
+
+  <div class="step"><div class="n">4</div><div>
+    <h4>Apply policy resources</h4>
+    <p>Some policies are pure configuration (where to deploy, what to skip during cleanup) and were already
+       absorbed in earlier steps. Others produce actual Kubernetes objects, and those objects get applied to
+       the cluster here, before any component does.</p>
+    <div class="refs"><span class="ref">apply.go:469</span><span class="ref">appfile.go:198</span></div>
+  </div></div>
+
+  <div class="step"><div class="n">5</div><div>
+    <h4>Decide whether to deploy again, then plan the workflow</h4>
+    <p>A finished workflow doesn't rerun on every pass. It runs again only when something meaningful moved:
+       the app changed (new revision), someone asked for a restart, or, for helm charts, the contents of a
+       referenced ConfigMap or Secret changed, even though the spec itself didn't. Then the deployment plan
+       is built: each workflow step becomes a runnable unit, and the controller hands the engine the hooks it
+       will need to render, apply, and health-check components.</p>
+    <div class="refs"><span class="ref">workflow.go:104</span><span class="ref">valuesfrom_fingerprint.go:100</span><span class="ref">generator.go:70</span></div>
+  </div></div>
+
+  <div class="step"><div class="n">6</div><div>
+    <h4>Run the workflow</h4>
+    <p>The workflow engine takes over and walks through the steps: deploy this component, wait for that one,
+       pause for approval. A deployment usually spans many reconcile passes; each pass advances the workflow a
+       little and comes back at the engine's backoff. Still going means come back later. Failed means stop and
+       say so. Succeeded means move on to settling. Section 4 shows what one step actually does.</p>
+    <div class="refs"><span class="ref">controller:231 (execute)</span><span class="ref">controller:280 (state switch)</span></div>
+  </div></div>
+
+  <div class="step"><div class="n">7</div><div>
+    <h4>Settle: health, late traits, drift, cleanup</h4>
+    <p>Once the workflow succeeds, the controller takes stock. It asks each component whether it is actually
+       healthy, and that answer decides the app's phase: running or unhealthy. Traits that need a live, healthy
+       workload to exist (a monitoring sidecar that reads real replica counts, say) are applied only now.
+       Anything that drifted from what was deployed gets put back. And anything left over from older versions
+       gets deleted.</p>
+    <div class="refs"><span class="ref">controller:910 (health)</span><span class="ref">apply.go:524 (post-dispatch)</span><span class="ref">statekeep.go:41</span><span class="ref">gc.go:112</span></div>
+  </div></div>
+
+  <div class="step"><div class="n">8</div><div>
+    <h4>Write status, schedule the next pass</h4>
+    <p>The pass ends by recording what happened on the app's status, and only if something actually changed.
+       Then the controller books its own next visit: 5 minutes by default, or whatever interval the app asks
+       for (10 seconds at the fastest). That periodic revisit is the heartbeat behind drift repair and
+       self-healing.</p>
+    <div class="refs"><span class="ref">controller:556</span><span class="ref">vars.go:30 (5 min)</span><span class="ref">application_metrics.go:39</span></div>
+  </div></div>
+</div>
+</section>
+
+<!-- ================= 4 COMPONENT ================= -->
+<section id="component">
+<h2><span class="num">04</span>Applying one component</h2>
+<p class="lede">This is the callback the workflow engine fires for every component. It is the most
+important call path in the codebase, and the one you'll step through most often.</p>
+
+<div class="mermaid-card">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant WF as workflow engine
+  participant ACF as apply callback
+  participant AF as CUE renderer
+  participant DSP as stage dispatcher
+  participant RK as resource keeper
+  participant API as target cluster
+  WF->>ACF: apply this component on this cluster
+  ACF->>AF: render templates with the component's properties
+  AF-->>ACF: workload and trait manifests
+  Note over ACF: PostDispatch traits wait until the workload is healthy
+  ACF->>DSP: dispatch in stages, Pre then Default then Post
+  DSP->>DSP: health check first
+  alt unhealthy, properties changed, or auto-update
+    DSP->>RK: dispatch manifests
+    RK->>RK: record in ResourceTracker
+    RK->>API: three-way-merge apply, 10 in parallel
+  end
+  DSP-->>ACF: healthy or not
+  ACF-->>WF: workload, traits, healthy
+  Note over WF: the step waits and retries until healthy
+</pre>
+<div class="cap">Key refs: callback <span class="ref">generator.go:306</span> ·
+render <span class="ref">appfile.go:332</span> · stages <span class="ref">dispatcher.go:117</span> ·
+record and apply <span class="ref">dispatch.go:61</span></div>
+</div>
+
+<h3>Three things worth knowing about this path</h3>
+<ul class="tight">
+  <li><b>Record first, apply second.</b> The tracker write happens before the cluster write. If the controller dies between the two, GC can still find the resource. <span class="ref">dispatch.go:84</span></li>
+  <li><b>Healthy components can still re-apply.</b> The dispatcher re-applies when component properties differ from the revision, or when the <code>autoUpdate</code> annotation is set. <span class="ref">dispatcher.go:167</span></li>
+  <li><b>Writes are three-way merge, not server-side apply.</b> The applicator diffs desired, live, and a last-applied annotation, like <code>kubectl apply</code>. Ownership, shared, read-only, and take-over policies are enforced here as apply options. <span class="ref">utils/apply/apply.go:185</span></li>
+</ul>
+
+<h3>How health is decided</h3>
+<p class="lede" style="margin-bottom:8px">Health is not guessed from pod counts. Every definition can ship a
+<code>healthPolicy</code>: a CUE expression evaluated against the live object that the controller reads back
+from the cluster. The rules:</p>
+<ul class="tight">
+  <li><b>No health policy means healthy.</b> A definition without <code>healthPolicy</code> reports healthy as soon as its resource applies. If a component looks "instantly healthy", this is usually why. <span class="ref">health/health.go:52</span></li>
+  <li><b>A component is healthy when its workload and all of its traits are healthy.</b> One sick trait marks the whole component, and one sick component marks the whole app unhealthy. <span class="ref">apply.go:325</span> <span class="ref">controller:644</span></li>
+  <li><b>Held-back traits don't count against health.</b> A PostDispatch trait that hasn't applied yet shows as "pending" in status and is excluded from the verdict, otherwise the app could never become healthy enough to apply it. <span class="ref">apply.go:393</span></li>
+  <li><b>Terraform components are special.</b> Their health comes from the Configuration object's state field, not from CUE. <span class="ref">apply.go:281</span></li>
+  <li>The same CUE machinery also fills <code>status.services[].message</code> from the definition's <code>customStatus</code> expression, so the message you see in <code>vela status</code> is authored by the definition, not the controller. <span class="ref">appfile.go:115</span></li>
+</ul>
+</section>
+
+<!-- ================= 5 FILES ================= -->
+<section id="files">
+<h2><span class="num">05</span>Code flow across files</h2>
+<p class="lede">The same pipeline, viewed as files. Follow the numbers: this is the order in which control
+moves through the codebase during one deployment, and what each file contributes.</p>
+
+<div class="mermaid-card">
+<pre class="mermaid">
+flowchart TD
+  A["1 application_controller.go - owns the pass"] --> B["2 application_policies.go - rewrite the spec"]
+  B --> C["3 parser.go and template.go - load definitions"]
+  C --> D["4 revision.go - freeze the snapshot"]
+  D --> E["5 generator.go - build plan and callbacks"]
+  E --> F["6 workflow engine - runs the steps"]
+  F --> G["7 appfile.go and CUE engines - render manifests"]
+  G --> H["8 dispatcher.go - split into stage waves"]
+  H --> I["9 resourcekeeper dispatch.go - record then apply"]
+  I --> J["10 utils apply - three-way merge to cluster"]
+  F --> K["11 apply.go AppHandler - collect health"]
+  A --> L["12 statekeep.go and gc.go - drift fix and cleanup"]
+</pre>
+<div class="cap">Steps 6 to 11 repeat once per component, every time the workflow advances.</div>
+</div>
+
+<h3>How the files relate to each other</h3>
+<p class="lede">The overall picture, grouped by package. Solid arrows are direct calls. The dotted arrow is
+the one inversion in the design: the controller hands the workflow engine a set of callbacks, and the engine
+calls back in for every component. Reading the boundaries tells you most of the architecture: the appfile
+package only transforms data and never writes, the resourcekeeper is the only path to the API server, and
+the controller package is the only place decisions get made.</p>
+
+<div class="mermaid-card">
+<pre class="mermaid">
+flowchart LR
+  subgraph ADM["admission, before etcd"]
+    WH["webhooks: mutate, validate"]
+  end
+  subgraph CTRL["controller package"]
+    AC["application_controller.go"]
+    POL["application_policies.go"]
+    RV["revision.go"]
+    GE["generator.go"]
+    DI["dispatcher.go"]
+    AP["apply.go AppHandler"]
+  end
+  subgraph AFP["pkg/appfile, pure transformation"]
+    PA["parser.go"]
+    TE["template.go"]
+    AFF["appfile.go"]
+  end
+  subgraph RKP["pkg/resourcekeeper, the only writer"]
+    DP["dispatch.go"]
+    SK["statekeep.go"]
+    GC["gc.go"]
+  end
+  WFE["workflow engine, external"]
+  CUE["pkg/cue, template engines"]
+  APL["pkg/utils/apply, three-way merge"]
+  RTR["pkg/resourcetracker, inventory"]
+  WH -. "object arrives defaulted" .-> AC
+  AC -- "rewrite spec" --> POL
+  AC -- "parse" --> PA
+  AC -- "snapshot" --> RV
+  AC -- "plan" --> GE
+  AC -- "drift fix" --> SK
+  AC -- "cleanup" --> GC
+  GE -- "run steps" --> WFE
+  WFE -. "apply callback per component" .-> GE
+  GE -- "render" --> AFF
+  GE -- "stage waves" --> DI
+  PA -- "load definitions" --> TE
+  AFF -- "evaluate" --> CUE
+  DI -- "dispatch" --> AP
+  AP -- "record and apply" --> DP
+  DP -- "records into" --> RTR
+  DP -- "writes via" --> APL
+  SK -- "re-applies from" --> RTR
+  GC -- "sweeps" --> RTR
+</pre>
+<div class="cap">Boundaries matter more than boxes: data flows right through appfile, writes funnel through resourcekeeper, and trackers connect dispatch, drift repair, and cleanup.</div>
+</div>
+
+<details class="fold" open>
+<summary>Core files <span>controller package, 7 files</span></summary>
+<div class="inner"><div class="tbl-wrap"><table>
+<tr><th>File</th><th>Job</th></tr>
+<tr><td><span class="ref">application_controller.go</span></td><td>The conductor. Runs the pass, owns phases, conditions, status writes, and requeue policy.</td></tr>
+<tr><td><span class="ref">apply.go</span></td><td><code>AppHandler</code>: per-reconcile state. Thin dispatch/delete wrappers, health collection, PostDispatch trait application.</td></tr>
+<tr><td><span class="ref">generator.go</span></td><td>Bridge to the workflow engine. Builds the callbacks and renders component manifests.</td></tr>
+<tr><td><span class="ref">dispatcher.go</span></td><td>Splits a component's manifests into Pre / Default / Post waves, gated on health.</td></tr>
+<tr><td><span class="ref">revision.go</span></td><td>Hashes and persists <code>ApplicationRevision</code> snapshots, deduplicated.</td></tr>
+<tr><td><span class="ref">assemble/assemble.go</span></td><td>Last-mile labels: revision hash, component revision, manage-workload markers.</td></tr>
+<tr><td><span class="ref">workflow.go</span></td><td>Workflow restart: annotation handling and the revision-vs-status comparison.</td></tr>
+</table></div></div>
+</details>
+
+<details class="fold">
+<summary>Support files <span>same package: policies, cache, fingerprint, metrics</span></summary>
+<div class="inner"><div class="tbl-wrap"><table>
+<tr><th>File</th><th>Job</th></tr>
+<tr><td><span class="ref">application_policies.go</span></td><td>Renders application-scoped policies as CUE and merges their output into the in-memory app. Two paths: fresh lookups for new revisions, pinned definitions for replays.</td></tr>
+<tr><td><span class="ref">application_policy_cache.go</span></td><td>One-minute cache of rendered policy results, keyed on spec and revision hashes. Invalidated by the PolicyDefinition watch.</td></tr>
+<tr><td><span class="ref">policy_scope_index.go</span></td><td>In-memory index of PolicyDefinition metadata (scope, global, priority), built at startup, synced by watches.</td></tr>
+<tr><td><span class="ref">valuesfrom_fingerprint.go</span></td><td>SHA-256 over helm valuesFrom ConfigMaps and Secrets, so editing a referenced ConfigMap redeploys. Suppressed under <code>publishVersion</code>.</td></tr>
+<tr><td><span class="ref">application_metrics.go</span></td><td>Health and phase gauges plus a structured status log after each status write.</td></tr>
+<tr><td><span class="ref">policy_dryrun.go / policy_validation.go</span></td><td>Out-of-band: dry-run simulation for tooling, and PolicyDefinition webhook validation. Not called by Reconcile.</td></tr>
+</table></div></div>
+</details>
+
+<details class="fold">
+<summary>Supporting packages <span>cue, apply, trackers, multicluster, auth, providers</span></summary>
+<div class="inner"><div class="tbl-wrap"><table>
+<tr><th>Package</th><th>Job</th></tr>
+<tr><td><span class="ref">pkg/cue/definition + process</span></td><td>The CUE engines. <code>Complete()</code> unifies template and parameters; <code>Status()</code> evaluates health CUE. <code>ContextData</code> defines everything templates see as <code>context.*</code>.</td></tr>
+<tr><td><span class="ref">pkg/utils/apply</span></td><td>The applicator. Three-way merge against a last-applied annotation, with apply options for ownership, sharing, read-only, take-over, and update strategy.</td></tr>
+<tr><td><span class="ref">pkg/resourcetracker</span></td><td>Tracker CRUD. Root tracker (lives with the app), current tracker (per generation), history, and component-revision trackers. Records each manifest with optional raw data for drift repair.</td></tr>
+<tr><td><span class="ref">pkg/multicluster + pkg/auth</span></td><td>Where a request goes and as whom. Cluster name rides on the manifest and the context; user identity comes from webhook-stamped annotations and is impersonated on every write.</td></tr>
+<tr><td><span class="ref">pkg/policy</span></td><td>Generic <code>ParsePolicy[T]</code> for the builtin resource policies the keeper consumes.</td></tr>
+<tr><td><span class="ref">pkg/workflow/providers/oam</span></td><td>The other side of the callback seam. The builtin apply-component step lives here and invokes the controller's <code>ComponentApply</code>.</td></tr>
+<tr><td><span class="ref">pkg/resourcekeeper (rest)</span></td><td><code>delete.go</code> marks then deletes; <code>admission.go</code> gates cross-namespace and resource types; <code>gc_rev.go</code> trims old revisions (default keep: 10); <code>cache.go</code> caches live lookups for GC.</td></tr>
+<tr><td><span class="ref">pkg/webhook/.../application</span></td><td>Admission. Mutate: identity, step names, shard. Validate: components, workflow, definition permissions.</td></tr>
+</table></div></div>
+</details>
+</section>
+
+<!-- ================= 6 STATE ================= -->
+<section id="state">
+<h2><span class="num">06</span>State and phases</h2>
+
+<div class="mermaid-card">
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> rendering : parsed
+  rendering --> runningWorkflow : revision and policies done
+  runningWorkflow --> runningWorkflow : executing, backoff requeue
+  runningWorkflow --> workflowSuspending : suspend
+  workflowSuspending --> runningWorkflow : resume
+  runningWorkflow --> workflowFailed : failed
+  runningWorkflow --> running : succeeded and healthy
+  runningWorkflow --> unhealthy : succeeded, health check fails
+  unhealthy --> running : healthy on a later pass
+  running --> running : 5 min resync, drift fix and GC
+  running --> deleting : deletion requested
+  deleting --> [*] : trackers and revisions gone
+</pre>
+<div class="cap">Phases are written only through the status writers at <span class="ref">controller:548</span>.</div>
+</div>
+
+<h3>What holds state between passes</h3>
+<ul class="tight">
+  <li><b>The current ResourceTracker</b> holds every dispatched object, with raw manifest data for drift repair. It is the inventory the controller trusts. <span class="ref">resourcekeeper.go:135</span></li>
+  <li><b>The root tracker</b> holds resources whose GC policy says they outlive revisions. <span class="ref">dispatch.go:107</span></li>
+  <li><b>The workflow's own progress</b> lives on the app's status and seeds the next pass. The engine itself remembers nothing between reconciles. <span class="ref">generator.go:134</span></li>
+  <li><b>Running totals.</b> Service health and the list of applied resources accumulate while the workflow runs, then merge into status. Once the workflow finishes, the applied list is rebuilt from the tracker, which wins any disagreement. <span class="ref">controller:244, :323</span></li>
+</ul>
+</section>
+
+<!-- ================= 7 TRACKERS ================= -->
+<section id="trackers">
+<h2><span class="num">07</span>Trackers and cleanup</h2>
+<p class="lede">ResourceTrackers replace owner references in KubeVela, so understanding them explains most of
+the lifecycle behavior: why deletes work across clusters, why drift gets repaired, and where old resources go.</p>
+
+<h3>An app owns up to four kinds of tracker</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Tracker</th><th>Name pattern</th><th>Holds</th></tr>
+<tr><td>Current (versioned)</td><td><code>myapp-v3-default</code> (app, generation, namespace)</td><td>Everything dispatched by the current app generation. A pinned app names it after the <code>publishVersion</code> instead.</td></tr>
+<tr><td>History (versioned)</td><td>older <code>myapp-v2-default</code>, <code>myapp-v1-default</code></td><td>What previous generations deployed. These are what GC marks and sweeps.</td></tr>
+<tr><td>Root</td><td><code>myapp-default</code></td><td>Resources whose GC policy says they live as long as the app, across upgrades.</td></tr>
+<tr><td>Component revision</td><td>one per app</td><td>ControllerRevision history for components that version themselves.</td></tr>
+</table></div>
+<div class="refs"><span class="ref">resourcetracker/app.go:63-71 (names)</span><span class="ref">app.go:111-125 (create)</span><span class="ref">app.go:187 (classify)</span></div>
+
+<p class="lede" style="margin-top:14px">Each entry in a tracker stores the object's identity (cluster, kind,
+name, namespace, which component created it) plus, normally, a full copy of the manifest as applied. That copy
+is what drift repair re-applies later. Under apply-once, only the identity is stored, which is exactly why
+apply-once disables drift repair.</p>
+<div class="refs"><span class="ref">resourcetracker_types.go:129 (ManagedResource)</span><span class="ref">dispatch.go:62 (meta-only under apply-once)</span></div>
+
+<h3>How cleanup actually runs</h3>
+<p class="lede" style="margin-bottom:8px">Garbage collection is a mark-and-sweep over history trackers, run at
+the end of every settled pass:</p>
+<ul class="tight">
+  <li><b>Mark.</b> History trackers are declared inactive and given a deletion timestamp. On a deleting app, every tracker is marked, including current and root. <span class="ref">gc.go:249</span></li>
+  <li><b>Sweep.</b> Each marked tracker's resources are checked: a resource still claimed by a newer tracker is left alone, everything else is deleted. Deletion respects dependencies (dependents go first) and shared resources are handed over to the next sharer instead of deleted. <span class="ref">gc.go:286</span> <span class="ref">gc.go:358</span></li>
+  <li><b>Finalize.</b> Once a tracker holds nothing live, its finalizer drops and it disappears. While anything is still draining, the app shows a Deleting condition naming what it's waiting for, and the pass retries every 3 seconds. <span class="ref">gc.go:451</span> <span class="ref">controller:417</span></li>
+  <li><b>Legacy mode is throttled.</b> For apps not deleted, the deep "is anything orphaned" scan runs on roughly 1 pass in 10, to keep steady-state reconciles cheap. <span class="ref">gc.go:55 (MarkWithProbability 0.1)</span></li>
+  <li><b>Revisions are trimmed too.</b> Old ApplicationRevisions beyond the limit (10 by default, tunable per app through the garbage-collect policy) are deleted, oldest first, never the one in use. <span class="ref">gc_rev.go:59</span></li>
+</ul>
+
+<div class="callout">A useful mental model: <b>the current tracker is the contract</b>. Dispatch writes the
+contract, drift repair enforces it, GC deletes whatever fell out of it, and app deletion is just "shrink the
+contract to nothing, then let go".</div>
+</section>
+
+<!-- ================= 8 MULTICLUSTER ================= -->
+<section id="multicluster">
+<h2><span class="num">08</span>Clusters and identity</h2>
+<p class="lede">Two invisible properties ride along with every apply: which cluster it goes to, and who it
+acts as. Both are decided long before the write happens.</p>
+
+<ul class="tight">
+  <li><b>The cluster travels on the manifest.</b> When a component is assembled, its target cluster is stamped onto each object. At write time that stamp becomes a routed request through the cluster gateway. The hub never talks to managed clusters directly; the gateway proxies everything. <span class="ref">generator.go:470</span> <span class="ref">dispatch.go:145</span></li>
+  <li><b>Topology decides the targets.</b> A topology policy turns one component into one apply per target cluster, each with its own health check. The deploy workflow step fans these out.</li>
+  <li><b>Some traits refuse to leave home.</b> A trait marked control-plane-only always lands on the hub, even when its component goes to a managed cluster. Useful for things like hub-side DNS records. <span class="ref">generator.go:364</span></li>
+  <li><b>Writes impersonate the creator.</b> The mutating webhook recorded who created the app. Every apply and health read runs as that identity, so RBAC is enforced per user, not per controller. When a reconcile hits a Forbidden error, check the creator's permissions, not the controller's. <span class="ref">userinfo.go:45</span></li>
+  <li><b>Cluster version is visible to templates.</b> Definitions can branch on the target cluster's Kubernetes version through <code>context.clusterVersion</code>, which is how one definition supports clusters running different versions. <span class="ref">process/handle.go:105</span></li>
+</ul>
+</section>
+
+<!-- ================= 9 ERRORS ================= -->
+<section id="errors">
+<h2><span class="num">09</span>Errors and requeues</h2>
+
+<ul class="tight">
+  <li><b>Failures before the workflow</b> (parse, revision, policy) all exit the same way: set an error condition, write status, return an error so controller-runtime backs off and retries. <span class="ref">controller:530</span></li>
+  <li><b>A workflow that fails is not an error.</b> It is a normal branch: finish the workflow, GC, write status. An error <em>from the engine</em> is different and uses the backoff path. <span class="ref">controller:298 vs :238</span></li>
+  <li><b>Health check errors don't fail the pass.</b> They are logged and the app just stays unhealthy. <span class="ref">controller:932</span></li>
+</ul>
+
+<div class="tbl-wrap"><table>
+<tr><th>Situation</th><th>Next attempt</th><th>Ref</th></tr>
+<tr><td>Workflow executing or suspended</td><td>engine's backoff</td><td><span class="ref">controller:308</span></td></tr>
+<tr><td>GC or deletion still draining</td><td>3 seconds</td><td><span class="ref">controller:77</span></td></tr>
+<tr><td>Error before the workflow</td><td>controller-runtime exponential backoff</td><td><span class="ref">controller:530</span></td></tr>
+<tr><td>Healthy steady state</td><td>5 minutes, or the per-app annotation (10s floor)</td><td><span class="ref">vars.go:30</span> <span class="ref">controller:443</span></td></tr>
+</table></div>
+
+<div class="callout warn"><b>Self-healing is periodic, not event-driven.</b> Nothing watches your Deployments.
+Drift gets fixed when the resync runs StateKeep, which is why the event filter deliberately lets
+no-change resync events through.</div>
+</section>
+
+<!-- ================= 10 EXTEND ================= -->
+<section id="extend">
+<h2><span class="num">10</span>Where to extend</h2>
+
+<ul class="tight">
+  <li><b>Definitions are the front door.</b> Component, Trait, Policy, and WorkflowStep definitions are CUE templates. New capability, no controller change. <span class="ref">template.go:74</span></li>
+  <li><b>Trait stages.</b> <code>spec.stage: PreDispatch</code> or <code>PostDispatch</code> moves a trait to a different wave. PostDispatch traits can read the live workload as <code>context.output</code>. <span class="ref">dispatcher.go:241</span> <span class="ref">apply.go:569</span></li>
+  <li><b>Trait flags.</b> <code>manageWorkload</code> lets a trait own the workload (the controller stops applying it). <code>controlPlaneOnly</code> pins the trait's output to the hub cluster. <span class="ref">generator.go:511, :364</span></li>
+  <li><b>Resource policies</b> (apply-once, garbage-collect, shared-resource, take-over, read-only, resource-update) become apply options at write time. <span class="ref">dispatch.go:147</span></li>
+  <li><b>Annotations and feature gates</b> change behavior without code. Both are listed in full in section 11.</li>
+  <li><b>Custom workflow steps.</b> Step providers receive the controller's apply, render, and health hooks through a single params object, so a new step type never has to import controller internals. <span class="ref">generator.go:86</span></li>
+</ul>
+</section>
+
+<!-- ================= 11 TABLES ================= -->
+<section id="tables">
+<h2><span class="num">11</span>Reference tables</h2>
+<p class="lede">Folded by default. Open them when you need the exact chain, a function's contract, or a knob's name.</p>
+
+<details class="fold">
+<summary>Annotations that change behavior <span>exact strings, verified</span></summary>
+<div class="inner"><div class="tbl-wrap"><table>
+<thead><tr><th>Annotation</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>app.oam.dev/publishVersion</code></td><td>Pins rendering to the stored revision. Nothing redeploys until the value changes, including ConfigMap edits.</td></tr>
+<tr><td><code>app.oam.dev/reconcile-interval</code></td><td>Per-app resync period. Floor is 10 seconds; invalid values fall back to the 5 minute default.</td></tr>
+<tr><td><code>app.oam.dev/autoUpdate</code></td><td>Re-applies components on every workflow pass even when they are healthy and unchanged.</td></tr>
+<tr><td><code>app.oam.dev/restart-workflow</code></td><td>Restarts the workflow. Accepts <code>"true"</code> (now), an RFC3339 time (once, at that time), or a duration like <code>1h</code> (recurring after each completion).</td></tr>
+<tr><td><code>policy.oam.dev/auto-revision</code></td><td>Makes policy-driven spec changes create revisions, and re-dispatch comparisons use the previous revision.</td></tr>
+<tr><td><code>app.oam.dev/controller-version-require</code></td><td>Only a controller of exactly this version reconciles the app. Used for canarying controller upgrades.</td></tr>
+<tr><td><code>controller.core.oam.dev/pause</code> (label)</td><td>Freezes reconciliation entirely. The status stops updating too.</td></tr>
+<tr><td><code>app.oam.dev/username</code> / <code>…/group</code></td><td>Identity the controller impersonates. Set by the mutating webhook; don't set these by hand.</td></tr>
+</tbody>
+</table></div></div>
+</details>
+
+<details class="fold">
+<summary>Feature gates the flow checks <span>defaults vary by install</span></summary>
+<div class="inner"><div class="tbl-wrap"><table>
+<thead><tr><th>Gate</th><th>What flips</th></tr></thead>
+<tbody>
+<tr><td><code>MultiStageComponentApply</code></td><td>Turns on staged dispatch and the whole PostDispatch trait flow. Off means every manifest applies in one wave.</td></tr>
+<tr><td><code>ApplyOnce</code></td><td>Disables drift repair globally and stores tracker entries without manifest data.</td></tr>
+<tr><td><code>PreDispatchDryRun</code></td><td>Server dry-runs every manifest before recording it, catching schema errors before they pollute the tracker.</td></tr>
+<tr><td><code>AuthenticateApplication</code></td><td>Enables identity stamping in the webhook and impersonated writes.</td></tr>
+<tr><td><code>Gzip/ZstdApplicationRevision</code>, <code>Gzip/ZstdResourceTracker</code></td><td>Compress the two largest objects KubeVela stores in etcd.</td></tr>
+<tr><td><code>EnableApplicationStatusMetrics</code></td><td>Emits health and phase gauges after each status write.</td></tr>
+<tr><td><code>EnableSuspendOnFailure</code></td><td>A failed workflow suspends for inspection instead of finishing.</td></tr>
+</tbody>
+</table></div></div>
+</details>
+
+<details class="fold">
+<summary>What CUE templates can read as context.* <span>for definition authors</span></summary>
+<div class="inner"><div class="tbl-wrap"><table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>context.name</code> / <code>context.namespace</code></td><td>Component name and target namespace.</td></tr>
+<tr><td><code>context.appName</code> / <code>context.appRevision</code> / <code>context.appRevisionNum</code></td><td>App name, current revision name, and its number.</td></tr>
+<tr><td><code>context.revision</code></td><td>This component's computed revision name.</td></tr>
+<tr><td><code>context.components</code></td><td>The full component list of the app, for cross-component templates.</td></tr>
+<tr><td><code>context.appLabels</code> / <code>context.appAnnotations</code></td><td>The app's labels and annotations, filtered.</td></tr>
+<tr><td><code>context.cluster</code> / <code>context.clusterVersion</code></td><td>Target cluster name and its Kubernetes version (major, minor, gitVersion, platform).</td></tr>
+<tr><td><code>context.replicaKey</code></td><td>Set when a replication policy fans a component out; distinguishes the copies.</td></tr>
+<tr><td><code>context.output</code> / <code>context.outputs</code></td><td>The rendered main workload and auxiliary resources. For PostDispatch traits, <code>output</code> is the live object read from the cluster.</td></tr>
+<tr><td><code>context.workflowName</code> / <code>context.publishVersion</code></td><td>Values of the corresponding annotations.</td></tr>
+<tr><td><code>context.custom</code></td><td>Extra data injected by application-scoped policies.</td></tr>
+<tr><td><code>parameter</code></td><td>The user's properties for this component or trait.</td></tr>
+</tbody>
+</table></div>
+<div class="refs"><span class="ref">pkg/cue/process/keyword.go</span><span class="ref">pkg/cue/process/handle.go:61</span></div></div>
+</details>
+
+<details class="fold">
+<summary>Critical-path trace <span>caller → callee, with side effects</span></summary>
+<div class="inner"><div class="tbl-wrap"><table>
+<thead><tr><th>#</th><th>Caller</th><th>Callee</th><th>Where</th><th>Does</th><th>Writes</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>kube-apiserver</td><td>mutating + validating webhooks</td><td><span class="ref">mutating_handler.go:102</span></td><td>default identity, step names, shard; validate spec</td><td>annotations</td></tr>
+<tr><td>1</td><td>controller-runtime</td><td><code>Reconcile</code></td><td><span class="ref">controller:109</span></td><td>run the pass</td><td>none</td></tr>
+<tr><td>2</td><td>Reconcile</td><td><code>NewAppHandler</code> → <code>NewResourceKeeper</code></td><td><span class="ref">apply.go:78</span></td><td>load trackers, parse policies</td><td>none</td></tr>
+<tr><td>3</td><td>Reconcile</td><td><code>handleFinalizers</code></td><td><span class="ref">controller:486</span></td><td>finalizer add / deletion GC</td><td>app update</td></tr>
+<tr><td>4</td><td>Reconcile</td><td><code>ApplyApplicationScopeTransforms</code></td><td><span class="ref">application_policies.go:67</span></td><td>policy rewrite of spec/metadata</td><td>metadata patch</td></tr>
+<tr><td>5</td><td>Reconcile</td><td><code>GenerateAppFile</code></td><td><span class="ref">parser.go:87</span></td><td>spec + defs → Appfile</td><td>none</td></tr>
+<tr><td>6</td><td>Reconcile</td><td><code>PrepareCurrentAppRevision</code> → <code>FinalizeAndApplyAppRevision</code></td><td><span class="ref">revision.go:86, :497</span></td><td>hash, dedupe, persist snapshot</td><td>AppRevision, status</td></tr>
+<tr><td>7</td><td>Reconcile</td><td><code>ApplyPolicies</code></td><td><span class="ref">apply.go:469</span></td><td>render + dispatch policy resources</td><td>resources, RT</td></tr>
+<tr><td>8</td><td>Reconcile</td><td><code>checkWorkflowRestart</code> → <code>GenerateApplicationSteps</code></td><td><span class="ref">workflow.go:104</span> <span class="ref">generator.go:70</span></td><td>restart gate; build runners + callbacks</td><td>none</td></tr>
+<tr><td>9</td><td>Reconcile</td><td><code>executor.ExecuteRunners</code></td><td>kubevela/workflow</td><td>run steps</td><td>step status</td></tr>
+<tr><td>10</td><td>engine, via <span class="ref">providers/oam/apply.go:73</span></td><td><code>applyComponentFunc</code></td><td><span class="ref">generator.go:306</span></td><td>apply one component</td><td>see 11-13</td></tr>
+<tr><td>11</td><td>applyComponentFunc</td><td><code>prepareWorkloadAndManifests</code> → <code>GenerateComponentManifest</code></td><td><span class="ref">generator.go:378</span> <span class="ref">appfile.go:332</span></td><td>parse + CUE render + OAM labels</td><td>none</td></tr>
+<tr><td>12</td><td>applyComponentFunc</td><td><code>generateDispatcher</code> → <code>run</code></td><td><span class="ref">dispatcher.go:117</span></td><td>staged, health-gated dispatch</td><td>conditional</td></tr>
+<tr><td>13</td><td>dispatcher</td><td><code>resourceKeeper.Dispatch</code> → <code>APIApplicator.Apply</code></td><td><span class="ref">dispatch.go:61</span> <span class="ref">utils/apply:185</span></td><td>admission gate, record in RT, parallel three-way apply</td><td>RT + objects</td></tr>
+<tr><td>14</td><td>dispatcher</td><td><code>collectHealthStatus</code></td><td><span class="ref">apply.go:325</span></td><td>workload + trait health via CUE</td><td>live reads</td></tr>
+<tr><td>15</td><td>Reconcile</td><td><code>evalStatus</code> → <code>applyPostDispatchTraits</code></td><td><span class="ref">controller:910</span> <span class="ref">apply.go:524</span></td><td>final health; deferred traits</td><td>trait resources</td></tr>
+<tr><td>16</td><td>Reconcile</td><td><code>StateKeep</code> → <code>GarbageCollect</code></td><td><span class="ref">statekeep.go:41</span> <span class="ref">gc.go:112</span></td><td>drift fix; mark/sweep stale</td><td>re-applies, deletes</td></tr>
+<tr><td>17</td><td>Reconcile</td><td><code>gcResourceTrackers</code> → <code>writeStatusByMethod</code></td><td><span class="ref">controller:380, :556</span></td><td>final status write + resync schedule</td><td>status</td></tr>
+</tbody>
+</table></div></div>
+</details>
+
+<details class="fold">
+<summary>Function reference <span>responsibility per function</span></summary>
+<div class="inner"><div class="tbl-wrap"><table>
+<thead><tr><th>Function</th><th>Where</th><th>Responsibility</th></tr></thead>
+<tbody>
+<tr><td><code>Reconcile</code></td><td><span class="ref">controller:109</span></td><td>The whole pass. The only place phases are decided.</td></tr>
+<tr><td><code>handleFinalizers</code></td><td><span class="ref">controller:486</span></td><td>Finalizer lifecycle. Drives deletion because trackers can't be owner-ref'd.</td></tr>
+<tr><td><code>gcResourceTrackers</code></td><td><span class="ref">controller:380</span></td><td>GC wrapper that also writes status and turns "unfinished" into a 3s requeue.</td></tr>
+<tr><td><code>endWithNegativeCondition</code></td><td><span class="ref">controller:530</span></td><td>Uniform error exit: condition, status, synthetic error for backoff.</td></tr>
+<tr><td><code>writeStatusByMethod</code></td><td><span class="ref">controller:556</span></td><td>Patch vs update. Skips writes when status didn't change.</td></tr>
+<tr><td><code>evalStatus</code></td><td><span class="ref">controller:910</span></td><td>Final health rollup. Pending PostDispatch traits don't count against health.</td></tr>
+<tr><td><code>AppHandler.Dispatch</code></td><td><span class="ref">apply.go:98</span></td><td>Tag cluster, delegate to the keeper, mirror refs into status.</td></tr>
+<tr><td><code>collectHealthStatus</code></td><td><span class="ref">apply.go:325</span></td><td>Component health = workload health AND every non-pending trait.</td></tr>
+<tr><td><code>applyPostDispatchTraits</code></td><td><span class="ref">apply.go:524</span></td><td>Deferred traits for healthy components, with the live workload in context.</td></tr>
+<tr><td><code>GenerateApplicationSteps</code></td><td><span class="ref">generator.go:70</span></td><td>The seam: callbacks, workflow instance, runners.</td></tr>
+<tr><td><code>applyComponentFunc</code></td><td><span class="ref">generator.go:306</span></td><td>Parse, render, assemble, staged dispatch, health verdict.</td></tr>
+<tr><td><code>prepareWorkloadAndManifests</code></td><td><span class="ref">generator.go:378</span></td><td>Holds back PostDispatch traits while the workload is unhealthy.</td></tr>
+<tr><td><code>generateDispatcher</code></td><td><span class="ref">dispatcher.go:117</span></td><td>Buckets manifests by trait stage, sorted, health-gated.</td></tr>
+<tr><td><code>componentPropertiesChanged</code></td><td><span class="ref">dispatcher.go:272</span></td><td>JSON-compares properties against the revision to decide re-dispatch.</td></tr>
+<tr><td><code>PrepareCurrentAppRevision</code></td><td><span class="ref">revision.go:86</span></td><td>Hash the snapshot, decide if it's new, name the next revision.</td></tr>
+<tr><td><code>GenerateAppFile</code></td><td><span class="ref">parser.go:87</span></td><td>Entry to parsing. publishVersion pins spec and definitions.</td></tr>
+<tr><td><code>ParseComponentFromRevisionAndClient</code></td><td><span class="ref">parser.go:685</span></td><td>Definitions resolve from the revision first, cluster second.</td></tr>
+<tr><td><code>GenerateComponentManifest</code></td><td><span class="ref">appfile.go:332</span></td><td>CUE eval: component template, then each trait, then the patcher.</td></tr>
+<tr><td><code>SetOAMContract</code></td><td><span class="ref">appfile.go:351</span></td><td>Stamps OAM labels, namespace, and workload refs on every resource.</td></tr>
+<tr><td><code>resourceKeeper.Dispatch</code></td><td><span class="ref">dispatch.go:61</span></td><td>Admission check, optional dry-run, record, then parallel apply.</td></tr>
+<tr><td><code>StateKeep</code></td><td><span class="ref">statekeep.go:41</span></td><td>Re-applies recorded manifests over drift. Skipped under apply-once.</td></tr>
+<tr><td><code>GarbageCollect</code></td><td><span class="ref">gc.go:112</span></td><td>Mark inactive trackers, sweep their resources, finalize. Trims old revisions.</td></tr>
+<tr><td><code>checkWorkflowRestart</code></td><td><span class="ref">workflow.go:104</span></td><td>Restart on schedule, revision change, or valuesFrom fingerprint drift.</td></tr>
+<tr><td><code>APIApplicator.Apply</code></td><td><span class="ref">utils/apply/apply.go:185</span></td><td>Create-or-patch with three-way merge. All apply options resolve here.</td></tr>
+<tr><td><code>RecordManifestsInResourceTracker</code></td><td><span class="ref">resourcetracker/app.go:227</span></td><td>The recording half of record-then-apply.</td></tr>
+<tr><td><code>auth.ContextWithUserInfo</code></td><td><span class="ref">auth/userinfo.go:45</span></td><td>Impersonates the creator on every write and health read.</td></tr>
+</tbody>
+</table></div></div>
+</details>
+</section>
+
+<!-- ================= 12 DEBUG ================= -->
+<section id="debug">
+<h2><span class="num">12</span>Debugging guide</h2>
+
+<div class="grid2">
+<div class="card">
+<h3 style="margin-top:0">Things that surprise people</h3>
+<ul class="tight">
+  <li>Editing a child Deployment does nothing until the next resync. Nothing watches workloads.</li>
+  <li>Editing a definition does nothing to running apps. Definitions are pinned in the revision. <span class="ref">parser.go:685</span></li>
+  <li>Manual edits to managed resources get reverted by StateKeep. Use an apply-once rule if that's not what you want.</li>
+  <li>RBAC errors during reconcile usually belong to the app's <em>creator</em>, not the controller. Identity is impersonated from annotations. <span class="ref">userinfo.go:45</span></li>
+  <li>An app stuck in <code>deleting</code> means a tracker still has resources. Check <code>kubectl get resourcetrackers -l app.oam.dev/name=NAME</code> and the Deleting condition message.</li>
+  <li>A paused or version-mismatched app exits before any status write, so its status looks frozen. <span class="ref">controller:126</span></li>
+  <li>A just-edited global policy can take up to a minute to apply. Rendered policies are cached. <span class="ref">application_policy_cache.go:90</span></li>
+  <li>A component with no <code>healthPolicy</code> reports healthy the moment it applies, which can make a broken deployment look green. <span class="ref">health/health.go:52</span></li>
+</ul>
+</div>
+<div class="card">
+<h3 style="margin-top:0">Breakpoints that pay off</h3>
+<ul class="tight">
+  <li><span class="ref">controller:113</span> reconcile entry. The trace tags frame every log line.</li>
+  <li><span class="ref">parser.go:94</span> is rendering pinned to a revision?</li>
+  <li><span class="ref">revision.go:113</span> why did (or didn't) a new revision get created?</li>
+  <li><span class="ref">generator.go:316</span> start of a component apply: comp, cluster, namespace.</li>
+  <li><span class="ref">appfile.go:599</span> CUE output. First stop for render errors.</li>
+  <li><span class="ref">dispatcher.go:167</span> why was a healthy component re-applied (or not)?</li>
+  <li><span class="ref">dispatch.go:88</span> the line between bookkeeping and cluster writes.</li>
+  <li><span class="ref">statekeep.go:105</span> who keeps overwriting my object.</li>
+  <li><span class="ref">gc.go:136</span> GC entry, for stuck deletions.</li>
+  <li><span class="ref">controller:560</span> the status diff gate. Explains "my status didn't update".</li>
+</ul>
+</div>
+</div>
+
+<footer>
+Source: branch <code>feat/kep-2.13-addon-types</code>. Every file:line reference and quantitative claim on this page
+was audited against the tree on 2026-06-10. Line numbers drift with edits.
+This tree includes KEP-2.13 additions (application-scoped policies, policy caches) that upstream KubeVela does not have.
+</footer>
+</section>
+
+</main>
+</div>
+
+<script>
+  const root = document.documentElement;
+  const stored = localStorage.getItem('avc-theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  root.setAttribute('data-theme', stored || (prefersDark ? 'dark' : 'light'));
+
+  // capture pristine diagram sources before mermaid touches the DOM
+  document.querySelectorAll('.mermaid').forEach(el => { el.dataset.src = el.textContent.trim(); });
+
+  const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  const themeVarsLight = {
+    fontFamily: FONT, fontSize: '14px',
+    background: '#ffffff', textColor: '#1c2230', lineColor: '#7c89a5',
+    primaryColor: '#e8edff', primaryTextColor: '#1c2230', primaryBorderColor: '#8fa3ff',
+    secondaryColor: '#f1f3f7', secondaryTextColor: '#1c2230', secondaryBorderColor: '#d6dbe6',
+    tertiaryColor: '#fdf3e0', tertiaryTextColor: '#6b4e0e', tertiaryBorderColor: '#e7c876',
+    mainBkg: '#e8edff', nodeBorder: '#8fa3ff', nodeTextColor: '#1c2230',
+    clusterBkg: '#f7f8fa', clusterBorder: '#d6dbe6', titleColor: '#1c2230',
+    edgeLabelBackground: '#f7f8fa',
+    actorBkg: '#e8edff', actorBorder: '#8fa3ff', actorTextColor: '#1c2230',
+    actorLineColor: '#b9c2d6', signalColor: '#5f6982', signalTextColor: '#1c2230',
+    noteBkgColor: '#fdf3e0', noteTextColor: '#6b4e0e', noteBorderColor: '#e7c876',
+    labelBoxBkgColor: '#f1f3f7', labelBoxBorderColor: '#d6dbe6',
+    labelTextColor: '#1c2230', loopTextColor: '#1c2230',
+    activationBkgColor: '#f1f3f7', activationBorderColor: '#b9c2d6',
+    sequenceNumberColor: '#ffffff'
+  };
+  const themeVarsDark = {
+    fontFamily: FONT, fontSize: '14px',
+    background: '#161b24', textColor: '#e6e9f0', lineColor: '#8a96ad',
+    primaryColor: '#243156', primaryTextColor: '#e6e9f0', primaryBorderColor: '#5f7adb',
+    secondaryColor: '#1d2430', secondaryTextColor: '#e6e9f0', secondaryBorderColor: '#2a3344',
+    tertiaryColor: '#33270e', tertiaryTextColor: '#f3d489', tertiaryBorderColor: '#7a5e1d',
+    mainBkg: '#243156', nodeBorder: '#5f7adb', nodeTextColor: '#e6e9f0',
+    clusterBkg: '#10141c', clusterBorder: '#2a3344', titleColor: '#e6e9f0',
+    edgeLabelBackground: '#161b24',
+    actorBkg: '#243156', actorBorder: '#5f7adb', actorTextColor: '#e6e9f0',
+    actorLineColor: '#3a4660', signalColor: '#aeb8cc', signalTextColor: '#e6e9f0',
+    noteBkgColor: '#33270e', noteTextColor: '#f3d489', noteBorderColor: '#7a5e1d',
+    labelBoxBkgColor: '#1d2430', labelBoxBorderColor: '#2a3344',
+    labelTextColor: '#e6e9f0', loopTextColor: '#e6e9f0',
+    activationBkgColor: '#1d2430', activationBorderColor: '#3a4660',
+    sequenceNumberColor: '#0e1117'
+  };
+
+  function renderMermaid() {
+    const dark = root.getAttribute('data-theme') === 'dark';
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'base',
+      themeVariables: dark ? themeVarsDark : themeVarsLight,
+      flowchart: { curve: 'linear', htmlLabels: false, useMaxWidth: true },
+      sequence: { actorMargin: 16, useMaxWidth: true },
+      state: { useMaxWidth: true }
+    });
+    document.querySelectorAll('.mermaid').forEach(el => {
+      el.removeAttribute('data-processed');
+      el.textContent = el.dataset.src;
+    });
+    mermaid.run({ querySelector: '.mermaid' });
+  }
+
+  document.getElementById('themeToggle').addEventListener('click', () => {
+    const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    localStorage.setItem('avc-theme', next);
+    renderMermaid();
+  });
+
+  renderMermaid();
+</script>
+</body>
+</html>

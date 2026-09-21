@@ -1,0 +1,345 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Create spec directory structure in current branch"
+# model = "sonnet"
+# context = "fork"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-create *)"]
+#
+# [[tool.claude.argument]]
+# name = "spec"
+# type = "optional-passthrough"
+# hint = "[spec | proj:spec | proj:spec:ctx1,ctx2]"
+# description = "Composite spec target. Bare name sets spec only. 'proj:spec' sets branch project override and spec. 'proj:spec:ctx1,ctx2' also sets contexts. Defaults to the current branch name if omitted."
+#
+# [tool.claude.output]
+# prompt = "Confirm spec creation. Show the spec name, location, branch association, and list files created. Suggest running /spec:interview to refine requirements."
+# examples = [
+#   "[OK] Created spec 'feature-auth'\n\nDetails:\n  Location: .dev/specs/feature-auth/\n  Branch: feature-auth\n  Associated: Yes (stored in dev.yaml)\n\nFiles created:\n  - requirements.md\n  - design.md\n  - tasks.md\n\nNext steps:\n  - Refine requirements: /spec:interview\n  - Generate requirements: /spec:requirements"
+# ]
+# ///
+
+"""
+Create spec directory structure in current branch.
+
+Creates a <doc-root>/specs/<name>/ directory with template files for requirements,
+design, and tasks. Automatically associates the spec with the current branch.
+
+Argument is the composite spec format:
+    <spec>                        bare spec name
+    <proj>:<spec>                 set branch project override and spec
+    <proj>:<spec>:<ctx1>,<ctx2>   also set branch contexts
+
+Omit the argument to use the current branch name as the spec name.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_current_branch, associate_spec, in_git_repo, spec_path, steering_path,
+    _validate_name, is_valid_project, set_branch_project, get_spec_repo_directory,
+    parse_composite_spec, set_contexts, resolve_context_path,
+)
+
+
+def create_spec_file(path, content):
+    """Create a spec file if it doesn't exist."""
+    if path.exists():
+        return False
+    path.write_text(content)
+    return True
+
+
+def add_to_spec_map(spec_name):
+    """Add a placeholder entry to steering/specs.md if it exists."""
+    specs_md = steering_path() / 'specs.md'
+    if not specs_md.is_file():
+        return False
+    content = specs_md.read_text()
+    # Skip if spec already listed
+    if f'| {spec_name} |' in content:
+        return False
+    # Append to Uncategorized section, creating it if needed
+    uncategorized_header = '## Uncategorized'
+    uncategorized_table = (
+        f'{uncategorized_header}\n\n'
+        '| Spec | Summary |\n'
+        '|------|---------|'
+    )
+    entry = f'\n| {spec_name} | (new -- summary pending) |'
+    if uncategorized_header in content:
+        # Append to existing Uncategorized table
+        # Find the last line of the Uncategorized section (last table row before next ## or EOF)
+        lines = content.split('\n')
+        insert_idx = len(lines)
+        in_section = False
+        for i, line in enumerate(lines):
+            if line.strip() == uncategorized_header:
+                in_section = True
+                continue
+            if in_section and line.startswith('## '):
+                insert_idx = i
+                break
+        # Walk back past any trailing blank lines
+        while insert_idx > 0 and lines[insert_idx - 1].strip() == '':
+            insert_idx -= 1
+        lines.insert(insert_idx, f'| {spec_name} | (new -- summary pending) |')
+        content = '\n'.join(lines)
+    else:
+        content = content.rstrip('\n') + f'\n\n{uncategorized_table}{entry}\n'
+    specs_md.write_text(content)
+    return True
+
+
+def parse_create_arg(arg, branch):
+    """Parse a single composite argument for spec-create.
+
+    Returns (spec_name, project, contexts).
+
+    Rejects forms that don't make sense for creation:
+      - clear sentinels ('-' for project or spec)
+      - context add/remove/clear modes
+      - missing spec name when colons are present
+    """
+    if arg is None:
+        return branch, None, []
+
+    project, spec, contexts, ctx_mode = parse_composite_spec(arg)
+
+    # Reject clear sentinels - can't 'clear' on create
+    if project == '-':
+        print("Error: '-' (clear project) is not valid for spec-create.", file=sys.stderr)
+        sys.exit(1)
+    if spec == '-':
+        print("Error: '-' (clear spec) is not valid for spec-create.", file=sys.stderr)
+        sys.exit(1)
+
+    # Reject context modes other than 'set' - +/- and clear don't make sense on create
+    if ctx_mode in ('add', 'remove', 'clear'):
+        print(f"Error: context '{ctx_mode}' mode is not valid for spec-create. Use a bare list (ctx1,ctx2) to set contexts.", file=sys.stderr)
+        sys.exit(1)
+
+    # If the user supplied an argument with colons but no spec, fall back to branch name
+    if spec is None:
+        spec = branch
+
+    return spec, project, contexts
+
+
+def main():
+    """Main entry point."""
+    # Validate in git repo
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    # Get current branch
+    branch = get_current_branch()
+    if not branch:
+        print("Error: Could not determine current branch", file=sys.stderr)
+        sys.exit(1)
+
+    args = sys.argv[1:]
+
+    # Reject the removed --project flag with a pointing error
+    for a in args:
+        if a == '--project' or a.startswith('--project='):
+            print("Error: --project was removed. Use 'proj:<spec>' or 'proj:<spec>:<ctx1>,<ctx2>' instead.", file=sys.stderr)
+            sys.exit(1)
+
+    # Take first positional arg (composite or bare). Ignore other flags-style tokens defensively.
+    positional = [a for a in args if not a.startswith('--')]
+    arg = positional[0] if positional else None
+
+    spec_name, project, contexts = parse_create_arg(arg, branch)
+
+    # Validate the spec name (parse_composite_spec validates names from composite,
+    # but a bare branch fallback must still be checked).
+    _validate_name(spec_name, 'spec')
+
+    # Validate the project (if provided)
+    if project is not None:
+        if not is_valid_project(project):
+            spec_dir = os.path.expandvars(get_spec_repo_directory())
+            print(f"Error: Invalid project '{project}'.", file=sys.stderr)
+            print(f"  Expected a directory at {spec_dir}/{project}/ containing specs/, ctx/, or steering/.", file=sys.stderr)
+            sys.exit(1)
+
+    # Validate contexts exist before any side effects
+    if contexts:
+        missing = [ref for ref in contexts if not resolve_context_path(ref, project).exists()]
+        if missing:
+            print(f"Error: Context(s) not found: {', '.join(missing)}", file=sys.stderr)
+            print("Run '/spec:ctx:create <name>' to create them first.", file=sys.stderr)
+            sys.exit(1)
+
+    # Create spec directory (under project doc root if specified)
+    path = spec_path(spec_name, project=project)
+    path.mkdir(parents=True, exist_ok=True)
+
+    # Track what was created
+    files_created = []
+    files_existed = []
+
+    # Create template files
+    templates = {}
+
+    templates['requirements.md'] = f"""# {spec_name} - Requirements
+
+## Introduction
+
+[Brief description - 2-3 sentences about what's being built and why]
+
+## Requirements
+
+### Requirement 1: [Feature Area]
+
+**User Story ** As a [role], I want [capability], so that [benefit]
+
+#### Acceptance Criteria
+
+1. WHEN [event] THE SYSTEM SHALL [action]
+2. WHEN [event] AND [condition] THE SYSTEM SHALL [action]
+3. IF [condition] THEN THE SYSTEM SHALL [action]
+
+### Requirement 2: [Feature Area]
+
+**User Story ** As a [role], I want [capability], so that [benefit]
+
+#### Acceptance Criteria
+
+1. WHEN [event] THE SYSTEM SHALL [action]
+2. WHILE [state] THE SYSTEM SHALL [action]
+
+### Requirement 3: Non-Functional Requirements
+
+**User Story ** As a [role], I want [quality attribute], so that [benefit]
+
+#### Acceptance Criteria
+
+1. THE SYSTEM SHALL [performance/reliability constraint]
+2. WHILE [state] THE SYSTEM SHALL [behavior constraint]
+
+## Constraints
+
+- [Technical or business constraint]
+"""
+
+    templates['design.md'] = f"""# {spec_name} - Design
+
+## Overview
+
+[High-level design approach]
+
+## Architecture
+
+[Architectural decisions and project interactions]
+
+## Implementation Details
+
+[Key implementation details]
+
+## API Changes
+
+[Any API changes required]
+
+## Data Model
+
+[Data model changes if applicable]
+"""
+
+    templates['tasks.md'] = f"""# {spec_name} - Tasks
+
+## Implementation Tasks
+
+- [ ] Task 1
+- [ ] Task 2
+- [ ] Task 3
+
+## Testing Tasks
+
+- [ ] Write unit tests
+- [ ] Write integration tests
+
+## Documentation Tasks
+
+- [ ] Update README
+- [ ] Update API docs
+"""
+
+    for filename, content in templates.items():
+        file_path = path / filename
+        if create_spec_file(file_path, content):
+            files_created.append(filename)
+        else:
+            files_existed.append(filename)
+
+    # Associate spec with current branch
+    associated = associate_spec(spec_name, branch)
+
+    # Persist branch project override when project was supplied
+    if project is not None:
+        set_branch_project(branch, project)
+
+    # Persist contexts when supplied
+    if contexts:
+        set_contexts(contexts, branch)
+
+    # Add placeholder to spec map
+    added_to_map = add_to_spec_map(spec_name)
+
+    # Build output data
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(path),
+        'branch': branch,
+        'project': project,
+        'contexts': contexts,
+        'associated': associated,
+        'added_to_spec_map': added_to_map,
+        'files_created': files_created,
+        'files_existed': files_existed
+    }
+
+    # Output based on mode
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"[OK] Created spec '{spec_name}'")
+        print()
+        print("Details:")
+        print(f"  Location: {path}/")
+        print(f"  Branch: {branch}")
+        if project is not None:
+            print(f"  Project: {project} (branch override set)")
+        if contexts:
+            print(f"  Contexts: {', '.join(contexts)}")
+        print(f"  Associated: {'Yes' if associated else 'No'}")
+        print()
+        if files_created:
+            print("Files created:")
+            for f in files_created:
+                print(f"  - {f}")
+        if files_existed:
+            print("Files already existed:")
+            for f in files_existed:
+                print(f"  - {f}")
+        if added_to_map:
+            print()
+            print("Spec map updated: steering/specs.md")
+        print()
+        print("Next steps:")
+        print("  - Refine requirements: /spec:interview")
+        print("  - Define requirements: /spec:requirements")
+
+
+if __name__ == "__main__":
+    main()

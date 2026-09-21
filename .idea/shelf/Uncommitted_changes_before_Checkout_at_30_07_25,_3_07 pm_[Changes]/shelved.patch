@@ -1,0 +1,100 @@
+Index: .github/workflows/unit-test.yml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>name: Unit-Test\n\non:\n  push:\n    branches:\n      - master\n      - release-*\n  workflow_dispatch: {}\n  pull_request:\n    branches:\n      - master\n      - release-*\n\npermissions:\n  contents: read\n\nenv:\n  # Common versions\n  GO_VERSION: \"1.23.8\"\n\njobs:\n  detect-noop:\n    permissions:\n      actions: write # for fkirc/skip-duplicate-actions to skip or stop workflow runs\n    runs-on: ubuntu-22.04\n    outputs:\n      noop: ${{ steps.noop.outputs.should_skip }}\n    steps:\n      - name: Detect No-op Changes\n        id: noop\n        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf\n        with:\n          github_token: ${{ secrets.GITHUB_TOKEN }}\n          paths_ignore: '[\"**.md\", \"**.mdx\", \"**.png\", \"**.jpg\"]'\n          do_not_skip: '[\"workflow_dispatch\", \"schedule\", \"push\"]'\n        continue-on-error: true\n\n  unit-tests:\n    runs-on: ubuntu-22.04\n    needs: detect-noop\n    if: needs.detect-noop.outputs.noop != 'true'\n\n    steps:\n      - name: Set up Go\n        uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491\n        with:\n          go-version: ${{ env.GO_VERSION }}\n\n      - name: Check out code into the Go module directory\n        uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608\n        with:\n          submodules: true\n\n      - name: Cache Go Dependencies\n        uses: actions/cache@v4\n        with:\n          path: .work/pkg\n          key: ${{ runner.os }}-pkg-${{ hashFiles('**/go.sum') }}\n          restore-keys: ${{ runner.os }}-pkg-\n\n      - name: Install ginkgo\n        run: |\n          sudo sed -i 's/azure\\.//' /etc/apt/sources.list\n          sudo apt-get update\n          sudo apt-get install -y golang-ginkgo-dev\n\n      - name: Setup KinD\n        run: |\n          go install sigs.k8s.io/kind@v0.19.0\n          kind create cluster\n\n      - name: Run Make test\n        run: make test\n\n      - name: Upload coverage report\n        uses: codecov/codecov-action@eaaf4bedf32dbdc6b720b63067d99c4d77d6047d\n        with:\n          token: ${{ secrets.CODECOV_TOKEN }}\n          file: ./coverage.txt\n          flags: core-unittests\n          name: codecov-umbrella\n
+===================================================================
+diff --git a/.github/workflows/unit-test.yml b/.github/workflows/unit-test.yml
+--- a/.github/workflows/unit-test.yml	(revision 796b835a0f86db7e9d1035cf6ea4368edba7eb27)
++++ b/.github/workflows/unit-test.yml	(date 1753858000218)
+@@ -1,81 +1,25 @@
+-name: Unit-Test
++name: Go
+ 
+ on:
+   push:
+-    branches:
+-      - master
+-      - release-*
+-  workflow_dispatch: {}
++    branches: [main]
+   pull_request:
+-    branches:
+-      - master
+-      - release-*
+-
+-permissions:
+-  contents: read
++    branches: [main]
+ 
+ env:
+   # Common versions
+   GO_VERSION: "1.23.8"
+ 
+ jobs:
+-  detect-noop:
+-    permissions:
+-      actions: write # for fkirc/skip-duplicate-actions to skip or stop workflow runs
+-    runs-on: ubuntu-22.04
+-    outputs:
+-      noop: ${{ steps.noop.outputs.should_skip }}
+-    steps:
+-      - name: Detect No-op Changes
+-        id: noop
+-        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf
+-        with:
+-          github_token: ${{ secrets.GITHUB_TOKEN }}
+-          paths_ignore: '["**.md", "**.mdx", "**.png", "**.jpg"]'
+-          do_not_skip: '["workflow_dispatch", "schedule", "push"]'
+-        continue-on-error: true
+-
+-  unit-tests:
+-    runs-on: ubuntu-22.04
+-    needs: detect-noop
+-    if: needs.detect-noop.outputs.noop != 'true'
+-
++  build:
++    runs-on: ubuntu-latest
+     steps:
++      - uses: actions/checkout@v4
++
+       - name: Set up Go
+-        uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491
++        uses: actions/setup-go@v5
+         with:
+           go-version: ${{ env.GO_VERSION }}
+ 
+-      - name: Check out code into the Go module directory
+-        uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608
+-        with:
+-          submodules: true
+-
+-      - name: Cache Go Dependencies
+-        uses: actions/cache@v4
+-        with:
+-          path: .work/pkg
+-          key: ${{ runner.os }}-pkg-${{ hashFiles('**/go.sum') }}
+-          restore-keys: ${{ runner.os }}-pkg-
+-
+-      - name: Install ginkgo
+-        run: |
+-          sudo sed -i 's/azure\.//' /etc/apt/sources.list
+-          sudo apt-get update
+-          sudo apt-get install -y golang-ginkgo-dev
+-
+-      - name: Setup KinD
+-        run: |
+-          go install sigs.k8s.io/kind@v0.19.0
+-          kind create cluster
+-
+-      - name: Run Make test
+-        run: make test
+-
+-      - name: Upload coverage report
+-        uses: codecov/codecov-action@eaaf4bedf32dbdc6b720b63067d99c4d77d6047d
+-        with:
+-          token: ${{ secrets.CODECOV_TOKEN }}
+-          file: ./coverage.txt
+-          flags: core-unittests
+-          name: codecov-umbrella
++      - name: Build
++        run: go build -v ./...

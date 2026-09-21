@@ -1,0 +1,52 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Show line-by-line changes"
+# model = "haiku"
+# context = "fork"
+# allowed-tools = ["Bash(capabilities/git-beta/src/claude/scripts/git-diff:*)"]
+#
+# [tool.claude.output]
+# prompt = "Show changes clearly. For large diffs (>50 lines), summarize scope and key changes. For small diffs, show the actual changes. Make it useful for understanding what changed."
+# examples = [
+#   "diff --git a/src/auth.js b/src/auth.js\n@@ -10,3 +10,5 @@\n+  return token;",
+#   "Large diff in 3 files:\n- src/auth.js: Added token validation (120 lines)\n- src/api.js: Updated endpoints (45 lines)\n- README.md: Updated docs (30 lines)"
+# ]
+# ///
+
+"""Show line-by-line changes (staged and unstaged)."""
+
+import sys
+import argparse
+from pathlib import Path
+
+# Load shared library
+exec(open(Path(__file__).parent / 'lib/gitlib.py').read())
+
+
+def main():
+    """Show all changes (staged and unstaged)."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    args = parser.parse_args()
+
+    # Get diff output (all changes)
+    result = run_git(
+        ['diff', 'HEAD'],
+        operation_description="get diff",
+        capture_output=True
+    )
+
+    # Prepare output data
+    data = {
+        "diff": result.stdout
+    }
+
+    # Output in appropriate format
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

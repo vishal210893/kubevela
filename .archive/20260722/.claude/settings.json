@@ -1,0 +1,181 @@
+{
+  "env": {
+    "ENABLE_TOOL_SEARCH": "true",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "marketplaces": {
+    "gw-plugins": {
+      "source": "git",
+      "url": "https://github.com/gwre-pdo/claude-plugins.git"
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npmrc-doctor:*)",
+      "Bash($WSROOT/.claude/scripts/npmrc-doctor*)",
+      "Bash(git :*)",
+      "Bash(npm :*)",
+      "Bash(yarn :*)",
+      "Bash(pnpm :*)",
+      "Bash(pip :*)",
+      "Bash(pip3 :*)",
+      "Bash(uv :*)",
+      "Bash(cargo :*)",
+      "Bash(go :*)",
+      "Bash(make :*)",
+      "Bash(gradle :*)",
+      "Bash(./gradlew :*)",
+      "Bash(mvn :*)",
+      "Bash(node :*)",
+      "Bash(python :*)",
+      "Bash(python3 :*)",
+      "Bash(docker ps:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker images:*)",
+      "Bash(docker inspect:*)",
+      "Bash(docker build:*)",
+      "Bash(ls :*)",
+      "Bash(cat :*)",
+      "Bash(head :*)",
+      "Bash(tail :*)",
+      "Bash(find :*)",
+      "Bash(grep :*)",
+      "Bash(wc :*)",
+      "Bash(pwd)",
+      "Bash(whoami)",
+      "Bash(env)",
+      "Bash(which :*)",
+      "Bash(mkdir :*)",
+      "Bash(cp :*)",
+      "Bash(mv :*)",
+      "Bash(touch :*)",
+      "Bash(chmod :*)",
+      "Bash(echo :*)",
+      "Bash(printf :*)",
+      "Bash(test :*)",
+      "Bash([ :*)",
+      "Bash([[ :*)",
+      "Bash(if :*)",
+      "Bash(for :*)",
+      "Bash(while :*)",
+      "Bash(curl :*)",
+      "Bash(wget :*)",
+      "Bash(jq :*)",
+      "Bash(yq :*)",
+      "Bash(sed :*)",
+      "Bash(awk :*)",
+      "Bash(sort :*)",
+      "Bash(uniq :*)",
+      "Bash(diff :*)",
+      "Bash(date :*)",
+      "Bash(basename :*)",
+      "Bash(dirname :*)",
+      "Bash(realpath :*)",
+      "Bash(readlink :*)",
+      "Bash(xargs :*)",
+      "Bash(tee :*)",
+      "Bash(tr :*)",
+      "Bash(cut :*)",
+      "Bash(ssh-add :*)",
+      "Bash(ssh :*)",
+      "Bash(gh :*)",
+      "Bash(rm */.git/index.lock)",
+      "Bash(rm :*)",
+      "Bash(rm -rf :*)",
+      "Bash(docker run:*)",
+      "Bash(git clean :*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git checkout -- .)",
+      "Bash(docker exec:*)",
+      "Read(~/.ssh)",
+      "Read(~/.aws)",
+      "Read(/etc/shadow)",
+      "Bash(mount-ownership-doctor:*)",
+      "Bash($WSROOT/.claude/scripts/mount-ownership-doctor*)",
+      "mcp__devassistant__list_embeddings_collections",
+      "mcp__devassistant__query_embeddings_collection",
+      "mcp__devassistant__get_cookbook_by_uri",
+      "mcp__devassistant__list_cookbooks",
+      "Bash(grep *)",
+      "Bash(./.devassistant/build-via-intellij.sh *)",
+      "Bash(./.devassistant/find-files-via-intellij.sh *)",
+      "Bash(./.devassistant/search-via-intellij.sh *)",
+      "Bash(./.devassistant/run-test-via-intellij.sh *)",
+      "Bash(./.devassistant/list-run-configs-via-intellij.sh *)",
+      "Bash(mcp-devassist-doctor:*)",
+      "Bash($WSROOT/.claude/scripts/mcp-devassist-doctor*)",
+      "Bash(mcp-github-doctor:*)",
+      "Bash($WSROOT/.claude/scripts/mcp-github-doctor*)",
+      "Bash(aws-doctor:*)",
+      "Bash($WSROOT/.claude/scripts/aws-doctor*)",
+      "Bash(lang-java-doctor:*)",
+      "Bash($WSROOT/.claude/scripts/lang-java-doctor*)",
+      "Bash(git-doctor:*)",
+      "Bash($WSROOT/.claude/scripts/git-doctor*)",
+      "Bash(teamcity *)",
+      "Bash(teamcity-doctor:*)",
+      "Bash($WSROOT/.claude/scripts/teamcity-doctor*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf ~/)",
+      "Bash(rm -rf $HOME)",
+      "Bash(git checkout -- *)",
+      "Bash(git restore .)",
+      "Bash(git restore --staged --worktree :*)",
+      "Bash(sudo :*)",
+      "Bash(su :*)",
+      "Bash(doas :*)",
+      "Bash(dd if=:*)",
+      "Bash(mkfs :*)",
+      "Bash(fdisk :*)",
+      "Bash(parted :*)",
+      "Bash(shutdown :*)",
+      "Bash(reboot :*)",
+      "Bash(init :*)",
+      "Bash(systemctl :*)",
+      "Bash(iptables :*)",
+      "Bash(nft :*)",
+      "Bash(ufw :*)",
+      "Read(~/.config/tc/config.yml)"
+    ],
+    "env": {
+      "BASH_DEFAULT_TIMEOUT_MS": "900000",
+      "BASH_MAX_TIMEOUT_MS": "900000"
+    },
+    "additionalDirectories": [
+      ".."
+    ]
+  },
+  "cleanupPeriodDays": 365,
+  "statusLine": {
+    "type": "command",
+    "command": "bash -c 'S=\"$WSROOT/.claude/scripts/statusline.py\"; test -f \"$S\" || { echo \"claude-hook[statusline]: $S not found, skipping\" >&2; exit 0; }; R=\"${XDG_CACHE_HOME:-$HOME/.cache}/statusline/runner\"; if read -r M P < \"$R\" 2>/dev/null; then SM=$(stat -c %Y \"$S\" 2>/dev/null || stat -f %m \"$S\" 2>/dev/null); if [ -n \"$SM\" ] && [ \"$M\" = \"$SM\" ] && [ -x \"$P\" ]; then exec \"$P\" \"$S\"; fi; fi; exec uv run --script \"$S\"'"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'S=\"$WSROOT/.claude/scripts/block-teamcity-writes.py\"; test -f \"$S\" || { echo \"warn: $S not found, skipping TC write guard\" >&2; exit 0; }; uv run --quiet --script \"$S\"'"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "clear|startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'S=\"$WSROOT/.claude/scripts/spec-session-start.py\"; test -f \"$S\" || { echo \"claude-hook[spec-session-start]: $S not found, skipping\" >&2; exit 0; }; exec uv run --quiet --script \"$S\"'"
+          }
+        ]
+      }
+    ]
+  }
+}

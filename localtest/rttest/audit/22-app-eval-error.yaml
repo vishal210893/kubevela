@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: audit-app-evalerror
+  namespace: default
+spec:
+  components:
+    - name: cfg
+      type: audit-eval-error
+      properties:
+        name: audit-evalerror-cm
+        a: "hello"
+        b: 42

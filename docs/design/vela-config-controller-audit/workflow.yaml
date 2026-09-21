@@ -1,0 +1,18 @@
+# Reproducible fixture for the Vela Config controller audit.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: audit-config-workflow
+  namespace: cfg-audit-7105
+spec:
+  components: []
+  workflow:
+    steps:
+      - name: create-config
+        type: create-config
+        properties:
+          name: workflow-created
+          namespace: cfg-audit-7105
+          config:
+            source: workflow-provider
+            count: 2

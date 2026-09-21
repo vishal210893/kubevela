@@ -1,0 +1,140 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Show or set the current project"
+# model = "haiku"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-project:*)"]
+#
+# [[tool.claude.argument]]
+# name = "project"
+# type = "optional-passthrough"
+# hint = "[project]"
+# description = "Project name to switch to. If omitted, shows current project. Errors if project doesn't exist."
+#
+# [tool.claude.output]
+# prompt = "If showing (get): display the current project name and its source (branch override, repo default, or repo name fallback). If setting: confirm the project was set, and report any spec/ctx that were cleared (omit if none were cleared)."
+# examples = [
+#   "Current project: dev (repo default)",
+#   "Current project: platform (branch override for 'feature-x')",
+#   "Current project: ai-dev (repo name fallback)",
+#   "Switched to project 'platform'\n  Cleared spec: my-feature\n  Cleared ctx: steering, auth",
+#   "Switched to project 'platform' (no spec or ctx to clear)"
+# ]
+# ///
+
+"""
+Show or set the current spec project.
+
+No args: shows the current project with its resolution source.
+With args: sets a branch-scoped project override (any branch).
+Use /spec:project:clear to remove the branch override.
+Use /spec:config --set project <name> to change the repo-wide default.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import (
+    get_project, in_git_repo, get_repo_name,
+    get_current_branch, set_branch_project,
+    is_valid_project, get_associated_spec, disassociate_spec,
+    get_contexts, set_contexts,
+)
+from lib.devyaml import get as _yaml_get
+
+
+def do_get():
+    branch = get_current_branch()
+    project = get_project(branch)
+    repo = get_repo_name()
+
+    # Determine source from dev.yaml
+    scope = 'repo_name_fallback'
+    if branch and repo:
+        branch_value = _yaml_get(f'spec.{repo}.branches.{branch}.project')
+        if branch_value is not None:
+            scope = 'branch'
+        else:
+            repo_value = _yaml_get(f'spec.{repo}.project')
+            if repo_value is not None:
+                scope = 'repo'
+
+    data = {
+        'project': project,
+        'scope': scope,
+        'branch': branch
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if project:
+            if scope == 'branch':
+                print(f"Current project: {project} (branch override for '{branch}')")
+            elif scope == 'repo':
+                print(f"Current project: {project} (repo default)")
+            else:
+                print(f"Current project: {project} (repo name fallback)")
+        else:
+            print("No project resolved (no repo name available)")
+
+
+def do_set(name):
+    if not is_valid_project(name):
+        if os.getenv('CC') == '1':
+            print(json.dumps({'error': f"Project '{name}' not found", 'project': name}))
+        else:
+            print(f"Error: Project '{name}' not found", file=sys.stderr)
+            print("Run /spec:project:list to see available projects", file=sys.stderr)
+        sys.exit(1)
+
+    branch = get_current_branch()
+
+    # Capture current spec and ctx before clearing
+    cleared_spec = get_associated_spec(branch)
+    cleared_ctx = get_contexts(branch)
+
+    set_branch_project(branch, name)
+
+    # Clear spec and ctx since they belong to the previous project
+    disassociate_spec(branch)
+    set_contexts([], branch)
+
+    data = {
+        'project': name,
+        'scope': 'branch',
+        'branch': branch,
+        'cleared_spec': cleared_spec,
+        'cleared_ctx': cleared_ctx,
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"Switched to project '{name}' (branch override for '{branch}')")
+        if cleared_spec:
+            print(f"  Cleared spec: {cleared_spec}")
+        if cleared_ctx:
+            print(f"  Cleared ctx: {', '.join(cleared_ctx)}")
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    args = sys.argv[1:]
+    if args:
+        do_set(args[0])
+    else:
+        do_get()
+
+
+if __name__ == "__main__":
+    main()

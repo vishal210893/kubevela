@@ -1,0 +1,32 @@
+# Full-featured Addon CR — tracking mode.
+# A semver *constraint* (not an exact tag) puts the addon in tracking mode:
+# the controller re-resolves it against the registry each reconcile, and
+# upgradePolicy decides whether it upgrades autonomously.
+apiVersion: core.oam.dev/v1beta1
+kind: Addon
+metadata:
+  name: fluxcd
+spec:
+  # Constraint -> tracking mode (vs an exact tag like "v2.1.0" -> pinned).
+  version: "3.0.2"
+  # Auto: controller upgrades when a newer version satisfies the constraint.
+  # Manual (default): controller resolves but waits for you to bump the tag.
+  upgradePolicy: Auto
+  # Registry already registered with KubeVela (e.g. the built-in "KubeVela").
+  registry: KubeVela
+  # Free-form inputs injected into the addon's parameter.cue at render time
+  # (equivalent to the old `--set` flags). Schema is constrained by the addon.
+  parameters:
+    namespace: flux-system
+    replicas: 2
+  # Multi-cluster: deploy the addon's Application to these clusters. Omit to
+  # deploy to all registered clusters.
+  clusters:
+    - local
+  # false (default): a definition already owned by something else fails
+  # reconciliation with a DefinitionConflict condition instead of being taken over.
+  overrideDefinitions: false
+  # false (default): keep the addon's minKubeVelaVersion compatibility check.
+  skipVersionCheck: true
+
+

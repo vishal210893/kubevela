@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-terraform-alibaba
+  namespace: vela-system
+spec:
+  components:
+    - name: terraform-alibaba
+      type: addon
+      properties:
+        skipVersionValidation: true

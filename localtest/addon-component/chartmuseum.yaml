@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-chartmuseum
+  namespace: vela-system
+spec:
+  components:
+    - name: chartmuseum
+      type: addon
+      properties:
+        skipVersionValidation: true

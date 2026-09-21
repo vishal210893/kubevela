@@ -1,0 +1,22 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: podinfo
+  annotations:
+    app.oam.dev/publishVersion: alpha1
+spec:
+  components:
+    - name: podinfo
+      type: ref-objects
+      properties:
+        objects:
+          - resource: deployment
+            group: apps
+            name: podinfo
+  policies:
+    - type: topology
+      name: topology-worker
+      properties:
+        clusters: ["cluster-worker"]
+  workflow:
+    ref: deploy-podinfo

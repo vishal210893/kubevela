@@ -1,0 +1,43 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: broken-health-nginx
+  namespace: vela-system
+  annotations:
+    definition.oam.dev/description: |
+      Nginx Deployment with a deliberately broken healthPolicy CUE template
+      (int + string). Used to verify PR #7226 -- the controller must LOG a
+      warning about the eval failure instead of silently swallowing it.
+spec:
+  workload:
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+  schematic:
+    cue:
+      template: |
+        output: {
+          apiVersion: "apps/v1"
+          kind:       "Deployment"
+          metadata: name: context.name
+          spec: {
+            replicas: parameter.replicas
+            selector: matchLabels: "app.oam.dev/component": context.name
+            template: {
+              metadata: labels: "app.oam.dev/component": context.name
+              spec: containers: [{
+                name:  context.name
+                image: parameter.image
+                ports: [{containerPort: 80}]
+              }]
+            }
+          }
+        }
+        parameter: {
+          image:    *"nginx:1.25" | string
+          replicas: *1            | int
+        }
+      healthPolicy: |
+        // Intentional CUE type error: int + string is invalid.
+        // This is the exact repro from issue #7141 / PR #7226 unit test.
+        isHealth: (context.output.spec.replicas + "not-a-number") > 0

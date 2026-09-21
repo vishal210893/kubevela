@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# mcp-devassist-doctor -- check the DevAssistant MCP's preconditions.
+#
+# The devassist MCP is disabled by default and opt-in: you run
+# `is-developer-assistant login` (Okta OAuth, token cached at
+# ~/.gwmcp/is-devassistant-auth.json, valid 24h) before enabling it. Two states
+# silently break it: a half-finished login leaves the cache file with only a
+# `config` key (no `auth`), so the server starts but every call is
+# unauthenticated; and the OAuth callback binds local port 3000, so a stale
+# listener there makes a fresh `login` fail with EADDRINUSE (often misread as an
+# auth failure). This doctor reports those preconditions with WARNING/impact/fix.
+#
+# Because the server is opt-in, the never-set-up states (CLI absent, never
+# logged in) are advisory warnings (exit 0) -- they should not nag every
+# profile-doctor run. A half-finished/broken login (cache present but no `auth`
+# key) is a real failure (exit 1): that is the state you hit mid-session.
+#
+# It NEVER prints token contents. Read-only (no --fix).
+#
+# Usage:   mcp-devassist-doctor [--format text|json]
+# Exit:    0 = ok / opt-in not set up, 1 = broken login, 2 = usage error.
+#
+# Test hooks: DEVASSIST_DOCTOR_BIN overrides the CLI binary (default
+# `is-developer-assistant`); DEVASSIST_DOCTOR_SKIP_PORT=1 skips the port probe.
+#
+# Doctor contract (shared with mcp-github-doctor, ccbridge-doctor,
+# zshenv-secrets-doctor): a *-doctor script in ~/.claude/scripts/ that exits
+# 0/1/2 and prints findings as WARNING/impact/fix triplets; the profile-doctor
+# aggregator runs all of them.
+
+set -uo pipefail
+
+SECTION=mcp-devassist
+FORMAT=text
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --format) FORMAT="${2:-text}"; shift; [ $# -gt 0 ] && shift ;;
+        --format=*) FORMAT="${1#*=}"; shift ;;
+        -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Unknown argument: $1 (try --help)" >&2; exit 2 ;;
+    esac
+done
+case "$FORMAT" in text|json) ;; *) echo "Invalid --format: $FORMAT" >&2; exit 2 ;; esac
+
+DA_BIN="${DEVASSIST_DOCTOR_BIN:-is-developer-assistant}"
+AUTH_FILE="$HOME/.gwmcp/is-devassistant-auth.json"
+OAUTH_PORT=3000
+
+PROBLEMS=0
+JSON_ROWS=""
+note() { # <status: ok|warn|problem> <key> <single-line message...>
+    local s="$1" k="$2"; shift 2
+    local msg="$*" em
+    [ "$s" = problem ] && PROBLEMS=$((PROBLEMS + 1))
+    em="${msg//\\/\\\\}"; em="${em//\"/\\\"}"
+    JSON_ROWS="${JSON_ROWS:+$JSON_ROWS,}{\"section\":\"$SECTION\",\"status\":\"$s\",\"key\":\"$k\",\"message\":\"$em\"}"
+}
+say() { [ "$FORMAT" = text ] && printf '%s\n' "$*" >&2 || true; }
+guide() { # <what> <impact> <fix>
+    [ "$FORMAT" = text ] || return 0
+    printf '  WARNING: %s\n' "$1" >&2
+    printf '           impact: %s\n' "$2" >&2
+    printf '           fix:    %s\n' "$3" >&2
+}
+
+has_auth_key() { # <file> -- does the cache have a top-level "auth" key?
+    if command -v jq >/dev/null 2>&1; then
+        jq -e 'has("auth")' "$1" >/dev/null 2>&1
+    else
+        grep -q '"auth"[[:space:]]*:' "$1"
+    fi
+}
+
+port_listener() { # <port> -- prints something if a listener is found, else empty
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print; exit}'
+    elif command -v ss >/dev/null 2>&1; then
+        ss -ltnH "sport = :$1" 2>/dev/null | awk 'NR==1{print; exit}'
+    fi
+}
+
+say "mcp-devassist doctor -- are the DevAssistant MCP preconditions met? (opt-in server)"
+
+# 1. CLI present?
+if ! command -v "$DA_BIN" >/dev/null 2>&1; then
+    note warn cli_missing "is-developer-assistant not on PATH (devassist MCP is opt-in)."
+    guide "The is-developer-assistant CLI is not installed." \
+          "The DevAssistant MCP (IS / Gosu docs) cannot run -- harmless if you do not use it." \
+          "If you need it, rebuild the container; access requires Omada AD group gwa.pd_lower.codelift.user."
+else
+    note ok cli_present "is-developer-assistant is on PATH."
+    # 2. login / token-cache state
+    if [ ! -f "$AUTH_FILE" ]; then
+        note warn not_logged_in "no token cache at ~/.gwmcp/is-devassistant-auth.json (not logged in)."
+        guide "You have not completed DevAssistant login yet." \
+              "The MCP starts unauthenticated; enabling it will not reach the knowledge base." \
+              "Run 'is-developer-assistant login' (Okta OAuth), then enable the server via /mcp. Token is valid 24h."
+    elif has_auth_key "$AUTH_FILE"; then
+        note ok logged_in "token cache present with an auth section (login complete)."
+    else
+        note problem login_incomplete "token cache exists but has no 'auth' key (login half-finished / broken)."
+        guide "~/.gwmcp/is-devassistant-auth.json has only 'config' (no 'auth') -- login did not complete." \
+              "The MCP server starts but every DevAssistant call is unauthenticated." \
+              "Re-run 'is-developer-assistant login' and complete the Okta browser flow; tokens are cached for 24h."
+    fi
+    # 3. OAuth callback port (only matters for the browser login flow)
+    if [ "${DEVASSIST_DOCTOR_SKIP_PORT:-0}" != 1 ]; then
+        listener="$(port_listener "$OAUTH_PORT")"
+        if [ -n "$listener" ]; then
+            note warn port_busy "port $OAUTH_PORT is already in use -- a fresh OAuth login may fail with EADDRINUSE."
+            guide "Something is listening on port $OAUTH_PORT (the OAuth callback port)." \
+                  "'is-developer-assistant login' can fail with EADDRINUSE, which is easy to misread as an auth error." \
+                  "Find and free it: lsof -nP -i :$OAUTH_PORT ; kill <pid> -- then retry login."
+        fi
+    fi
+fi
+
+if [ "$FORMAT" = json ]; then
+    ok=true; [ "$PROBLEMS" -gt 0 ] && ok=false
+    printf '{"schema_version":1,"doctor":"%s","problems":%s,"ok":%s,"checks":[%s]}\n' \
+        "$SECTION" "$PROBLEMS" "$ok" "$JSON_ROWS"
+else
+    if [ "$PROBLEMS" -eq 0 ]; then
+        say "[OK] DevAssistant preconditions met (or opt-in server not set up -- advisory above)."
+    else
+        say "[PROBLEM] DevAssistant has $PROBLEMS issue(s) above -- login is broken until fixed."
+    fi
+fi
+
+[ "$PROBLEMS" -eq 0 ] || exit 1
+exit 0

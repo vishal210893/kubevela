@@ -1,0 +1,20 @@
+@startuml basic-api-request
+!theme plain
+title Basic REST API Request
+
+actor User
+participant "Web App" as App
+boundary "API Gateway" as GW
+participant "User Service" as Svc
+database "Database" as DB
+
+User -> App: click "View Profile"
+App -> GW: GET /api/users/123
+GW -> Svc ++: getUser(123)
+Svc -> DB: SELECT * FROM users WHERE id = 123
+DB --> Svc: userRecord
+Svc --> GW --: 200 {user}
+GW --> App: 200 {user}
+App --> User: display profile page
+
+@enduml

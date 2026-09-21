@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-cert-manager
+  namespace: vela-system
+spec:
+  components:
+    - name: cert-manager
+      type: addon
+      properties:
+        skipVersionValidation: true

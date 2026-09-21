@@ -1,0 +1,123 @@
+{
+  "mounts": [
+    "type=bind,source=${localEnv:HOME}/.atmos2,target=/home/node/.atmos2,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.aws,target=/home/node/.aws,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.claude,target=/home/node/.claude,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.claude.json,target=/home/node/.claude.json,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/CLAUDE.md,target=/home/node/CLAUDE.md,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.config/gh,target=/home/node/.config/gh,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig-host,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.gitignore_global,target=/home/node/.gitignore_global,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.kube,target=/home/node/.kube-host,consistency=cached,readonly",
+    "type=bind,source=${localEnv:HOME}/.m2,target=/home/node/.m2,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.cache/uv,target=/home/node/.cache/uv,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.npm-global,target=/home/node/.npm-global,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.zshrc.local,target=/home/node/.zshrc.local,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.npmrc,target=/home/node/.npmrc,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.dev,target=/home/node/.dev,consistency=cached",
+    "type=bind,source=${localEnv:HOME}/.screenshots,target=/workspaces/.screenshots,consistency=cached"
+  ],
+  "remoteEnv": {
+    "ATMOS_GALAXY_NAME": "${localEnv:ATMOS_GALAXY_NAME}",
+    "ATMOS_QUADRANT_ALIAS_NAME": "${localEnv:ATMOS_QUADRANT_ALIAS_NAME}",
+    "ATMOS_QUADRANT_NAME": "${localEnv:ATMOS_QUADRANT_NAME}",
+    "ATMOS_SESSION": "${localEnv:ATMOS_SESSION}",
+    "AWS_ACCESS_KEY_ID": "${localEnv:AWS_ACCESS_KEY_ID}",
+    "AWS_ACCOUNT_ID": "${localEnv:AWS_ACCOUNT_ID}",
+    "AWS_ACCOUNT_NAME": "${localEnv:AWS_ACCOUNT_NAME}",
+    "AWS_SECRET_ACCESS_KEY": "${localEnv:AWS_SECRET_ACCESS_KEY}",
+    "AWS_SECURITY_TOKEN": "${localEnv:AWS_SECURITY_TOKEN}",
+    "AWS_SESSION_TOKEN": "${localEnv:AWS_SESSION_TOKEN}",
+    "AWS_PROFILE": "${localEnv:AWS_PROFILE}",
+    "AWS_DEFAULT_REGION": "${localEnv:AWS_DEFAULT_REGION}",
+    "CCA_CLIENT_ID": "${localEnv:CCA_CLIENT_ID}",
+    "CCA_CLIENT_SECRET": "${localEnv:CCA_CLIENT_SECRET}",
+    "HOST_USER": "${localEnv:USER}",
+    "HOST_USERNAME": "${localEnv:USERNAME}",
+    "GH_TOKEN": "${localEnv:GH_TOKEN}",
+    "TERM_PROGRAM": "${localEnv:TERM_PROGRAM}",
+    "ITERM_SESSION_ID": "${localEnv:ITERM_SESSION_ID}",
+    "KUBECONFIG": "${localEnv:KUBECONFIG}",
+    "INSURANCESUITE_CORE_SNAPSHOT_REPOSITORY_URL": "${localEnv:INSURANCESUITE_CORE_SNAPSHOT_REPOSITORY_URL}",
+    "INSURANCESUITE_CORE_RELEASE_REPOSITORY_URL": "${localEnv:INSURANCESUITE_CORE_RELEASE_REPOSITORY_URL}",
+    "MAVEN_CENTRAL_MIRROR_REPOSITORY_URL": "${localEnv:MAVEN_CENTRAL_MIRROR_REPOSITORY_URL}",
+    "INSURANCESUITE_CORE_DEPENDENCIES_RELEASE_REPOSITORY_URL": "${localEnv:INSURANCESUITE_CORE_DEPENDENCIES_RELEASE_REPOSITORY_URL}",
+    "INSURANCESUITE_CORE_OSGI_3RD_PARTY_SNAPSHOT_REPOSITORY_URL": "${localEnv:INSURANCESUITE_CORE_OSGI_3RD_PARTY_SNAPSHOT_REPOSITORY_URL}",
+    "INSURANCESUITE_CORE_OSGI_3RD_PARTY_RELEASE_REPOSITORY_URL": "${localEnv:INSURANCESUITE_CORE_OSGI_3RD_PARTY_RELEASE_REPOSITORY_URL}",
+    "INSURANCESUITE_CORE_GRADLE_PLUGINS_SNAPSHOT_REPOSITORY_URL": "${localEnv:INSURANCESUITE_CORE_GRADLE_PLUGINS_SNAPSHOT_REPOSITORY_URL}",
+    "INSURANCESUITE_CORE_GRADLE_PLUGINS_PRODUCTION_REPOSITORY_URL": "${localEnv:INSURANCESUITE_CORE_GRADLE_PLUGINS_PRODUCTION_REPOSITORY_URL}",
+    "INSURANCESUITE_CORE_THIRDPARTY_REPOSITORY_URL": "${localEnv:INSURANCESUITE_CORE_THIRDPARTY_REPOSITORY_URL}",
+    "GRADLE_PLUGINS_MIRROR_REPOSITORY_URL": "${localEnv:GRADLE_PLUGINS_MIRROR_REPOSITORY_URL}",
+    "GRADLE_DISTRIBUTION_REPOSITORY_URL": "${localEnv:GRADLE_DISTRIBUTION_REPOSITORY_URL}",
+    "DEPENDENCY_REPOSITORY_USERNAME": "${localEnv:DEPENDENCY_REPOSITORY_USERNAME}",
+    "DEPENDENCY_REPOSITORY_PASSWORD": "${localEnv:DEPENDENCY_REPOSITORY_PASSWORD}",
+    "ARTIFACTORY_URL": "${localEnv:ARTIFACTORY_URL}",
+    "ARTIFACTORY_PASSWORD": "${localEnv:ARTIFACTORY_PASSWORD}",
+    "ARTIFACTORY_USERNAME": "${localEnv:ARTIFACTORY_USERNAME}",
+    "TEAMCITY_URL": "https://gwre-devexp-ci-production-devci.gwre-devops.net/",
+    "TEAMCITY_TOKEN": "${localEnv:TEAMCITY_TOKEN}",
+    "TEAMCITY_RO": "1"
+  },
+  "initializeCommand": "uv run --no-sync .devcontainer/initialize-scripts/initialize-dispatcher.py",
+  "postCreateCommand": ".devcontainer/post-create-scripts/post-create-dispatcher.py",
+  "postStartCommand": ".devcontainer/post-start-scripts/post-start-dispatcher.py",
+  "image": "artifactory.guidewire.com/ai-coding/claude-code:latest",
+  "name": "GW CC AI - 5bde691d",
+  "runArgs": [
+    "--init",
+    "--restart=unless-stopped"
+  ],
+  "containerEnv": {
+    "WSROOT": "${containerWorkspaceFolder}",
+    "SHELL": "/bin/zsh",
+    "DEVASSISTANT_IDE_HOST": "host.docker.internal",
+    "ENABLE_LSP_TOOL": "1",
+    "PROPERTYSERVICE_CLIENT_SERVER_URI_OVERRIDE": "https://helios.api.omega2-andromeda.guidewire.net",
+    "DOCKER_BUILDKIT": "1",
+    "JAVA11_HOME": "/home/node/.java/11",
+    "JAVA17_HOME": "/home/node/.java/17",
+    "JAVA21_HOME": "/home/node/.java/21",
+    "PYTHONUNBUFFERED": "True",
+    "UV_LINK_MODE": "copy",
+    "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt",
+    "GW_MCP_DEVKEY_PAGE_URL": "https://cloud.int.ccs.guidewire.net/app/codelift/devkey"
+  },
+  "forwardPorts": [
+    8081,
+    8190,
+    8280,
+    8580,
+    8000
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode-remote.remote-containers",
+        "ms-vscode.vscode-json",
+        "anthropic.claude-code",
+        "golang.go",
+        "vscjava.vscode-java-pack",
+        "ms-python.python",
+        "ms-vscode.vscode-typescript-next",
+        "dbaeumer.vscode-eslint"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": {
+          "zsh": {
+            "path": "/bin/zsh"
+          }
+        }
+      }
+    },
+    "jetbrains": {
+      "plugins": [
+        "com.anthropic.code.plugin"
+      ]
+    }
+  },
+  "extraHosts": [
+    "host.docker.internal:host-gateway"
+  ],
+  "remoteUser": "node"
+}

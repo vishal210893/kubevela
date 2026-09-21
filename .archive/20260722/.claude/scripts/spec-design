@@ -1,0 +1,84 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Generate or refine design document"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-design)", "Read", "Write"]
+#
+# [tool.claude.output]
+# prompt = """Based on the script output, generate or refine the spec's design.md (path shown in script output).
+#
+# Read requirements.md first if it exists (reqs_content provided) to inform the design.
+# If design.md exists (existing_content provided), refine and expand it.
+# If it doesn't exist, generate a new one.
+#
+# Use this structure:
+# 1. System Architecture - Directory structure (ASCII tree), Component diagram
+# 2. Data Flow - Numbered steps with arrows
+# 3. Interface Specifications - APIs, environment variables, configs as tables
+# 4. Technical Decisions - Each with: Choice, Rationale, Alternatives Considered
+# 5. Error Handling - Table with: Scenario, Detection, Response
+# 6. Testing Approach - Unit, integration, smoke test strategies
+#
+# If constitution_content is provided, treat it as immutable project principles.
+# Ensure all design decisions comply with those principles.
+#
+# After writing/updating, summarize key architectural decisions and suggest /spec:tasks next."""
+# examples = [
+#   "[OK] Created design.md for spec 'feature-auth'\n\nKey decisions:\n  - Using JWT for auth tokens\n  - Redis for session storage\n\nNext: /spec:tasks"
+# ]
+# ///
+
+"""
+Gather context for design document generation.
+
+Uses the spec associated with the current branch.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import require_associated_spec, spec_path, steering_path
+
+
+def main():
+    spec_name, branch = require_associated_spec()
+
+    path = spec_path(spec_name)
+    path.mkdir(parents=True, exist_ok=True)
+
+    design_file = path / 'design.md'
+    reqs_file = path / 'requirements.md'
+
+    constitution_file = steering_path() / 'constitution.md'
+    constitution_content = constitution_file.read_text() if constitution_file.exists() else None
+
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(path),
+        'design_file': str(design_file),
+        'exists': design_file.exists(),
+        'existing_content': design_file.read_text() if design_file.exists() else None,
+        'reqs_exists': reqs_file.exists(),
+        'reqs_content': reqs_file.read_text() if reqs_file.exists() else None,
+        'constitution_content': constitution_content,
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if data['exists']:
+            print(f"Spec '{spec_name}' has existing design.md - will refine")
+        else:
+            print(f"Will create new design.md for spec '{spec_name}'")
+
+
+if __name__ == "__main__":
+    main()

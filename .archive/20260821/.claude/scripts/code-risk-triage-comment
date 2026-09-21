@@ -1,0 +1,247 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""
+code-risk-triage-comment - Build and upsert the PR triage comment.
+
+Constructs the risk classification comment body with tier display, file
+listings by category, embedded Claude analysis, and an HTML marker for
+upsert behavior. Finds any existing triage comment and updates it, or
+creates a new one.
+
+Environment variables:
+    PR_NUMBER       - Pull request number (required)
+    REPO            - Repository in owner/name format (required)
+    TIER            - Risk tier: low, medium, high, or critical (required)
+    REASON          - Classification reason text (required)
+    TOTAL_LINES     - Total lines changed (required)
+    TOTAL_FILES     - Total files changed (required)
+    CRITICAL_HIT    - "true" if critical files present (default: "false")
+    CRITICAL_FILES  - Newline-separated critical-risk file paths
+    HIGH_HIT        - "true" if high files present (default: "false")
+    HIGH_FILES      - Newline-separated high-risk file paths
+    MEDIUM_HIT      - "true" if medium files present (default: "false")
+    MEDIUM_FILES    - Newline-separated medium-risk file paths
+    LOW_FILES       - Newline-separated low-risk file paths
+    UNMATCHED_FILES - Newline-separated uncategorized file paths
+    ANALYSIS        - Claude analysis markdown (optional)
+    GH_TOKEN        - GitHub token for API access (required by gh CLI)
+
+Usage:
+    PR_NUMBER=42 REPO=org/repo TIER=high REASON="High-risk paths" \\
+        TOTAL_LINES=500 TOTAL_FILES=12 \\
+        uv run --quiet --script code-risk-triage-comment
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+
+MARKER = "<!-- code-risk -->"
+
+TIER_DISPLAY_MAP = {
+    "low": "LOW",
+    "medium": "MEDIUM",
+    "high": "HIGH",
+    "critical": "CRITICAL",
+}
+
+
+def run_gh(args, check=True):
+    """Run a gh CLI command and return stdout."""
+    result = subprocess.run(
+        ["gh"] + args,
+        capture_output=True,
+        text=True,
+    )
+    if check and result.returncode != 0:
+        print(f"[WARN] gh {' '.join(args)}: {result.stderr.strip()}", file=sys.stderr)
+    return result.stdout.strip()
+
+
+def parse_file_list(env_var):
+    """Parse a newline-separated file list from an environment variable."""
+    raw = os.environ.get(env_var, "").strip()
+    if not raw:
+        return []
+    return [f for f in raw.splitlines() if f.strip()]
+
+
+def build_comment_body(
+    tier,
+    reason,
+    total_lines,
+    total_files,
+    critical_files,
+    high_files,
+    medium_files,
+    low_files,
+    unmatched_files,
+    analysis,
+):
+    """Build the triage comment markdown body.
+
+    Returns the complete comment body as a string.
+    """
+    tier_display = TIER_DISPLAY_MAP.get(tier, "HIGH")
+
+    lines = []
+    lines.append(MARKER)
+    lines.append(f"## PR Risk Classification: {tier_display}")
+    lines.append("")
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
+    lines.append(f"| **Lines changed** | {total_lines} |")
+    lines.append(f"| **Files changed** | {total_files} |")
+    lines.append(f"| **Critical-risk files** | {len(critical_files)} |")
+    lines.append(f"| **High-risk files** | {len(high_files)} |")
+    lines.append(f"| **Medium-risk files** | {len(medium_files)} |")
+    lines.append(f"| **Low-risk files** | {len(low_files)} |")
+    lines.append("")
+    lines.append(f"**Classification reason:** {reason}")
+    lines.append("")
+
+    # Claude analysis for critical/high-risk (what/why/risk)
+    if analysis:
+        lines.append("---")
+        lines.append("")
+        lines.append(analysis)
+        lines.append("")
+
+    # File listing by tier (only show if no analysis replaced the detail)
+    if critical_files and not analysis:
+        lines.append("---")
+        lines.append("")
+        lines.append("### Critical-Risk Files")
+        lines.append("")
+        for f in critical_files:
+            lines.append(f"- `{f}`")
+        lines.append("")
+
+    if high_files and not analysis:
+        lines.append("### High-Risk Files")
+        lines.append("")
+        for f in high_files:
+            lines.append(f"- `{f}`")
+        lines.append("")
+
+    if medium_files:
+        lines.append("### Medium-Risk Files")
+        lines.append("")
+        for f in medium_files:
+            lines.append(f"- `{f}`")
+        lines.append("")
+
+    if low_files:
+        lines.append("<details>")
+        lines.append(f"<summary>Low-Risk Files ({len(low_files)})</summary>")
+        lines.append("")
+        for f in low_files:
+            lines.append(f"- `{f}`")
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+    if unmatched_files:
+        lines.append("<details>")
+        lines.append(f"<summary>Uncategorized Files ({len(unmatched_files)})</summary>")
+        lines.append("")
+        for f in unmatched_files:
+            lines.append(f"- `{f}`")
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def find_existing_comment(repo, pr_number):
+    """Find the ID of an existing triage comment by its HTML marker."""
+    raw = run_gh([
+        "api", f"repos/{repo}/issues/{pr_number}/comments",
+        "--paginate",
+    ], check=False)
+
+    if not raw:
+        return None
+
+    try:
+        comments = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+    existing_id = None
+    for comment in comments:
+        body = comment.get("body", "")
+        if MARKER in body:
+            existing_id = comment.get("id")
+    return existing_id
+
+
+def upsert_comment(repo, pr_number, body):
+    """Create or update the triage comment on the PR."""
+    existing_id = find_existing_comment(repo, pr_number)
+
+    if existing_id:
+        run_gh([
+            "api", "--method", "PATCH",
+            f"repos/{repo}/issues/comments/{existing_id}",
+            "-f", f"body={body}",
+        ])
+        print(f"[OK] Updated existing triage comment (id: {existing_id})", file=sys.stderr)
+    else:
+        run_gh([
+            "pr", "comment", str(pr_number),
+            "-R", repo,
+            "--body", body,
+        ])
+        print("[OK] Created triage comment", file=sys.stderr)
+
+
+def main():
+    pr_number = os.environ.get("PR_NUMBER", "")
+    repo = os.environ.get("REPO", "")
+    tier = os.environ.get("TIER", "")
+    reason = os.environ.get("REASON", "")
+    total_lines = os.environ.get("TOTAL_LINES", "0")
+    total_files = os.environ.get("TOTAL_FILES", "0")
+
+    if not pr_number:
+        print("Error: PR_NUMBER environment variable is required", file=sys.stderr)
+        sys.exit(1)
+    if not repo:
+        print("Error: REPO environment variable is required", file=sys.stderr)
+        sys.exit(1)
+    if tier not in TIER_DISPLAY_MAP:
+        print(f"Error: TIER must be one of {sorted(TIER_DISPLAY_MAP)}, got: {tier!r}", file=sys.stderr)
+        sys.exit(1)
+
+    critical_files = parse_file_list("CRITICAL_FILES")
+    high_files = parse_file_list("HIGH_FILES")
+    medium_files = parse_file_list("MEDIUM_FILES")
+    low_files = parse_file_list("LOW_FILES")
+    unmatched_files = parse_file_list("UNMATCHED_FILES")
+    analysis = os.environ.get("ANALYSIS", "").strip()
+
+    body = build_comment_body(
+        tier=tier,
+        reason=reason,
+        total_lines=total_lines,
+        total_files=total_files,
+        critical_files=critical_files,
+        high_files=high_files,
+        medium_files=medium_files,
+        low_files=low_files,
+        unmatched_files=unmatched_files,
+        analysis=analysis,
+    )
+
+    upsert_comment(repo, pr_number, body)
+
+
+if __name__ == "__main__":
+    main()

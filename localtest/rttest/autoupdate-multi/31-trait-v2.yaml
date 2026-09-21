@@ -1,0 +1,19 @@
+apiVersion: core.oam.dev/v1beta1
+kind: TraitDefinition
+metadata:
+  name: mk-trait
+  namespace: vela-system
+spec:
+  appliesToWorkloads:
+    - "*"
+  schematic:
+    cue:
+      template: |
+        patch: {
+          metadata: annotations: {
+            "mk-trait/marker": "v2"
+          }
+        }
+        parameter: {
+          enabled: *true | bool
+        }

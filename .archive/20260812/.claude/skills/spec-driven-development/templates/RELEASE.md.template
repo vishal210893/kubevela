@@ -1,0 +1,13 @@
+# Release Notes: {{FEATURE_NAME}}
+
+## One-Liner
+
+{{ONE_LINE_DESCRIPTION}}
+
+## Details
+
+{{DETAILED_DESCRIPTION}}
+
+## Issue
+
+Closes #{{ISSUE_NUMBER}}

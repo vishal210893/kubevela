@@ -1,0 +1,173 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["tomli", "ruamel.yaml"]
+#
+# [tool.claude]
+# description = "View or modify GitHub configuration"
+# model = "haiku"
+# context = "fork"
+#
+# [[tool.claude.argument]]
+# name = "set"
+# type = "optional-passthrough"
+# hint = "[--set key value]"
+# description = "Set a config value (e.g., --set issue-repo 'owner/repo')"
+#
+# [[tool.claude.argument]]
+# name = "unset"
+# type = "optional-passthrough"
+# hint = "[--unset key]"
+# description = "Remove a config value (e.g., --unset issue-repo)"
+#
+# [tool.claude.output]
+# prompt = "Show current config values or confirm set/unset operation. Display all GitHub settings in a clean format."
+# examples = [
+#   "GitHub config:\n  issue-repo: gwre-pdo/ai-dev",
+#   "OK: Set issue-repo = gwre-pdo/ai-dev",
+#   "OK: Unset issue-repo",
+#   "No GitHub config set. Use --set to configure."
+# ]
+# ///
+
+"""View or modify GitHub configuration stored in dev.yaml."""
+
+import sys
+import os
+import argparse
+import subprocess
+
+# Add bin directory to path to import gitlib
+bin_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, bin_dir)
+
+# Import from git capability's lib (shared scripts directory at runtime)
+parent_dir = os.path.dirname(bin_dir)
+scripts_dir = os.path.join(parent_dir, '..', '..', '..', '..', 'git', 'src', 'claude', 'scripts')
+scripts_dir = os.path.abspath(scripts_dir)
+sys.path.insert(0, scripts_dir)
+
+# At runtime, all scripts are merged into a single scripts/ directory
+# so gitlib will be available at bin_dir/lib/
+sys.path.insert(0, bin_dir)
+
+from lib.gitlib import output_result, get_template_from_metadata, error
+from lib.ghlib import get_current_owner_repo, get_configured_issue_repo
+from lib.devyaml import get as yaml_get, set as yaml_set, unset as yaml_unset
+
+
+def get_repo_name():
+    """Extract repo name from origin remote URL."""
+    result = subprocess.run(
+        ['git', 'remote', 'get-url', 'origin'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return None
+    url = result.stdout.strip()
+    if not url:
+        return None
+    if url.endswith('.git'):
+        url = url[:-4]
+    url = url.rstrip('/')
+    name = url.split('/')[-1]
+    return name.lower() if name else None
+
+
+# Valid config keys with descriptions
+VALID_KEYS = {
+    'issue-repo': 'owner/repo where issues live (default: current repo)',
+}
+
+
+def get_all_config():
+    """Read all GitHub config values with defaults.
+
+    Returns configured values. For issue-repo, shows configured value or
+    marks it as using the current repo default.
+    """
+    config = {}
+    defaults = {}
+
+    configured = get_configured_issue_repo()
+    if configured:
+        config['issue-repo'] = configured
+    else:
+        # Show current repo as the default
+        current = get_current_owner_repo()
+        if current:
+            defaults['issue-repo'] = current
+
+    return config, defaults
+
+
+def set_config(key, value):
+    """Set a config value in dev.yaml."""
+    repo = get_repo_name()
+    if not repo:
+        return False
+    yaml_set(f'gh.{repo}.{key}', value)
+    return True
+
+
+def unset_config(key):
+    """Remove config from dev.yaml."""
+    repo = get_repo_name()
+    if not repo:
+        return False
+    return yaml_unset(f'gh.{repo}.{key}')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--set', nargs=2, metavar=('KEY', 'VALUE'),
+                       help='Set a config value')
+    parser.add_argument('--unset', metavar='KEY',
+                       help='Remove a config value')
+    args = parser.parse_args()
+
+    if args.set:
+        key, value = args.set
+        if key not in VALID_KEYS:
+            error(f"Unknown config key: {key}")
+            print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+            sys.exit(1)
+
+        if set_config(key, value):
+            data = {'action': 'set', 'key': key, 'value': value,
+                    'message': f'OK: Set {key} = {value}'}
+        else:
+            error(f"Failed to set {key}")
+            sys.exit(1)
+
+    elif args.unset:
+        key = args.unset
+        if key not in VALID_KEYS:
+            error(f"Unknown config key: {key}")
+            print(f"Valid keys: {', '.join(sorted(VALID_KEYS.keys()))}", file=sys.stderr)
+            sys.exit(1)
+
+        if unset_config(key):
+            data = {'action': 'unset', 'key': key,
+                    'message': f'OK: Unset {key}'}
+        else:
+            error(f"Failed to unset {key} (may not be set)")
+            sys.exit(1)
+
+    else:
+        # Show all config
+        config, defaults = get_all_config()
+        lines = ['GitHub config:']
+        for key in sorted(VALID_KEYS.keys()):
+            if key in config:
+                lines.append(f'  {key}: {config[key]}')
+            elif key in defaults:
+                lines.append(f'  {key}: {defaults[key]} (default: current repo)')
+        data = {'action': 'show', 'config': config, 'defaults': defaults,
+                'message': '\n'.join(lines)}
+
+    template = get_template_from_metadata()
+    output_result(data, template)
+
+
+if __name__ == "__main__":
+    main()

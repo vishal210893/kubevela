@@ -1,0 +1,103 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Create a new context directory"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/ctx-create:*)", "Read", "Write", "Glob", "Grep"]
+#
+# [[tool.claude.argument]]
+# name = "name"
+# type = "required-passthrough"
+# hint = "<name>"
+# description = "Context name (e.g. auth, billing, data-export)"
+#
+# [tool.claude.output]
+# prompt = """A new context directory was created at the path shown in the output.
+#
+# Now analyze the codebase to populate it with useful documents. Read relevant source files,
+# configuration, and existing docs to understand this area, then write one or more markdown
+# files inside the context directory. Organize by topic -- for example:
+#
+# - `overview.md` -- What this project/area does and why it exists
+# - `architecture.md` -- Key classes, modules, data flow, dependencies
+# - `conventions.md` -- Patterns, naming rules, error handling specific to this area
+# - `key-files.md` -- Important file paths with brief descriptions
+#
+# Or use a single `context.md` if the area is small. Use your judgement on how many files
+# to create based on the complexity of the area.
+#
+# Write in a factual, concise style. Focus on what an agent needs to know to work
+# effectively in this area. Avoid duplicating steering docs (project-wide info) or
+# spec docs (feature-specific info).
+#
+# After writing, suggest adding it to the branch context: /spec:ctx:add <name>"""
+# examples = [
+#   "[OK] Created context 'auth' at /workspaces/src/specs/dev/ctx/auth/\n\n[Analyzes codebase and writes context documents into the directory]"
+# ]
+# ///
+
+"""
+Create a new context directory.
+
+Creates a new context directory under <doc-root>/ctx/<name>/.
+Context directories hold long-lived project documentation that
+persists across specs and accumulates knowledge over time.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import doc_root, in_git_repo
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    if len(sys.argv) < 2:
+        print("Error: Context name required", file=sys.stderr)
+        print("Usage: ctx-create <name>", file=sys.stderr)
+        sys.exit(1)
+
+    name = sys.argv[1]
+
+    root = doc_root()
+    ctx_dir = root / 'ctx'
+
+    # Check if context already exists (as directory or file)
+    ctx_path = ctx_dir / name
+    ctx_file = ctx_dir / f'{name}.md'
+
+    if ctx_path.is_dir():
+        print(f"Error: Context '{name}' already exists at {ctx_path}/", file=sys.stderr)
+        sys.exit(1)
+    if ctx_file.is_file():
+        print(f"Error: Context '{name}' already exists at {ctx_file}", file=sys.stderr)
+        sys.exit(1)
+
+    # Create as a directory
+    ctx_path.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        'name': name,
+        'path': str(ctx_path),
+        'doc_root': str(root),
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"[OK] Created context '{name}' at {ctx_path}/")
+        print()
+        print(f"Add to your branch: /spec:ctx:add {name}")
+
+
+if __name__ == "__main__":
+    main()

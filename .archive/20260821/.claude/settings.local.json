@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(vela version *)",
+      "mcp__jira__getJiraIssue"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "confluence",
+    "jira",
+    "devassistant",
+    "figma",
+    "github",
+    "guidewire-docs",
+    "guidewire-docs-staging",
+    "jutro-developer-assistant"
+  ]
+}

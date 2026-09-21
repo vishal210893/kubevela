@@ -1,0 +1,18 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: pol-gc-keep-legacy
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-gc-legacy-fixed
+spec:
+  components:
+    - name: web
+      type: webservice
+      properties:
+        image: nginx:1.21
+  policies:
+    - name: gc-keep
+      type: garbage-collect
+      properties:
+        keepLegacyResource: true

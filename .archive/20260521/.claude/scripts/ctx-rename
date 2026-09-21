@@ -1,0 +1,101 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Rename a context directory"
+# model = "sonnet"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/ctx-rename:*)"]
+#
+# [[tool.claude.argument]]
+# name = "old-name"
+# type = "required-passthrough"
+# hint = "<old-name>"
+# description = "Current context name"
+#
+# [[tool.claude.argument]]
+# name = "new-name"
+# type = "required-passthrough"
+# hint = "<new-name>"
+# description = "New context name"
+#
+# [tool.claude.output]
+# prompt = "Confirm the rename. Show old and new paths. Note that branch context refs are NOT updated automatically -- branches referencing the old name should update with /spec:ctx."
+# examples = [
+#   "[OK] Renamed context 'auth' -> 'authentication'\n\n  /workspaces/src/specs/dev/ctx/auth.md -> /workspaces/src/specs/dev/ctx/authentication.md\n\nNote: Update branch refs with /spec:ctx if needed"
+# ]
+# ///
+
+"""
+Rename a context directory.
+
+Renames a context directory (or file) under <doc-root>/ctx/.
+Does NOT update branch context refs -- branches referencing the old
+name need to be updated manually with /spec:ctx.
+"""
+
+import sys
+import os
+import json
+import shutil
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import resolve_context_path, doc_root, in_git_repo
+
+
+def main():
+    if not in_git_repo():
+        print("Error: Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    if len(sys.argv) < 3:
+        print("Error: Both old and new names required", file=sys.stderr)
+        print("Usage: ctx-rename <old-name> <new-name>", file=sys.stderr)
+        sys.exit(1)
+
+    old_name = sys.argv[1]
+    new_name = sys.argv[2]
+
+    # Resolve old path (checks ctx/, context/, subsystems/ fallbacks)
+    old_path = resolve_context_path(old_name)
+    if not old_path.exists():
+        print(f"Error: Context '{old_name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    # New path always goes in ctx/ (canonical)
+    root = doc_root()
+    ctx_dir = root / 'ctx'
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+
+    if old_path.is_dir():
+        new_path = ctx_dir / new_name
+    else:
+        new_path = ctx_dir / f'{new_name}.md'
+
+    if new_path.exists():
+        print(f"Error: Context '{new_name}' already exists at {new_path}", file=sys.stderr)
+        sys.exit(1)
+
+    shutil.move(str(old_path), str(new_path))
+
+    data = {
+        'old_name': old_name,
+        'new_name': new_name,
+        'old_path': str(old_path),
+        'new_path': str(new_path),
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        print(f"[OK] Renamed context '{old_name}' -> '{new_name}'")
+        print()
+        print(f"  {old_path} -> {new_path}")
+        print()
+        print("Note: Update branch refs with /spec:ctx if needed")
+
+
+if __name__ == "__main__":
+    main()

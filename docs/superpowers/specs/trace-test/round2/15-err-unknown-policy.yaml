@@ -1,0 +1,18 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: err-unknown-policy
+  namespace: trace-r2
+  annotations:
+    app.oam.dev/traceID: trace-r2-err-unknown-policy-fixed
+spec:
+  components:
+    - name: web
+      type: webservice
+      properties:
+        image: nginx:1.21
+  policies:
+    - name: ghost-policy
+      type: this-policy-type-does-not-exist
+      properties:
+        x: 1

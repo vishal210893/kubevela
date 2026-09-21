@@ -1,0 +1,127 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["ruamel.yaml"]
+#
+# [tool.claude]
+# description = "Generate or refine requirements document"
+# model = "opus"
+# allowed-tools = ["Bash($WSROOT/.claude/scripts/spec-requirements)", "Read", "Write"]
+#
+# [tool.claude.output]
+# prompt = """Based on the script output, generate or refine the spec's requirements.md (path shown in script output).
+#
+# If requirements.md exists (existing_content provided), refine and expand it.
+# If it doesn't exist, generate a new one.
+#
+# Use this Kiro-style structure:
+#
+# ```markdown
+# # Requirements: [Feature Name]
+#
+# ## Introduction
+#
+# [Brief description - 2-3 sentences about what's being built and why]
+#
+# ## Requirements
+#
+# ### Requirement 1: [Feature Area]
+#
+# **User Story:** As a [role], I want [capability], so that [benefit]
+#
+# #### Acceptance Criteria
+#
+# 1. WHEN [condition/event] THE SYSTEM SHALL [expected behavior]
+# 2. WHEN [condition/event] THE SYSTEM SHALL [expected behavior]
+# 3. IF [precondition] THEN THE SYSTEM SHALL [response]
+#
+# ### Requirement 2: [Feature Area]
+#
+# **User Story:** As a [role], I want [capability], so that [benefit]
+#
+# #### Acceptance Criteria
+#
+# 1. WHEN [condition/event] THE SYSTEM SHALL [expected behavior]
+# 2. WHEN [condition/event] AND [condition] THE SYSTEM SHALL [behavior]
+#
+# ### Requirement 3: Non-Functional Requirements
+#
+# **User Story:** As a [role], I want [quality attribute], so that [benefit]
+#
+# #### Acceptance Criteria
+#
+# 1. THE SYSTEM SHALL [performance/reliability constraint]
+# 2. WHILE [state] THE SYSTEM SHALL [behavior constraint]
+#
+# ## Constraints
+#
+# - [Technical or business constraint]
+# ```
+#
+# EARS Notation Patterns (REQUIRED for all acceptance criteria):
+# - Event-driven: WHEN [event] THE SYSTEM SHALL [action]
+# - Conditional: IF [condition] THEN THE SYSTEM SHALL [action]
+# - State-driven: WHILE [state] THE SYSTEM SHALL [action]
+# - Combined: WHEN [event] AND [condition] THE SYSTEM SHALL [action]
+# - Ubiquitous: THE SYSTEM SHALL [action]
+#
+# CRITICAL:
+# - Use numbered lists (1. 2. 3.) for acceptance criteria, NOT tables
+# - Every acceptance criterion MUST use EARS notation
+# - Reference criteria by "Requirement N, criteria M" format
+# - If constitution_content is provided, treat it as immutable project principles.
+#   Ensure all requirements comply with those principles.
+#
+# After writing/updating, report what was created and suggest /spec:design next."""
+# examples = [
+#   "[OK] Created requirements.md for spec 'feature-auth'\n\nContains:\n  - 3 requirements with user stories\n  - 12 acceptance criteria (EARS notation)\n\nNext: /spec:design"
+# ]
+# ///
+
+"""
+Gather context for requirements document generation.
+
+Uses the spec associated with the current branch.
+"""
+
+import sys
+import os
+import json
+from pathlib import Path
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from lib.speclib import require_associated_spec, spec_path, steering_path
+
+
+def main():
+    spec_name, branch = require_associated_spec()
+
+    path = spec_path(spec_name)
+    path.mkdir(parents=True, exist_ok=True)
+
+    reqs_file = path / 'requirements.md'
+
+    constitution_file = steering_path() / 'constitution.md'
+    constitution_content = constitution_file.read_text() if constitution_file.exists() else None
+
+    data = {
+        'spec_name': spec_name,
+        'spec_path': str(path),
+        'reqs_file': str(reqs_file),
+        'exists': reqs_file.exists(),
+        'existing_content': reqs_file.read_text() if reqs_file.exists() else None,
+        'constitution_content': constitution_content,
+    }
+
+    if os.getenv('CC') == '1':
+        print(json.dumps(data))
+    else:
+        if data['exists']:
+            print(f"Spec '{spec_name}' has existing requirements.md - will refine")
+        else:
+            print(f"Will create new requirements.md for spec '{spec_name}'")
+
+
+if __name__ == "__main__":
+    main()

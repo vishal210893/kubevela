@@ -1,0 +1,53 @@
+{
+  "mcpServers": {
+    "confluence": {
+      "type": "http",
+      "url": "https://mcp.atlassian.com/v1/mcp",
+      "disabled": true
+    },
+    "jira": {
+      "type": "http",
+      "url": "https://mcp.atlassian.com/v1/mcp",
+      "disabled": true
+    },
+    "devassistant": {
+      "type": "stdio",
+      "command": "is-developer-assistant",
+      "args": [],
+      "disabled": true,
+      "env": {
+        "DEVASSISTANT_SERVICE_URL": "https://devassistant.api.int.ccs.guidewire.net",
+        "OKTA_CLIENT_ID": "0oa2c3k9ye51iU0uT0h8",
+        "OKTA_DOMAIN": "https://guidewire-hub.oktapreview.com/oauth2/ausj9ftnbxOqfGU4U0h7",
+        "DEVASSISTANT_SOCKET_FILE": "/tmp/devassistant-hook.tmp",
+        "DEVASSISTANT_COOKBOOK_MCP_RESOURCES": "false"
+      }
+    },
+    "figma": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp",
+      "disabled": true
+    },
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GH_TOKEN}"
+      }
+    },
+    "guidewire-docs": {
+      "type": "http",
+      "url": "https://docportal-mcp.omega2-andromeda.guidewire.net/mcp",
+      "disabled": true
+    },
+    "guidewire-docs-staging": {
+      "type": "http",
+      "url": "https://docportal-mcp.staging.ccs.guidewire.net/mcp",
+      "disabled": true
+    }
+  }
+}

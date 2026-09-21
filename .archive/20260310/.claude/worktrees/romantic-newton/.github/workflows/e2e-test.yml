@@ -1,0 +1,81 @@
+name: E2E Test
+
+on:
+  push:
+    branches:
+      - master
+      - release-*
+    tags:
+      - v*
+  workflow_dispatch: {}
+  pull_request:
+    branches:
+      - master
+      - release-*
+
+permissions:
+  contents: read
+
+env:
+  # Common versions
+  GO_VERSION: '1.23.8'
+
+jobs:
+
+  detect-noop:
+    permissions:
+      actions: write
+    runs-on: ubuntu-22.04
+    outputs:
+      noop: ${{ steps.noop.outputs.should_skip }}
+    steps:
+      - name: Detect No-op Changes
+        id: noop
+        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          paths_ignore: '["**.md", "**.mdx", "**.png", "**.jpg"]'
+          do_not_skip: '["workflow_dispatch", "schedule", "push"]'
+        continue-on-error: true
+
+  e2e-tests:
+    runs-on: ubuntu-22.04
+    needs: [ detect-noop ]
+    if: needs.detect-noop.outputs.noop != 'true'
+    strategy:
+      matrix:
+        k8s-version: ["v1.31"]
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.k8s-version }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      - name: Setup KinD
+        uses: ./.github/actions/setup-kind-cluster
+
+      # ========================================================================
+      # E2E Test Execution
+      # ========================================================================
+      - name: Run upgrade e2e tests
+        uses: ./.github/actions/e2e-test
+        with:
+          codecov-enable: true
+          codecov-token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Clean e2e profile
+        run: |
+          if [ -f /tmp/e2e-profile.out ]; then
+            rm /tmp/e2e-profile.out
+            echo "E2E profile cleaned"
+          else
+            echo "E2E profile not found, skipping cleanup"
+          fi
+
+      - name: Cleanup image
+        if: ${{ always() }}
+        run: |
+          make image-cleanup
+          docker image prune -f --filter "until=24h"

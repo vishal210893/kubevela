@@ -1,0 +1,711 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Addon as Component: Design</title>
+  <meta name="description" content="KubeVela addon-as-component high-level design, low-level design, and ResourceTracker walkthrough.">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" id="hljs-light">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css" id="hljs-dark" disabled>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --bg-2: #eef3f8;
+      --surface: #ffffff;
+      --surface-elevated: #fbfcfe;
+      --surface-2: #eef2f6;
+      --text: #172033;
+      --muted: #44546a;
+      --subtle: #6a7789;
+      --border: #d9e1eb;
+      --border-strong: #b7c3d1;
+      --accent: #2563eb;
+      --accent-strong: #1d4ed8;
+      --accent-soft: #e9f1ff;
+      --accent-warm: #d97706;
+      --success: #15803d;
+      --warn: #b45309;
+      --danger: #b42318;
+      --priority: #7c3aed;
+      --code-bg: #f7f9fc;
+      --shadow: 0 14px 32px rgba(23, 32, 51, 0.08);
+      --shadow-soft: 0 8px 18px rgba(37, 99, 235, 0.08);
+      --sidebar-w: 300px;
+      --topbar-h: 64px;
+      --radius: 8px;
+    }
+
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #171d27;
+      --bg-2: #202938;
+      --surface: #242c3a;
+      --surface-elevated: #2d3747;
+      --surface-2: #354154;
+      --text: #f4f7fb;
+      --muted: #c6cfdd;
+      --subtle: #9da9ba;
+      --border: #465368;
+      --border-strong: #65748a;
+      --accent: #60a5fa;
+      --accent-strong: #93c5fd;
+      --accent-soft: #213a5c;
+      --accent-warm: #fbbf24;
+      --success: #86efac;
+      --warn: #fde68a;
+      --danger: #fca5a5;
+      --priority: #c4b5fd;
+      --code-bg: #1f2632;
+      --shadow: 0 18px 42px rgba(2, 6, 23, 0.3);
+      --shadow-soft: 0 8px 20px rgba(96, 165, 250, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, var(--bg-2) 0, var(--bg) 300px),
+        var(--bg);
+      color: var(--text);
+      font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+    a { color: var(--accent-strong); text-decoration-thickness: 0.08em; text-underline-offset: 0.18em; }
+    a:hover { color: var(--accent); }
+    button { font: inherit; }
+    :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
+
+    .skip-link {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      transform: translateY(-160%);
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+      padding: 10px 14px;
+      box-shadow: var(--shadow);
+      color: var(--text);
+    }
+    .skip-link:focus { transform: translateY(0); }
+
+    .topbar {
+      position: fixed;
+      inset: 0 0 auto 0;
+      height: var(--topbar-h);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 22px;
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+    }
+    .menu-button, .theme-toggle, .copy-button {
+      min-width: 44px;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      background: var(--surface-elevated);
+      color: var(--text);
+      border-radius: 7px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease, color 180ms ease;
+    }
+    .menu-button:hover, .theme-toggle:hover, .copy-button:hover {
+      border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+      box-shadow: var(--shadow-soft);
+      background: var(--surface);
+    }
+    .menu-button { display: none; }
+    .theme-toggle { padding: 0 12px; margin-left: auto; }
+    .theme-toggle svg, .menu-button svg, .copy-button svg { width: 18px; height: 18px; stroke-width: 2; }
+    .title-block h1 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.2;
+      letter-spacing: 0;
+      font-weight: 700;
+    }
+    .title-block p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+    .progress-track {
+      position: fixed;
+      top: var(--topbar-h);
+      left: 0;
+      right: 0;
+      height: 3px;
+      z-index: 101;
+      background: transparent;
+    }
+    .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--success), var(--accent-warm)); }
+
+    .layout { display: flex; padding-top: calc(var(--topbar-h) + 3px); }
+    .sidebar {
+      position: fixed;
+      top: calc(var(--topbar-h) + 3px);
+      bottom: 0;
+      left: 0;
+      width: var(--sidebar-w);
+      overflow: auto;
+      padding: 18px 14px 26px;
+      background: color-mix(in srgb, var(--surface) 96%, transparent);
+      border-right: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+    }
+    .toc-label {
+      color: var(--subtle);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      margin: 0 0 10px;
+    }
+    .toc-group {
+      margin: 0 0 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--surface-elevated) 84%, transparent);
+      overflow: hidden;
+    }
+    .toc-group-title {
+      display: block;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      padding: 10px 11px;
+      text-decoration: none;
+      border-left: 3px solid transparent;
+    }
+    .toc-list { list-style: none; margin: 0; padding: 4px 0 8px; border-top: 1px solid var(--border); }
+    .toc-list a {
+      display: block;
+      border-left: 3px solid transparent;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      padding: 7px 9px 7px 12px;
+      text-decoration: none;
+      transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+    }
+    .toc-list a.depth-3 { padding-left: 24px; }
+    .toc-list a.depth-4, .toc-list a.depth-5, .toc-list a.depth-6 { padding-left: 34px; }
+    .toc-list a.active, .toc-group-title.active {
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      border-left-color: var(--accent);
+    }
+    .toc-list a:hover, .toc-group-title:hover {
+      color: var(--text);
+      background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
+    }
+
+    main {
+      width: 100%;
+      margin-left: var(--sidebar-w);
+      padding: 30px min(5vw, 64px) 76px;
+    }
+    .hero {
+      max-width: 1040px;
+      margin: 0 auto 22px;
+      padding: clamp(22px, 4vw, 40px);
+      background:
+        linear-gradient(135deg, color-mix(in srgb, var(--surface-elevated) 98%, transparent), color-mix(in srgb, var(--accent-soft) 46%, var(--surface))),
+        var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      border-top: 4px solid var(--accent);
+    }
+    .eyebrow {
+      color: var(--accent-strong);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      margin: 0 0 8px;
+    }
+    .hero h2 {
+      margin: 0;
+      font-size: clamp(30px, 4.2vw, 48px);
+      line-height: 1.08;
+      letter-spacing: 0;
+      max-width: 940px;
+    }
+    .hero p { max-width: 780px; color: var(--muted); font-size: 17px; margin: 14px 0 0; }
+    .quick-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 22px;
+      max-width: 820px;
+    }
+    .stat {
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
+      border-radius: var(--radius);
+      padding: 13px 15px;
+      box-shadow: var(--shadow-soft);
+      border-left: 4px solid var(--accent);
+    }
+    .stat:nth-child(2) { border-left-color: var(--success); }
+    .stat:nth-child(3) { border-left-color: var(--accent-warm); }
+    .stat strong { display: block; font-size: 26px; line-height: 1.1; color: var(--accent-strong); font-variant-numeric: tabular-nums; }
+    .stat span { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; }
+
+    .doc-section {
+      max-width: 1040px;
+      margin: 0 auto 22px;
+      background: color-mix(in srgb, var(--surface-elevated) 98%, transparent);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 20px rgba(23, 32, 51, 0.05);
+      padding: clamp(20px, 3.5vw, 36px);
+    }
+    .doc-section + .doc-section { margin-top: 22px; }
+    .content { max-width: 82ch; }
+    .content h2, .content h3, .content h4, .content h5, .content h6 {
+      position: relative;
+      color: var(--text);
+      line-height: 1.25;
+      letter-spacing: 0;
+      scroll-margin-top: calc(var(--topbar-h) + 22px);
+    }
+    .content h2 {
+      font-size: 29px;
+      margin: 0 0 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .content h3 { font-size: 21px; margin: 32px 0 10px; }
+    .content h4 { font-size: 17px; margin: 24px 0 8px; }
+    .content h5, .content h6 { font-size: 16px; margin: 20px 0 8px; }
+    .content p, .content ul, .content ol { color: var(--muted); }
+    .content strong { color: var(--text); }
+    .content li + li { margin-top: 4px; }
+    .content hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }
+    .heading-anchor {
+      opacity: 0;
+      position: absolute;
+      left: -24px;
+      color: var(--accent-strong);
+      text-decoration: none;
+      font-weight: 500;
+    }
+    h2:hover .heading-anchor, h3:hover .heading-anchor, h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor,
+    .heading-anchor:focus { opacity: 1; }
+    code {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.12em 0.34em;
+      color: var(--text);
+    }
+    pre code { border: 0; padding: 0; background: transparent; font-size: 13px; line-height: 1.55; display: block; overflow-x: auto; }
+    .code-wrap {
+      position: relative;
+      margin: 16px 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--code-bg);
+      overflow: hidden;
+      box-shadow: inset 4px 0 0 color-mix(in srgb, var(--accent) 80%, transparent);
+    }
+    .code-wrap pre { margin: 0; padding: 16px 18px 16px 20px; overflow-x: auto; }
+    .copy-button {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      min-width: 36px;
+      min-height: 36px;
+      background: color-mix(in srgb, var(--surface) 88%, transparent);
+      color: var(--muted);
+    }
+    .copy-button.copied { color: var(--success); border-color: color-mix(in srgb, var(--success) 55%, var(--border)); }
+    .table-scroll {
+      overflow-x: auto;
+      margin: 16px 0 22px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 8px 18px rgba(23, 32, 51, 0.04);
+    }
+    table { width: 100%; border-collapse: collapse; min-width: 620px; font-size: 14px; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { background: var(--surface-2); color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: 0; }
+    tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-2) 42%, transparent); }
+    tr:last-child td { border-bottom: 0; }
+    .feature-table { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); box-shadow: var(--shadow-soft); }
+    .feature-table th { background: var(--accent-soft); }
+    blockquote {
+      margin: 18px 0;
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 12px 16px;
+      color: var(--text);
+    }
+    .mermaid-panel {
+      margin: 20px 0 26px;
+      padding: 18px;
+      border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+      background: color-mix(in srgb, var(--surface-elevated) 92%, var(--accent-soft));
+      border-radius: var(--radius);
+      overflow-x: auto;
+      box-shadow: var(--shadow-soft);
+    }
+    .mermaid-caption { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+    .mermaid { min-width: 560px; }
+    .cdn-note {
+      max-width: 980px;
+      margin: 24px auto 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 980px) {
+      .menu-button { display: inline-flex; }
+      .sidebar {
+        transform: translateX(-105%);
+        transition: transform 180ms ease;
+        z-index: 99;
+        box-shadow: var(--shadow);
+      }
+      body.sidebar-open .sidebar { transform: translateX(0); }
+      main { margin-left: 0; padding: 28px 18px 64px; }
+      .quick-stats { grid-template-columns: 1fr; }
+      .title-block p { display: none; }
+    }
+    @media (max-width: 620px) {
+      .topbar { padding: 0 12px; }
+      .title-block h1 { font-size: 16px; }
+      .theme-toggle span { display: none; }
+      .doc-section { padding: 20px 16px; }
+      .content h2 { font-size: 25px; }
+      .content h3 { font-size: 20px; }
+      .heading-anchor { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="topbar">
+    <button class="menu-button" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <div class="title-block">
+      <h1>Addon as Component: Design</h1>
+      <p>HLD, LLD, ResourceTracker walkthrough</p>
+    </div>
+    <button class="theme-toggle" type="button" aria-label="Toggle dark theme">
+      <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M12 3v2M12 19v2M5.64 5.64l1.42 1.42M16.94 16.94l1.42 1.42M3 12h2M19 12h2M5.64 18.36l1.42-1.42M16.94 7.06l1.42-1.42"/><circle cx="12" cy="12" r="4"/></svg>
+      <span>Theme</span>
+    </button>
+  </header>
+  <div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar" aria-label="Table of contents">
+      <p class="toc-label">Contents</p>
+      <div id="toc"></div>
+    </nav>
+    <main id="content" tabindex="-1">
+      <section class="hero" aria-labelledby="page-summary">
+        <p class="eyebrow">KubeVela architecture notes</p>
+        <h2 id="page-summary">Declarative addon installation through OAM Applications</h2>
+        <p>This page renders the corrected high-level design, low-level implementation notes, and ResourceTracker walkthrough for the addon-as-component feature.</p>
+        <div class="quick-stats" aria-label="Validation summary">
+          <div class="stat"><strong>36</strong><span>catalog addons in differential run</span></div>
+          <div class="stat"><strong>30</strong><span>matching outcomes</span></div>
+          <div class="stat"><strong>3</strong><span>ResourceTrackers for fluxcd path</span></div>
+        </div>
+      </section>
+      <div id="docs-root"></div>
+      <p class="cdn-note">Uses marked for Markdown, Mermaid.js for diagrams, and highlight.js for code when CDNs are available. If a CDN fails, the embedded Markdown is still rendered by a local fallback and Mermaid blocks remain readable as code.</p>
+    </main>
+  </div>
+
+  <script id="docs-data" type="application/json">[{"id":"hld","label":"HLD","file":"HLD.md","markdown":"# Addon as Component: High-Level Design (HLD)\n\n## 1. Summary\n\nToday a KubeVela addon is installed either through the imperative CLI\n(`vela addon enable \u003cname>`) or a dedicated Addon flow. This feature lets an\naddon be declared as an ordinary OAM **component** of `type: addon` inside a\nnormal `Application`:\n\n```yaml\napiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: comp-fluxcd\n  namespace: vela-system\nspec:\n  components:\n    - name: fluxcd\n      type: addon\n      properties:\n        version: \"3.0.2\"\n```\n\nApplying this Application makes the standard Application controller resolve the\naddon from the registry, render the addon's **own** Application plus its\nauxiliaries (definitions, config templates, schemas, views, secret), and manage\nall of it through the existing Application machinery: ResourceTracker, StateKeep\n(self-healing), garbage collection, and revisioning.\n\n## 2. Motivation\n\n`vela addon enable` is imperative and lives outside the Application lifecycle.\nModelling an addon as a component changes that in three ways. The addon becomes a\ndeclarative manifest you can commit to Git, so it fits a GitOps workflow. It\nreuses the Application controller, which already handles dispatch, ResourceTracker\ntracking, StateKeep healing, garbage collection, and multi-cluster topology, so\nnone of that has to be reimplemented in an addon-specific controller. And because\nit is a normal component, it can sit alongside other components in the same\nApplication and take part in the same workflow.\n\nThis does not replace the addon registry format, change addon package contents,\nor remove the imperative CLI. Both paths converge on the same observable object,\nan `addon-\u003cname>` Application in `vela-system`.\n\n## 3. Core idea: two-level Applications\n\nA `type: addon` component's rendered `output` **is itself an Application\nmanifest**. Before it is returned, the renderer folds addon definitions, config\ntemplates, schemas, views, secrets, and template-provided auxiliaries into\n`k8s-objects` components of that inner Application. So one applied Application\nproduces a second one:\n\n```mermaid\nflowchart TD\n    U[\"User applies\u003cbr/>comp-fluxcd (Application)\"] --> C[\"Application controller\"]\n    C --> R[\"addon component renders\"]\n    R -->|output| A[\"addon-fluxcd (Application)\u003cbr/>with folded k8s-objects components\"]\n    A --> C2[\"Application controller\u003cbr/>reconciles addon-fluxcd\"]\n    C2 --> W[\"flux workloads, CRDs, RBAC, namespace,\u003cbr/>definitions, configmaps, schemas, views, secret\"]\n\n    subgraph \"wrapping app scope\"\n      A\n    end\n    subgraph \"child app scope\"\n      W\n    end\n```\n\n- **Wrapping app** (`comp-fluxcd`): its versioned ResourceTracker records one\n  rendered `Application/addon-fluxcd`.\n- **Inner app** (`addon-fluxcd`): reconciles both the addon workloads and the\n  folded auxiliary `k8s-objects` components. Its root/versioned ResourceTrackers\n  retain raw desired manifests for both groups according to the GC policy.\n\nIn the verified/default GC configuration shown here, one `kubectl apply` yields\n**2 Applications** and **3 ResourceTrackers** (wrapping versioned RT + inner root\nRT + inner versioned RT). The inner root tracker is conditional: it is created\nonly when the inner Application's GC policy assigns resources to it. The\nrelationship is expressed by rendering and tracking, not output ownership or\nKubernetes owner references.\n\n**Component installs opt into StateKeep.** Rendered addon Applications carry an\nexplicit disabled `apply-once` policy unless the addon package declares its own.\nThis bypasses the legacy addon-label fallback, retains raw desired manifests in\nthe inner ResourceTracker, and lets periodic StateKeep heal deleted auxiliaries.\nImperative addon installs keep their legacy behavior.\n\n## 4. Component landscape\n\nThe diagram below follows one render, top to bottom, in eight numbered steps. The\nwebhook (dotted) is a separate admission-time path, not part of the render. Colors\ngroup the pieces by layer: blue is the definition/CUE layer, green is the addon\nservice, orange is existing KubeVela.\n\n```mermaid\nflowchart TB\n    APPC[\"Application controller\u003cbr/>(dispatch, ResourceTracker, StateKeep, GC)\"]:::ext\n    CD[\"addon ComponentDefinition\u003cbr/>(CUE template)\"]:::def\n    CMP[\"WorkloadCompiler\u003cbr/>(evaluates the template)\"]:::def\n    PV[\"CueX provider: vela/addon #Render\"]:::def\n    API[\"api package\u003cbr/>(Renderer interface, injection seam)\"]:::svc\n    RS[\"render-only service\u003cbr/>(rendererImpl)\"]:::svc\n    PKG[\"pkg/addon\u003cbr/>(registry, RenderApp, RenderDefinitions)\"]:::ext\n    OUT[\"addon-&lt;name&gt; Application\u003cbr/>with folded k8s-objects components\"]:::ext\n    WH[\"Application validating webhook\"]:::ext\n\n    APPC -->|\"1 . reconcile, evaluate template\"| CMP\n    CD -.->|\"defines\"| CMP\n    CMP -->|\"2 . resolve #Render builtin\"| PV\n    PV -->|\"3 . DefaultRenderer()\"| API\n    API -->|\"4 . concrete renderer\"| RS\n    RS -->|\"5 . resolve + render\"| PKG\n    PKG -->|\"6 . addon App + auxiliaries\"| RS\n    RS -->|\"7 . return one folded Application\"| APPC\n    APPC -->|\"8 . dispatch + track\"| OUT\n    WH -.->|\"admission: SystemRequirements check\"| PKG\n\n    classDef def fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef svc fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef ext fill:#fff3e0,stroke:#e65100,color:#bf360c;\n```\n\nKey pieces (details in the LLD):\n\n| Layer | Artifact | Responsibility |\n|-------|----------|----------------|\n| Definition | `vela-templates/definitions/internal/component/addon.cue` | Maps component parameters to `addon.#Render`; exposes the inner Application as `output`. |\n| CUE provider | `pkg/cue/cuex/providers/addon/{addon.go,addon.cue}` | The `vela/addon` `#Render` builtin; calls the service. |\n| Injection seam | `pkg/addon/service/api/api.go` | Leaf package (stdlib only) holding the `Renderer` interface + `SetDefaultRenderer`/`DefaultRenderer`, breaking the import cycle. |\n| Service | `pkg/addon/service/renderer.go` | Resolves the addon from the registry and renders Application + auxiliaries; caches; sanitizes manifests. |\n| Compiler wiring | `pkg/cue/cuex/compiler.go`, `pkg/workflow/providers/compiler.go` | Register the provider on the workload compiler (render) and the workflow compiler (schema gen). |\n| Startup wiring | `cmd/core/app/server.go` | Blank import triggers `init()` → `SetDefaultRenderer`. |\n| Admission | `pkg/webhook/.../application/validation.go` | Validates the addon's SystemRequirements at admission. |\n\n## 5. End-to-end flow (high level)\n\n```mermaid\nsequenceDiagram\n    autonumber\n    participant User\n    participant Webhook as Validating Webhook\n    participant Ctrl as Application Controller\n    participant CUE as WorkloadCompiler\n    participant Prov as vela/addon provider\n    participant Svc as render service\n    participant Reg as addon registry (pkg/addon)\n\n    User->>Webhook: apply comp-fluxcd\n    Webhook->>Reg: resolve SystemRequirements\n    Webhook-->>User: admit (or deny on mismatch)\n    User->>Ctrl: (admitted) reconcile comp-fluxcd\n    Ctrl->>CUE: evaluate addon ComponentDefinition\n    CUE->>Prov: #do render / #provider addon\n    Prov->>Svc: RenderAddon(request)\n    Svc->>Reg: FindAddonPackagesDetailFromRegistry / RenderApp\n    Reg-->>Svc: addon Application + auxiliaries\n    Svc-->>Prov: AddonResult (folded application)\n    Prov-->>CUE: $returns\n    CUE-->>Ctrl: output=addon Application with k8s-objects components\n    Ctrl->>Ctrl: dispatch + track in ResourceTracker\n    Ctrl->>Ctrl: create addon-fluxcd Application (child)\n```\n\n## 6. Version selection\n\n`properties.version` is optional. If it is omitted or empty, the renderer asks\nthe configured registry for the latest stable addon package: versioned\nregistries are sorted descending and prerelease versions are skipped. If\n`properties.version` is set, the current implementation treats it as an exact\nversion pin, with only a leading `v` normalized during lookup. It does not\nevaluate semver range expressions.\n\n## 7. Key design decisions\n\n1. **Render-only service, not a dispatcher.** The service resolves and renders;\n   it never talks to the cluster to create resources. Dispatch is left to the\n   Application controller, so we inherit RT/StateKeep/GC unchanged.\n\n2. **Leaf `api` package to break an import cycle.** The provider must call the\n   service, but the service imports `pkg/addon`, which (transitively) imports the\n   CUE compiler, which imports the provider. A tiny stdlib-only `api` package\n   holding the interface + a `DefaultRenderer()` seam breaks the cycle:\n   provider → `api` ← service.\n\n3. **Startup injection via blank import + `init()`.** `cmd/core` blank-imports\n   the service; its `init()` registers the concrete renderer. The provider reads\n   it lazily through `api.DefaultRenderer()`.\n\n4. **Two compiler registrations for two purposes.** The provider is registered on\n   the `WorkloadCompiler` (used at render/reconcile time) and on the workflow\n   `DefaultCompiler` (used by schema generation). Registering on the wrong one\n   either breaks rendering or breaks schema gen for ~20 unrelated workflowstep\n   definitions.\n\n5. **Admission-time compatibility check.** A validating webhook resolves the\n   addon's SystemRequirements and denies incompatible Applications up front,\n   honoring a `skipVersionValidate` escape hatch and failing open on registry\n   errors.\n\n6. **StateKeep and annotation safeguards.** The renderer adds a disabled\n   `apply-once` policy only when the addon package has not authored one. This\n   overrides the legacy addon-label fallback without changing an addon-authored\n   policy. It also sets `app.oam.dev/last-applied-configuration: skip` on the\n   inner Application. The sentinel independently prevents the dispatch-time\n   annotation copy from exceeding Kubernetes' 256 KiB annotation limit; it is\n   separate from ResourceTracker size management. (Full behavior in the LLD.)\n\n## 8. Comparison with `vela addon enable`\n\n| Aspect | `vela addon enable` (imperative) | `type: addon` component (this feature) |\n|--------|----------------------------------|----------------------------------------|\n| Trigger | CLI | Declarative Application |\n| Creates `addon-\u003cname>` App | Yes, via `client.Create` | Yes, via OAM applicator (as component output) |\n| Lifecycle tracking | The addon Application itself | The wrapper tracks the inner Application; the inner Application tracks workloads and folded auxiliaries |\n| System requirements check | In-cluster, at enable time | At admission (webhook) + at render time |\n| GitOps | No | Yes |\n| Convergent object | `addon-\u003cname>` Application in `vela-system` | Same |\n\n## 9. Differential validation snapshot\n\nThe all-addons differential run on 2026-07-09 covered 36 catalog addons with\nCluster B using `skipVersionValidate: true` because the feature controller was\nrunning out of cluster. Results:\n\n| Result class | Count |\n|--------------|-------|\n| PASS / PASS | 25 |\n| FAIL / FAIL | 5 |\n| TIMEOUT / FAIL discrepancies | 6 |\n\nThe six actionable discrepancies were `cloudshell`,\n`flink-kubernetes-operator`, `kube-state-metrics`, `model-serving`, `rollout`,\nand `vela-core-shard-manager`; in each case the imperative baseline timed out\nwhile the addon-as-component path failed fast.\n\n## 10. Risks and mitigations\n\nThe registration is fragile in one specific way. An IDE \"optimize imports\" pass\ncan drop the blank import in `cmd/core`, which silently disables the renderer and\nevery addon then fails with `addon renderer not initialized`. The test harness\nguards against this with a build-time symbol check, and the docs call it out.\n\nAddons with large CRDs, such as fluxcd, are still sizeable even after the fix.\nThe `last-applied-configuration: skip` sentinel avoids the independent 256 KiB\nannotation limit. If raw ResourceTrackers approach API or etcd limits,\n`ZstdResourceTracker` is the existing mitigation. Metadata-only tracking is not\nan acceptable size fallback because it disables StateKeep healing.\n\nWhen vela-core runs outside the cluster, its SystemRequirements check cannot read\nthe in-cluster vela-core version, so the check behaves differently than it does\nin-cluster. The `skipVersionValidate` escape hatch covers that case and mirrors\nthe imperative `--skip-version-validating` flag.\n\n## 11. Migrating existing component-installed addons\n\nAn already completed wrapper can retain a durable ApplicationRevision containing\nthe pre-fix rendered inner Application. `vela workflow restart` alone reuses that\nrevision and does not rerender current code. Operators must make a real component\nspec revision to create a current-code revision.\n\nFor the verified Terraform migration, restoring the byte-identical original spec\nreused `comp-terraform-aws-v1` again. The retained\n`properties.addon: terraform-aws` field is semantically equal to the component\nname default, but anchored a current-code revision. Treat that explicit field as\none-time migration and operational guidance for existing Applications, not a\npermanent renderer requirement for newly created apps.\n"},{"id":"lld","label":"LLD","file":"LLD.md","markdown":"# Addon as Component: Low-Level Design (LLD)\n\nThis document is the implementation-level companion to the HLD. It covers the\nexact files, types, method signatures, control flow, and the two subtle bugs the\nfeature had to solve (import cycle and ResourceTracker bloat).\n\n---\n\n## 1. File map\n\n| File | Kind | Responsibility |\n|------|------|----------------|\n| `vela-templates/definitions/internal/component/addon.cue` | CUE | The `addon` ComponentDefinition. Maps parameters → `addon.#Render`, wires the folded inner Application to `output`. |\n| `charts/vela-core/templates/defwithtemplate/addon.yaml` | YAML | Generated packaged form of the definition (shipped in the chart). |\n| `pkg/cue/cuex/providers/addon/addon.go` | Go | The `vela/addon` CueX provider: `Render()`, `RenderVars`/`ResultVars`, `Package`. |\n| `pkg/cue/cuex/providers/addon/addon.cue` | CUE | The `#Render` schema (`$params`/`$returns`). |\n| `pkg/addon/service/api/api.go` | Go | Leaf package: `Renderer` interface, `AddonRequest`/`AddonResult`, `SetDefaultRenderer`/`DefaultRenderer`. |\n| `pkg/addon/service/renderer.go` | Go | `rendererImpl`: resolve + render + cache + sanitize. |\n| `pkg/cue/cuex/compiler.go` | Go | Registers `addon.Package` on the `WorkloadCompiler` (render path). |\n| `pkg/workflow/providers/compiler.go` | Go | Registers `addon.Package` on the workflow `DefaultCompiler` (schema-gen path). |\n| `cmd/core/app/server.go` | Go | Blank import of the service → `init()` registration. |\n| `pkg/webhook/core.oam.dev/v1beta1/application/validation.go` | Go | `validateAddonComponents`, `defaultAddonCompatChecker`. |\n| `pkg/addon/helper.go` | Go | `ValidateSystemRequirements`, `GetAddonInstallPackageFromRegistry`. |\n| `apis/types/types.go` | Go | `DefaultFilterAnnots` (the RT-bloat fix). |\n| `pkg/appfile/appfile.go` | Go | `filterAndSetAnnotations` (annotation propagation + sentinel preservation). |\n\n---\n\n## 2. The definition layer\n\n`vela-templates/definitions/internal/component/addon.cue`:\n\n```cue\nimport (\"vela/addon\")\n\n\"addon\": {\n    attributes: workload: type: \"autodetects.core.oam.dev\"\n    type: \"component\"\n}\n\ntemplate: {\n    _render: addon.#Render & {\n        $params: {\n            addon:               parameter.addon\n            version:             parameter.version\n            registry:            parameter.registry\n            properties:          parameter.properties\n            skipVersionValidate: parameter.skipVersionValidate\n        }\n    }\n    output: _render.$returns.application            // the folded addon's Application\n    parameter: {\n        addon:   *context.name | string              // defaults to component name\n        version: *\"\" | string                        // exact pin; empty = latest stable\n        registry: *\"\" | string\n        properties: *{} | {...}\n        skipVersionValidate: *false | bool\n    }\n}\n```\n\n- `workload.type: autodetects.core.oam.dev`: the workload kind is detected from\n  the rendered `output` (an Application), not fixed ahead of time.\n- `output` is the inner Application. The renderer has already appended each\n  auxiliary category as a `k8s-objects` component in that Application, so the\n  wrapping Application dispatches and tracks one resource.\n- `addon` defaults to `context.name`, so `name: fluxcd` implies addon `fluxcd`.\n- `version` is either empty or an exact pin. Empty selects the latest stable\n  version from a versioned registry; a non-empty value is matched exactly after\n  ignoring a leading `v`. Semver range expressions are not evaluated.\n\n---\n\n## 3. The CueX provider (`vela/addon`)\n\n`pkg/cue/cuex/providers/addon/addon.cue` declares the builtin resolved by CueX:\n\n```cue\n#Render: {\n    #do: \"render\"\n    #provider: \"addon\"\n    $params: { addon: string, version: *\"\" | string, registry: *\"\" | string,\n               properties: {...}, skipVersionValidate: *false | bool }\n    $returns?: { resolvedVersion: string, registry: string,\n                 application: {...}, ... }\n}\n```\n\n`pkg/cue/cuex/providers/addon/addon.go` implements it:\n\n```go\ntype RenderVars struct {                    // $params\n    Addon, Version, Registry string\n    Properties map[string]interface{}\n    SkipVersionValidate bool\n}\ntype ResultVars struct {                    // $returns\n    ResolvedVersion, Registry string\n    Application map[string]interface{}\n}\n\nfunc Render(ctx context.Context, params *RenderParams) (*RenderReturns, error) {\n    r := api.DefaultRenderer()\n    if r == nil { return nil, fmt.Errorf(\"addon renderer not initialized\") }\n    res, err := r.RenderAddon(ctx, api.AddonRequest{ /* map params */ })\n    if err != nil { return nil, err }\n    return &RenderReturns{Returns: ResultVars{ /* map result */ }}, nil\n}\n\nvar Package = runtime.Must(cuexruntime.NewInternalPackage(ProviderName, template,\n    map[string]cuexruntime.ProviderFn{\n        \"render\": cuexruntime.GenericProviderFn[RenderParams, RenderReturns](Render),\n    }))\n```\n\nNote the provider imports only `pkg/addon/service/api`, never the service or\n`pkg/addon`. That is what keeps the compiler's dependency graph acyclic.\n\n---\n\n## 4. The injection seam (import-cycle avoidance)\n\nThe naive dependency would be:\n\n```mermaid\nflowchart LR\n    P[\"provider (addon)\"] --> S[\"service\"]\n    S --> PK[\"pkg/addon\"]\n    PK --> CX[\"pkg/cue/cuex\"]\n    CX --> P\n    style P fill:#fdd\n    style CX fill:#fdd\n```\n\nThat is a cycle (`provider → service → pkg/addon → cuex → provider`). The fix is\na leaf package `pkg/addon/service/api` that depends on nothing but the standard\nlibrary:\n\n```go\ntype Renderer interface {\n    RenderAddon(ctx context.Context, req AddonRequest) (*AddonResult, error)\n}\nvar (mu sync.RWMutex; defaultR Renderer)\nfunc SetDefaultRenderer(r Renderer) { mu.Lock(); defaultR = r; mu.Unlock() }\nfunc DefaultRenderer() Renderer     { mu.RLock(); defer mu.RUnlock(); return defaultR }\n```\n\nNow the graph is acyclic:\n\n```mermaid\nflowchart LR\n    P[\"provider (addon)\"] --> API[\"api (leaf, stdlib only)\"]\n    S[\"service\"] --> API\n    S --> PK[\"pkg/addon\"]\n    CMD[\"cmd/core\"] -->|blank import| S\n    P -.->|\"DefaultRenderer()\"| API\n    style API fill:#dfd\n```\n\n- The provider depends on the **interface**, resolved at call time.\n- The service depends on `pkg/addon` and, in its `init()`, registers itself.\n- `cmd/core` blank-imports the service so `init()` runs. If that import is\n  dropped, `DefaultRenderer()` is nil and `Render()` fails with\n  `addon renderer not initialized`.\n\n---\n\n## 5. The render service\n\n`pkg/addon/service/renderer.go`.\n\n### 5.1 Struct and construction\n\n```go\ntype rendererImpl struct {\n    cli    client.Client     // injected in tests; nil in prod\n    config *rest.Config      // injected in tests; nil in prod\n    cache  sync.Map          // cacheKey -> *api.AddonResult\n    resolveFn func(ctx, req) (*api.AddonResult, error)  // test seam\n    // test seam: supplies packages without registry I/O\n    findPackagesFn func(context.Context, client.Client, []string, []string) ([]*pkgaddon.WholeAddonPackage, error)\n}\nfunc NewRenderer() api.Renderer { return &rendererImpl{} }\nfunc init() { api.SetDefaultRenderer(NewRenderer()) }\n\nfunc (r *rendererImpl) client() client.Client {\n    if r.cli != nil { return r.cli }\n    return singleton.KubeClient.Get()          // kubevela-pkg singleton\n}\nfunc (r *rendererImpl) restConfig() *rest.Config {\n    if r.config != nil { return r.config }\n    return singleton.KubeConfig.Get()\n}\n```\n\nProduction reads the client/config from kubevela-pkg singletons lazily, so there\nis no startup ordering constraint. Tests inject fakes via the struct fields.\n\n### 5.2 Public entry + cache\n\n```go\nfunc (r *rendererImpl) RenderAddon(ctx, req api.AddonRequest) (*api.AddonResult, error) {\n    key := cacheKey(req)\n    if cached, ok := r.cache.Load(key); ok { return cached.(*api.AddonResult), nil }\n    res, err := r.resolveAndRender(ctx, req)   // resolveFn seam in tests\n    if err != nil { return nil, err }\n    r.cache.Store(key, res)\n    return res, nil\n}\n\nfunc cacheKey(req) string   // \"name|version|registry|skipValidate|sha256(properties)\"\nfunc hashProperties(map) string  // canonical (key-sorted) JSON → sha256\n```\n\nThe cache key includes every input, so a version or property change is just a new\nkey and no invalidation is needed. The durable pin is the ApplicationRevision the\ncontroller records.\n\n### 5.3 Resolve and render\n\n```go\nfunc (r *rendererImpl) resolveAndRender(ctx, req) (*api.AddonResult, error) {\n    findPackages := r.findPackagesFn\n    if findPackages == nil {\n        findPackages = pkgaddon.FindAddonPackagesDetailFromRegistry\n    }\n    pkgs, err := findPackages(ctx, r.client(), []string{req.Name}, regs)\n    installPkg := &pkgs[0].InstallPackage; registryName := pkgs[0].RegistryName\n\n    if req.Version != \"\" && req.Version != installPkg.Version {   // exact pin\n        installPkg = r.fetchExactVersion(ctx, registryName, req.Name, req.Version)\n    }\n    if !req.SkipVersionValidate {                                 // SystemRequirements\n        r.validateSystemRequirements(ctx, req.Name, installPkg)\n    }\n    app, aux := pkgaddon.RenderApp(ctx, installPkg, r.client(), req.Properties)\n    groups := r.auxComponents(ctx, installPkg, req.Properties)\n    groups = append(groups, auxComponent{name: \"addon-auxiliaries\", objects: aux})\n    appMap := toUnstructured(app)\n    appendAuxComponents(appMap, groups)\n    ensureAddonComponentStateKeepPolicy(appMap)\n    sanitizeManifest(appMap)\n    suppressLastAppliedConfig(appMap)\n    return &api.AddonResult{Application: appMap}\n}\n```\n\nSub-steps:\n\n- `fetchExactVersion` delegates to the shared\n  `pkgaddon.GetAddonInstallPackageFromRegistry(ctx, cli, registry, name, version)`\n  (also used by the webhook).\n- Empty `version` keeps the package returned by\n  `FindAddonPackagesDetailFromRegistry`, which is the latest stable version for\n  a versioned registry. Non-empty `version` fetches an exact version only; the\n  lower-level registry matcher ignores a leading `v` but does not parse range\n  constraints.\n- `validateSystemRequirements` builds a discovery client from the rest config and\n  calls `pkgaddon.ValidateSystemRequirements`. If no rest config (unit tests),\n  it logs and skips.\n- `auxComponents` calls the existing `pkgaddon.Render{Definitions,\n  ConfigTemplates,DefinitionSchema,Views}` and `RenderArgsSecret`, keeping each\n  category together. `appendAuxComponents` omits empty categories, sanitizes\n  every nested object, and appends non-empty groups as `k8s-objects` components.\n\n### 5.4 StateKeep and annotation safeguards\n\nThe renderer runs two independent safeguards after it has folded auxiliaries\ninto the inner Application:\n\n```go\nensureAddonComponentStateKeepPolicy(appMap)\nsuppressLastAppliedConfig(appMap)\n```\n\n`ensureAddonComponentStateKeepPolicy` adds the generated policy below only when\nthe addon package has not authored an `apply-once` policy:\n\n```yaml\n- name: addon-component-state-keep\n  type: apply-once\n  properties:\n    enable: false\n```\n\nThe ResourceKeeper retains the legacy fallback for addon-labeled Applications:\n\n```go\nif h.applyOncePolicy == nil && metav1.HasLabel(h.app.ObjectMeta, oam.LabelAddonName) {\n\th.applyOncePolicy = &v1alpha1.ApplyOncePolicySpec{Enable: true}\n}\n```\n\nThe explicit `enable: false` prevents that fallback. It also keeps `Dispatch`\nfrom applying `MetaOnlyOption` and keeps `StateKeep` from returning early, so the\ninner tracker retains raw desired data and periodic StateKeep can recreate a\ndeleted folded auxiliary.\n\nAny package-authored `apply-once` policy is authoritative and preserved\nunchanged. This includes policies with `enable: true`, policies with\n`enable: false`, rules-only policies that omit `enable`, and malformed policies.\nMalformed content is left for normal Application validation; the renderer does\nnot normalize it or inject the generated policy over or alongside it. For\nexample, FluxCD authors `not-keep-CRD` with CRD rules and omits `enable`; the\n`PolicyDefinition` default is `false`, so the renderer preserves that policy\ninstead of injecting the generated one.\n\n`suppressLastAppliedConfig` sets\n`app.oam.dev/last-applied-configuration: skip` on the rendered inner\nApplication. This sentinel independently prevents the dispatch-time copy of the\nlarge folded Application from exceeding Kubernetes' 256 KiB annotation limit.\nIt is not a ResourceTracker size fallback.\n\n### 5.5 Manifest sanitization (why it exists)\n\n```go\nfunc sanitizeManifest(m map[string]interface{}) {\n    delete(m, \"status\")            // status is not desired state\n    stripCreationTimestamp(m)      // recursive: metadata.creationTimestamp\n}\n```\n\nA rendered manifest marshalled from a typed object carries\n`metadata.creationTimestamp: null`, which CUE treats as an incomplete value\n(`_`) and rejects when the manifest becomes a component `output`. Stripping it\n(recursively, including nested objects and array items) plus the root `status`\nlets the manifest complete as CUE.\n\n### 5.6 Service call graph\n\n```mermaid\nflowchart TD\n    RA[\"RenderAddon\"] --> CK{\"cache hit?\"}\n    CK -->|yes| RET[\"return cached\"]\n    CK -->|no| RAR[\"resolveAndRender\"]\n    RAR --> F[\"FindAddonPackagesDetailFromRegistry\"]\n    RAR --> FV[\"fetchExactVersion\u003cbr/>(if version pinned)\"]\n    FV --> GH[\"GetAddonInstallPackageFromRegistry\"]\n    RAR --> VS[\"validateSystemRequirements\u003cbr/>(unless skipVersionValidate)\"]\n    RAR --> RP[\"pkgaddon.RenderApp\"]\n    RAR --> AUX[\"auxComponents + appendAuxComponents\"]\n    AUX --> SK[\"StateKeep policy + last-applied skip\"]\n    SK --> SM[\"sanitizeManifest (Application + nested objects)\"]\n    SM --> STORE[\"cache.Store + return one Application\"]\n```\n\n---\n\n## 6. Compiler registration (two paths, two purposes)\n\n```mermaid\nflowchart TB\n    subgraph render[\"Render / reconcile path\"]\n      WC[\"WorkloadCompiler\u003cbr/>pkg/cue/cuex/compiler.go\"] --> AP1[\"addon.Package\"]\n      APPC[\"Application controller\"] --> WC\n    end\n    subgraph schema[\"Schema-generation path\"]\n      DC[\"workflow DefaultCompiler\u003cbr/>pkg/workflow/providers/compiler.go\"] --> AP2[\"addon.Package\"]\n      SCH[\"ParsePropertiesToSchema\u003cbr/>vela def gen / schema.go\"] --> DC\n    end\n```\n\n- **WorkloadCompiler** compiles component/trait templates at reconcile time. The\n  `addon` definition's `import \"vela/addon\"` is resolved here.\n- **workflow DefaultCompiler** is used by `pkg/schema` and `pkg/definition` when\n  generating parameter schemas. Without `addon.Package` here, schema generation\n  fails with `builtin package \"vela/addon\" undefined`. Registering the provider\n  on the *WorkloadCompiler* for schema gen would instead break ~20 workflowstep\n  definitions, so each path registers where it is actually needed.\n\n---\n\n## 7. Admission webhook\n\n`pkg/webhook/core.oam.dev/v1beta1/application/validation.go`.\n\n```mermaid\nsequenceDiagram\n    autonumber\n    participant K as API server\n    participant H as ValidatingHandler\n    participant Chk as defaultAddonCompatChecker\n    participant Reg as pkg/addon registry\n    K->>H: validate Application (create/update)\n    loop each component\n        alt type == addon and not skipVersionValidate\n            H->>Chk: check(ctx, name, version, registry)\n            Chk->>Reg: FindAddonPackagesDetailFromRegistry\n            alt version pinned\n                Chk->>Reg: GetAddonInstallPackageFromRegistry(version)\n            end\n            Chk->>Reg: ValidateSystemRequirements(require, cli, dc)\n            alt mismatch\n                Chk-->>H: field.Error\n            else ok / registry error\n                Chk-->>H: nil (allow / fail-open)\n            end\n        end\n    end\n    H-->>K: admit or deny\n```\n\nBehavior contract:\n\n- `skipVersionValidate: true` → the component is skipped entirely.\n- Registry/resolve/discovery errors → **fail open** (return nil, allow). Only a\n  concrete `ValidateSystemRequirements` mismatch denies.\n- A pinned `version` is resolved to that exact package's `SystemRequirements`\n  (not the latest), so a valid pin is not falsely denied.\n- Empty `version` validates the latest stable package selected by the registry.\n- The seam `addonCompatChecker` lets tests inject a fake checker.\n\n---\n\n## 8. Differential validation\n\nThe all-addons differential report from 2026-07-09 tested 36 catalog addons with\nthe imperative `vela addon enable` path as baseline and the `type: addon`\ncomponent path as the feature path. Cluster B used `skipVersionValidate: true`\nbecause an out-of-cluster core cannot satisfy the in-cluster\nSystemRequirements lookup.\n\n| Outcome | Count | Meaning |\n|---------|-------|---------|\n| PASS / PASS | 25 | Both paths installed successfully. |\n| FAIL / FAIL | 5 | Both paths failed consistently. |\n| TIMEOUT / FAIL | 6 | Baseline timed out; component path failed fast after apply/render failure. |\n\nThe discrepant addons were `cloudshell`, `flink-kubernetes-operator`,\n`kube-state-metrics`, `model-serving`, `rollout`, and\n`vela-core-shard-manager`.\n\n---\n\n## 9. ResourceTracker data and size controls\n\nThe wrapping Application tracks exactly one rendered inner Application. The\ninner Application tracks addon workloads and the folded `k8s-objects`\ncomponents, retaining raw desired manifests where StateKeep needs them. It does\nnot use output ownership or Kubernetes owner references to establish that model.\n\nThe verified FluxCD installation had a 140,946-byte inner tracker with 33\nraw-backed managed resources, while its wrapping tracker was 949,640 bytes. The\nraw inner Application stored in that wrapping tracker was 281,284 compact JSON\nbytes; the live inner Application was 832,271 bytes. The\n`last-applied-configuration: skip` sentinel prevented a separate 256 KiB\nannotation failure while those raw manifests were retained.\n\nRaw desired data is necessary for healing. When a raw tracker approaches API or\netcd limits, use the existing `ZstdResourceTracker` mitigation. Do not switch to\nmetadata-only tracking as a size fallback: `MetaOnlyOption` omits raw data, and\nStateKeep skips entries without it.\n\n---\n\n## 10. Object model recap (what lands in the cluster)\n\nFor `comp-fluxcd`:\n\n```mermaid\nflowchart TD\n    CF[\"Application comp-fluxcd\"] --> RT1[\"RT comp-fluxcd-v1 (versioned)\"]\n    RT1 --> AF[\"Application addon-fluxcd\"]\n    AF --> RT2[\"RT addon-fluxcd (root)\"]\n    AF --> RT3[\"RT addon-fluxcd-v1 (versioned)\"]\n    RT2 --> NSCRD[\"workloads and folded auxiliaries\u003cbr/>(according to GC policy)\"]\n    RT3 --> WL[\"workloads and folded auxiliaries\u003cbr/>(according to GC policy)\"]\n```\n\n- The wrapping app's versioned RT records one child Application.\n- The inner app's root/versioned trackers contain both workloads and folded\n  auxiliaries according to its garbage-collection policy.\n\n---\n\n## 11. Method reference\n\n| Symbol | File | Signature (abridged) |\n|--------|------|----------------------|\n| `Render` | provider/addon.go | `func(ctx, *RenderParams) (*RenderReturns, error)` |\n| `Renderer.RenderAddon` | service/api/api.go | `RenderAddon(ctx, AddonRequest) (*AddonResult, error)` |\n| `SetDefaultRenderer` / `DefaultRenderer` | service/api/api.go | `func(Renderer)` / `func() Renderer` |\n| `rendererImpl.resolveAndRender` | service/renderer.go | `func(ctx, AddonRequest) (*AddonResult, error)` |\n| `rendererImpl.fetchExactVersion` | service/renderer.go | `func(ctx, registry, name, version) (*InstallPackage, error)` |\n| `sanitizeManifest` / `stripCreationTimestamp` | service/renderer.go | `func(map[string]interface{})` / `func(interface{})` |\n| `ValidateSystemRequirements` | pkg/addon/helper.go | `func(ctx, *SystemRequirements, client, *DiscoveryClient) error` |\n| `GetAddonInstallPackageFromRegistry` | pkg/addon/helper.go | `func(ctx, client, registry, name, version) (*InstallPackage, error)` |\n| `ValidatingHandler.defaultAddonCompatChecker` | webhook/validation.go | `func(ctx, name, version, registry) *field.Error` |\n\n---\n\n## 12. Error handling and edge cases\n\n- **Renderer not registered** → `addon renderer not initialized` (blank import\n  dropped). Build-time symbol check catches it.\n- **Addon not in registry** → `resolveAndRender` returns `addon %q not found`.\n- **CUE incomplete value** → prevented by `sanitizeManifest`.\n- **System requirements unmet** → render error (render path) or admission deny\n  (webhook path), unless `skipVersionValidate`.\n- **Out-of-cluster core** → no discovery client / no in-cluster version;\n  `skipVersionValidate: true` is the escape hatch.\n- **Large addons** → the `skip` sentinel avoids the annotation-size limit;\n  `ZstdResourceTracker` protects raw ResourceTrackers without disabling healing.\n"},{"id":"resource-trackers","label":"ResourceTrackers","file":"RESOURCE-TRACKERS.md","markdown":"# Addon as Component: ResourceTracker Walkthrough\n\nThis document records the verified ResourceTracker model and measurements for\naddons installed through `type: addon` components. The controller used a\n20-second Application re-sync interval during the verification.\n\n## Ownership and flow\n\n```text\ncomp-\u003caddon> versioned RT -> Application/addon-\u003caddon>\nApplication/addon-\u003caddon> -> addon workloads + auxiliary k8s-objects components\ninner root/versioned RTs -> raw desired manifests for both groups\n```\n\n| Owner | Tracker | Contents |\n|-------|---------|----------|\n| Wrapping `comp-\u003caddon>` Application | versioned RT | One rendered inner addon Application |\n| Inner `addon-\u003caddon>` Application | root/versioned RTs according to GC policy | Addon workloads plus folded auxiliary resources, stored with raw desired data |\n\nThe renderer folds package definitions, config templates, schemas, views,\nsecrets, and template-provided auxiliaries into `k8s-objects` components in the\ninner Application. The wrapping tracker therefore contains the one inner\nApplication; the inner Application's trackers contain the workloads and folded\nauxiliaries. This is tracking and rendering behavior, not Kubernetes owner\nreference behavior.\n\n```mermaid\nflowchart TD\n    W[\"Application/comp-&lt;addon&gt;\"] --> WRT[\"versioned RT\"]\n    WRT --> I[\"Application/addon-&lt;addon&gt;\"]\n    I --> RRT[\"root RT when GC policy requires it\"]\n    I --> VRT[\"versioned RT\"]\n    RRT --> RAW[\"raw desired manifests: workloads + folded auxiliaries\"]\n    VRT --> RAW\n```\n\n## StateKeep preserves raw data\n\nComponent-installed addons receive this generated policy only when the package\ndoes not author its own `apply-once` policy:\n\n```yaml\n- name: addon-component-state-keep\n  type: apply-once\n  properties:\n    enable: false\n```\n\nThe explicit disabled policy bypasses the legacy addon-label `apply-once`\nfallback. It prevents `Dispatch` from selecting metadata-only tracking and\nallows StateKeep to use raw desired manifests to recreate deleted resources.\nImperative addon installs retain their legacy behavior.\n\nFluxCD demonstrates preservation of addon-authored policy content. It authors\n`not-keep-CRD` with CRD rules and omits `enable`; the `apply-once`\nPolicyDefinition supplies the default `enable: false`. The renderer preserves\nthat policy rather than adding the generated policy. `FindStrategy` returns\nbefore evaluating rules when `enable` is false, so the authored CRD rule remains\nintact in the rendered Application but is inactive and does not exempt CRDs from\nStateKeep.\n\n## Verified Terraform AWS evidence\n\nThe current Terraform inner tracker was\n`addon-terraform-aws-v2-vela-system`:\n\n| Measurement | Value |\n|-------------|-------|\n| API-response bytes | 197,540 |\n| Managed resources | 70 |\n| `aws-mq` raw compact JSON bytes | 1,060 |\n\nThe wrapping tracker `comp-terraform-aws-v4-vela-system` measured 159,716\nAPI-response bytes.\n\nWith the configured 20-second re-sync interval, deleting `aws-mq` recreated it\nin 10 seconds. The old UID was `94d40fa9-baf1-4b04-89ab-239e259f3e7d`; the new\nUID was `e5df5b0e-0e93-4b6c-a56e-9eaf7d495b69`. The final inner tracker retained\nthe raw-backed `aws-mq` entry.\n\n## Verified FluxCD evidence\n\nThe FluxCD inner tracker measured 140,946 API-response bytes and had 33 managed\nresources, all raw-backed. The wrapping tracker measured 949,640 API-response\nbytes. Its raw inner Application was 281,284 compact JSON bytes, and the live\ninner Application was 832,271 bytes.\n\nThe large wrapped Application carried\n`app.oam.dev/last-applied-configuration: skip`. This sentinel independently\nprevents the 256 KiB annotation failure caused by recording a second\ndispatch-time copy of the folded Application. It does not trade away raw\nResourceTracker data.\n\n## Size mitigation\n\nRaw desired data is required for StateKeep healing. If measured raw trackers\napproach API or etcd limits, use the existing `ZstdResourceTracker` mitigation.\nMetadata-only tracking is not an acceptable size fallback: it disables healing\nbecause StateKeep skips tracker entries that do not retain raw desired manifests.\n\n## Migration guidance\n\nA workflow restart alone can reuse a completed wrapper's stale\nApplicationRevision, such as `comp-terraform-aws-v1`, and therefore does not\nrerender current code. Existing wrappers require a real component spec revision\nto create a current-code revision.\n\nDuring the Terraform migration, restoring the byte-identical original spec\nreused `v1` again. The retained `properties.addon: terraform-aws` field is\nsemantically equal to the component-name default, but anchors the current-code\nrevision for that existing Application. This is one-time migration and\noperational guidance, not a permanent renderer requirement for newly created\napps.\n"}]</script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+  <script>
+    const docs = JSON.parse(document.getElementById('docs-data').textContent);
+    const root = document.documentElement;
+    const docsRoot = document.getElementById('docs-root');
+    const tocRoot = document.getElementById('toc');
+    const progressBar = document.querySelector('.progress-bar');
+    const menuButton = document.querySelector('.menu-button');
+    const themeToggle = document.querySelector('.theme-toggle');
+    const themeLabel = themeToggle.querySelector('span');
+    const themeStorageKey = 'addon-doc-theme-v2';
+    const slugCounts = new Map();
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+
+    function slugify(text) {
+      const base = text.toLowerCase().replace(/`([^`]+)`/g, '$1').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'section';
+      const count = slugCounts.get(base) || 0;
+      slugCounts.set(base, count + 1);
+      return count ? `${base}-${count + 1}` : base;
+    }
+
+    function shiftHeadings(markdown) {
+      return markdown.replace(/^(#{1,5})(\s+)/gm, '#$1$2');
+    }
+
+    function fallbackMarkdown(markdown) {
+      const lines = markdown.split('\n');
+      const out = [];
+      let i = 0;
+      let inList = false;
+      const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+      while (i < lines.length) {
+        const line = lines[i];
+        const fence = line.match(/^```(\w+)?\s*$/);
+        if (fence) {
+          closeList();
+          const lang = fence[1] || '';
+          const code = [];
+          i++;
+          while (i < lines.length && !/^```\s*$/.test(lines[i])) { code.push(lines[i++]); }
+          out.push(`<pre><code class="language-${escapeHtml(lang)}">${escapeHtml(code.join('\n'))}</code></pre>`);
+          i++;
+          continue;
+        }
+        const heading = line.match(/^(#{1,6})\s+(.+)$/);
+        if (heading) {
+          closeList();
+          const depth = Math.min(6, heading[1].length);
+          out.push(`<h${depth}>${inlineMarkdown(heading[2])}</h${depth}>`);
+          i++;
+          continue;
+        }
+        if (/^\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\|\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1])) {
+          closeList();
+          const headers = splitTableRow(line);
+          i += 2;
+          const rows = [];
+          while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) rows.push(splitTableRow(lines[i++]));
+          out.push('<table><thead><tr>' + headers.map(h => `<th>${inlineMarkdown(h)}</th>`).join('') + '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map(c => `<td>${inlineMarkdown(c)}</td>`).join('') + '</tr>').join('') + '</tbody></table>');
+          continue;
+        }
+        const bullet = line.match(/^\s*-\s+(.+)$/);
+        if (bullet) {
+          if (!inList) { out.push('<ul>'); inList = true; }
+          out.push(`<li>${inlineMarkdown(bullet[1])}</li>`);
+          i++;
+          continue;
+        }
+        if (!line.trim()) { closeList(); i++; continue; }
+        closeList();
+        const para = [line.trim()];
+        i++;
+        while (i < lines.length && lines[i].trim() && !/^(#{1,6})\s+/.test(lines[i]) && !/^```/.test(lines[i]) && !/^\s*-\s+/.test(lines[i]) && !/^\|.*\|\s*$/.test(lines[i])) {
+          para.push(lines[i].trim()); i++;
+        }
+        out.push(`<p>${inlineMarkdown(para.join(' '))}</p>`);
+      }
+      closeList();
+      return out.join('\n');
+    }
+
+    function splitTableRow(line) {
+      return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
+    }
+
+    function inlineMarkdown(text) {
+      return escapeHtml(text)
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    }
+
+    function renderMarkdown(markdown) {
+      const shifted = shiftHeadings(markdown);
+      if (window.marked && typeof window.marked.parse === 'function') {
+        try {
+          window.marked.setOptions({ gfm: true, breaks: false, mangle: false, headerIds: false });
+          return window.marked.parse(shifted);
+        } catch (err) {
+          return fallbackMarkdown(shifted);
+        }
+      }
+      return fallbackMarkdown(shifted);
+    }
+
+    function renderDocs() {
+      slugCounts.clear();
+      docsRoot.innerHTML = docs.map(doc => `
+        <section class="doc-section" id="${doc.id}" data-doc="${doc.id}" aria-label="${escapeHtml(doc.label)}">
+          <article class="content">${renderMarkdown(doc.markdown)}</article>
+        </section>
+      `).join('');
+      enhanceContent();
+      buildToc();
+      observeHeadings();
+      renderMermaid();
+    }
+
+    function enhanceContent() {
+      document.querySelectorAll('.content h2, .content h3, .content h4, .content h5, .content h6').forEach(heading => {
+        if (!heading.id) heading.id = slugify(heading.textContent);
+        const anchor = document.createElement('a');
+        anchor.href = `#${heading.id}`;
+        anchor.className = 'heading-anchor';
+        anchor.setAttribute('aria-label', `Link to ${heading.textContent}`);
+        anchor.textContent = '#';
+        heading.prepend(anchor);
+      });
+
+      document.querySelectorAll('pre > code').forEach(code => {
+        const pre = code.parentElement;
+        if (code.className.includes('language-mermaid')) {
+          const panel = document.createElement('figure');
+          panel.className = 'mermaid-panel';
+          const caption = document.createElement('figcaption');
+          caption.className = 'mermaid-caption';
+          caption.textContent = 'Diagram rendered from Mermaid source.';
+          const div = document.createElement('div');
+          div.className = 'mermaid';
+          div.setAttribute('role', 'img');
+          div.setAttribute('aria-label', 'Mermaid architecture or flow diagram');
+          div.dataset.source = code.textContent;
+          div.textContent = code.textContent;
+          panel.append(caption, div);
+          pre.replaceWith(panel);
+          return;
+        }
+        const wrap = document.createElement('div');
+        wrap.className = 'code-wrap';
+        pre.replaceWith(wrap);
+        wrap.appendChild(pre);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'copy-button';
+        btn.setAttribute('aria-label', 'Copy code block');
+        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        btn.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(code.textContent);
+            btn.classList.add('copied');
+            btn.setAttribute('aria-label', 'Copied');
+            setTimeout(() => { btn.classList.remove('copied'); btn.setAttribute('aria-label', 'Copy code block'); }, 1400);
+          } catch (_) {
+            btn.setAttribute('aria-label', 'Copy failed');
+          }
+        });
+        wrap.appendChild(btn);
+        if (window.hljs) window.hljs.highlightElement(code);
+      });
+
+      document.querySelectorAll('table').forEach(table => {
+        const headers = Array.from(table.querySelectorAll('th')).map(th => th.textContent.toLowerCase()).join(' ');
+        const text = table.textContent.toLowerCase();
+        const wrap = document.createElement('div');
+        wrap.className = 'table-scroll';
+        if (headers.includes('approx size') || headers.includes('namespace rt entry') || headers.includes('outcome') || text.includes('pass / pass')) {
+          wrap.classList.add('feature-table');
+        }
+        table.replaceWith(wrap);
+        wrap.appendChild(table);
+      });
+    }
+
+    function buildToc() {
+      tocRoot.innerHTML = docs.map(doc => {
+        const section = document.querySelector(`[data-doc="${doc.id}"]`);
+        const headings = Array.from(section.querySelectorAll('h2, h3, h4')).filter(h => h.id);
+        const first = headings[0];
+        const items = headings.slice(1).map(h => `<li><a class="depth-${h.tagName.slice(1)}" href="#${h.id}" data-target="${h.id}">${h.textContent.replace(/^#/, '').trim()}</a></li>`).join('');
+        return `<div class="toc-group"><a class="toc-group-title" href="#${first ? first.id : doc.id}" data-target="${first ? first.id : doc.id}">${doc.label}</a><ul class="toc-list">${items}</ul></div>`;
+      }).join('');
+    }
+
+    function observeHeadings() {
+      const links = Array.from(document.querySelectorAll('[data-target]'));
+      const byId = new Map(links.map(a => [a.dataset.target, a]));
+      const headings = Array.from(document.querySelectorAll('.content h2, .content h3, .content h4'));
+      if (!('IntersectionObserver' in window)) return;
+      const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (!entry.isIntersecting) return;
+          links.forEach(link => link.classList.remove('active'));
+          const active = byId.get(entry.target.id);
+          if (active) active.classList.add('active');
+        });
+      }, { rootMargin: '-20% 0px -70% 0px', threshold: 0 });
+      headings.forEach(h => observer.observe(h));
+    }
+
+    async function renderMermaid() {
+      const nodes = Array.from(document.querySelectorAll('.mermaid'));
+      if (!nodes.length || !window.mermaid) return;
+      const isDark = root.dataset.theme === 'dark';
+      try {
+        window.mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'default', securityLevel: 'loose' });
+        nodes.forEach((node, index) => {
+          node.removeAttribute('data-processed');
+          node.id = `mermaid-${index}-${isDark ? 'dark' : 'light'}`;
+          node.textContent = node.dataset.source;
+        });
+        await window.mermaid.run({ nodes });
+      } catch (err) {
+        nodes.forEach(node => {
+          node.textContent = node.dataset.source;
+        });
+      }
+    }
+
+    function setTheme(theme) {
+      root.dataset.theme = theme;
+      localStorage.setItem(themeStorageKey, theme);
+      document.getElementById('hljs-light').disabled = theme === 'dark';
+      document.getElementById('hljs-dark').disabled = theme !== 'dark';
+      if (themeLabel) themeLabel.textContent = theme === 'dark' ? 'Dark' : 'Light';
+      themeToggle.setAttribute('aria-label', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+      renderMermaid();
+    }
+
+    function updateProgress() {
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      const pct = max > 0 ? (window.scrollY / max) * 100 : 0;
+      progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    }
+
+    menuButton.addEventListener('click', () => {
+      const open = document.body.classList.toggle('sidebar-open');
+      menuButton.setAttribute('aria-expanded', String(open));
+    });
+    tocRoot.addEventListener('click', event => {
+      if (event.target.closest('a') && window.matchMedia('(max-width: 980px)').matches) {
+        document.body.classList.remove('sidebar-open');
+        menuButton.setAttribute('aria-expanded', 'false');
+      }
+    });
+    themeToggle.addEventListener('click', () => setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark'));
+    window.addEventListener('scroll', updateProgress, { passive: true });
+    window.addEventListener('resize', updateProgress);
+
+    const savedTheme = localStorage.getItem(themeStorageKey);
+    const initialTheme = savedTheme || 'light';
+    setTheme(initialTheme);
+    renderDocs();
+    updateProgress();
+  </script>
+</body>
+</html>

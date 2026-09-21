@@ -1,0 +1,240 @@
+' ==============================================
+' Guidewire Enterprise Theme for PlantUML
+' Version: 1.0.0
+' Palette: Blue shades (#003B5C to #F0F7FC)
+' ==============================================
+
+' --- Color Palette ---
+!define GW_DARK    #003B5C
+!define GW_PRIMARY #0072CE
+!define GW_ACCENT  #4DA8DA
+!define GW_LIGHT   #B3D9F2
+!define GW_BG      #F0F7FC
+!define GW_TEXT    #1A1A2E
+!define GW_NOTE_BG #E8F4FD
+!define GW_NOTE_BORDER #4DA8DA
+
+' --- Global Defaults ---
+skinparam BackgroundColor GW_BG
+skinparam defaultFontName "Segoe UI"
+skinparam defaultFontSize 12
+skinparam defaultFontColor GW_TEXT
+skinparam TitleFontColor GW_DARK
+skinparam TitleFontSize 16
+skinparam TitleFontStyle bold
+skinparam shadowing false
+skinparam roundCorner 8
+
+' --- Sequence Diagram ---
+skinparam sequence {
+  ArrowColor GW_PRIMARY
+  ArrowFontColor GW_TEXT
+  LifeLineBorderColor GW_PRIMARY
+  LifeLineBackgroundColor GW_BG
+  ParticipantBorderColor GW_DARK
+  ParticipantBackgroundColor GW_LIGHT
+  ParticipantFontColor GW_TEXT
+  ActorBorderColor GW_DARK
+  ActorBackgroundColor GW_ACCENT
+  ActorFontColor GW_TEXT
+  DatabaseBorderColor GW_DARK
+  DatabaseBackgroundColor GW_ACCENT
+  CollectionsBorderColor GW_DARK
+  CollectionsBackgroundColor GW_LIGHT
+  QueueBorderColor GW_PRIMARY
+  QueueBackgroundColor GW_BG
+  BoundaryBorderColor GW_DARK
+  BoundaryBackgroundColor GW_LIGHT
+  ControlBorderColor GW_PRIMARY
+  ControlBackgroundColor GW_LIGHT
+  EntityBorderColor GW_DARK
+  EntityBackgroundColor GW_LIGHT
+  GroupBorderColor GW_PRIMARY
+  GroupBackgroundColor GW_BG
+  GroupFontColor GW_DARK
+  DividerBorderColor GW_PRIMARY
+  DividerBackgroundColor GW_LIGHT
+  DividerFontColor GW_DARK
+  ReferenceHeaderBackgroundColor GW_PRIMARY
+  ReferenceBorderColor GW_DARK
+  BoxBorderColor GW_PRIMARY
+  BoxBackgroundColor #F5FAFF
+  BoxFontColor GW_DARK
+}
+
+' --- Class Diagram ---
+skinparam class {
+  BackgroundColor GW_LIGHT
+  BorderColor GW_DARK
+  FontColor GW_TEXT
+  ArrowColor GW_PRIMARY
+  AttributeFontColor GW_TEXT
+  StereotypeFontColor GW_PRIMARY
+  HeaderBackgroundColor GW_PRIMARY
+  HeaderFontColor #FFFFFF
+}
+
+' --- Component Diagram ---
+skinparam component {
+  BackgroundColor GW_BG
+  BorderColor GW_PRIMARY
+  FontColor GW_TEXT
+  ArrowColor GW_PRIMARY
+  StereotypeFontColor GW_PRIMARY
+}
+
+' --- Package ---
+skinparam package {
+  BackgroundColor GW_BG
+  BorderColor GW_PRIMARY
+  FontColor GW_DARK
+  StereotypeFontColor GW_PRIMARY
+}
+
+' --- Interface ---
+skinparam interface {
+  BackgroundColor GW_LIGHT
+  BorderColor GW_PRIMARY
+  FontColor GW_TEXT
+}
+
+' --- Deployment Diagram ---
+skinparam node {
+  BackgroundColor GW_LIGHT
+  BorderColor GW_DARK
+  FontColor GW_TEXT
+}
+skinparam artifact {
+  BackgroundColor GW_BG
+  BorderColor GW_PRIMARY
+  FontColor GW_TEXT
+}
+skinparam cloud {
+  BackgroundColor GW_BG
+  BorderColor GW_ACCENT
+  FontColor GW_TEXT
+}
+skinparam frame {
+  BackgroundColor GW_BG
+  BorderColor GW_PRIMARY
+  FontColor GW_DARK
+}
+skinparam folder {
+  BackgroundColor GW_BG
+  BorderColor GW_PRIMARY
+  FontColor GW_DARK
+}
+skinparam database {
+  BackgroundColor GW_ACCENT
+  BorderColor GW_DARK
+  FontColor GW_TEXT
+}
+skinparam queue {
+  BackgroundColor GW_BG
+  BorderColor GW_PRIMARY
+  FontColor GW_TEXT
+}
+skinparam storage {
+  BackgroundColor GW_LIGHT
+  BorderColor GW_PRIMARY
+  FontColor GW_TEXT
+}
+skinparam collections {
+  BackgroundColor GW_LIGHT
+  BorderColor GW_DARK
+  FontColor GW_TEXT
+}
+
+' --- State Diagram ---
+skinparam state {
+  BackgroundColor GW_LIGHT
+  BorderColor GW_PRIMARY
+  FontColor GW_TEXT
+  ArrowColor GW_PRIMARY
+  StartColor GW_DARK
+  EndColor GW_DARK
+}
+
+' --- Activity Diagram ---
+skinparam activity {
+  BackgroundColor GW_LIGHT
+  BorderColor GW_PRIMARY
+  FontColor GW_TEXT
+  ArrowColor GW_PRIMARY
+  StartColor GW_DARK
+  EndColor GW_DARK
+  BarColor GW_DARK
+  DiamondBackgroundColor GW_LIGHT
+  DiamondBorderColor GW_PRIMARY
+  DiamondFontColor GW_TEXT
+}
+skinparam swimlane {
+  BorderColor GW_PRIMARY
+  TitleBackgroundColor GW_PRIMARY
+  TitleFontColor #FFFFFF
+}
+skinparam partition {
+  BackgroundColor GW_BG
+  BorderColor GW_PRIMARY
+  FontColor GW_DARK
+}
+
+' --- Use Case Diagram ---
+skinparam usecase {
+  BackgroundColor GW_LIGHT
+  BorderColor GW_PRIMARY
+  FontColor GW_TEXT
+  ArrowColor GW_PRIMARY
+  ActorBorderColor GW_DARK
+  ActorBackgroundColor GW_ACCENT
+  ActorFontColor GW_TEXT
+  StereotypeFontColor GW_PRIMARY
+}
+skinparam rectangle {
+  BackgroundColor GW_BG
+  BorderColor GW_PRIMARY
+  FontColor GW_DARK
+  StereotypeFontColor GW_PRIMARY
+}
+
+' --- ER / Entity ---
+skinparam entity {
+  BackgroundColor GW_LIGHT
+  BorderColor GW_DARK
+  FontColor GW_TEXT
+}
+
+' --- Notes ---
+skinparam note {
+  BackgroundColor GW_NOTE_BG
+  BorderColor GW_NOTE_BORDER
+  FontColor GW_TEXT
+}
+
+' --- Legend ---
+skinparam legend {
+  BackgroundColor GW_BG
+  BorderColor GW_PRIMARY
+  FontColor GW_TEXT
+}
+
+' --- Arrow Defaults ---
+skinparam ArrowColor GW_PRIMARY
+skinparam ArrowFontColor GW_TEXT
+
+' --- Stereotype ---
+skinparam stereotypeCBackgroundColor GW_PRIMARY
+skinparam stereotypeABackgroundColor GW_ACCENT
+skinparam stereotypeIBackgroundColor GW_LIGHT
+skinparam stereotypeEBackgroundColor GW_LIGHT
+
+' --- C4 Element Style Overrides ---
+' Applied automatically when C4 libraries are included before this theme.
+' Diagrams should NOT duplicate these -- just include this theme after the C4 import.
+!if %variable_exists("$PERSON_BG_COLOR")
+  UpdateElementStyle("person", $bgColor="#4DA8DA", $borderColor="#003B5C", $fontColor="#1A1A2E")
+  UpdateElementStyle("system", $bgColor="#0072CE", $borderColor="#003B5C", $fontColor="#FFFFFF")
+  UpdateElementStyle("external_system", $bgColor="#003B5C", $borderColor="#003B5C", $fontColor="#FFFFFF")
+  UpdateElementStyle("container", $bgColor="#B3D9F2", $borderColor="#0072CE", $fontColor="#1A1A2E")
+  UpdateElementStyle("component", $bgColor="#F0F7FC", $borderColor="#4DA8DA", $fontColor="#1A1A2E")
+!endif

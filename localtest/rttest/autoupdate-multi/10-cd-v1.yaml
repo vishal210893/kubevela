@@ -1,0 +1,26 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: mk-cd
+  namespace: vela-system
+spec:
+  workload:
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+  schematic:
+    cue:
+      template: |
+        output: {
+          apiVersion: "v1"
+          kind:       "ConfigMap"
+          metadata: name: parameter.name
+          data: {
+            cdMarker: "v1"
+            payload:  parameter.payload
+          }
+        }
+        parameter: {
+          name:    string
+          payload: *"hello" | string
+        }
